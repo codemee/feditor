@@ -36,6 +36,46 @@ pub enum State {
     Triple(char),
     /// 在反引號字串（JavaScript 的樣板字串）裡。
     Backtick,
+    /// 在支援內嵌運算式的字串裡（記錄結尾引號）。目前只有反引號字串會跨行。
+    InterpStr(char),
+    /// 在字串的內嵌運算式 `${ … }` 裡，運算式還沒結束（記錄所屬字串的結尾引號）。
+    InterpExpr(char),
+}
+
+/// 字串裡的內嵌運算式：`${x}`、`{x}`（f-string）、`#{x}`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Interp {
+    pub open: &'static str,
+    pub close: &'static str,
+    /// 反引號字串裡有效。
+    pub backtick: bool,
+    /// 雙引號字串裡有效（Shell、Ruby、PHP）。
+    pub double: bool,
+    /// 帶 `f`／`$` 前綴的字串裡有效（Python 的 f"…"）。`{{` 是跳脫的大括號。
+    pub fstring: bool,
+}
+
+impl Interp {
+    /// 在 `i` 這個引號字元開始的字串，是不是會有內嵌運算式。
+    fn applies(&self, chars: &[char], i: usize) -> bool {
+        match chars[i] {
+            '`' => self.backtick,
+            c @ ('"' | '\'') => {
+                (c == '"' && self.double) || (self.fstring && has_f_prefix(chars, i))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// 引號前面緊接著 `f`／`F`／`$`（可再夾 `r`、`b`、`u`、`@`），而且前面不是識別字的一部分。
+fn has_f_prefix(chars: &[char], quote: usize) -> bool {
+    let (mut k, mut has_f) = (quote, false);
+    while k > 0 && quote - k < 2 && "fFrRbBuU$@".contains(chars[k - 1]) {
+        has_f |= matches!(chars[k - 1], 'f' | 'F' | '$');
+        k -= 1;
+    }
+    has_f && (k == 0 || !is_ident(chars[k - 1]))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +103,8 @@ pub struct Language {
     /// 行首的 `[區段]` 與「鍵 =」（ini、toml、yaml）。
     config: bool,
     case_insensitive: bool,
+    /// 字串裡的內嵌運算式；`None` 表示字串整個當成字串色。
+    interp: Option<Interp>,
 }
 
 const fn lang(name: &'static str) -> Language {
@@ -79,6 +121,7 @@ const fn lang(name: &'static str) -> Language {
         capital_types: false,
         config: false,
         case_insensitive: false,
+        interp: None,
     }
 }
 
@@ -143,6 +186,7 @@ static JAVASCRIPT: Language = Language {
         "super", "switch", "this", "throw", "true", "try", "type", "typeof", "undefined", "var",
         "void", "while", "with", "yield",
     ],
+    interp: Some(Interp { open: "${", close: "}", backtick: true, double: false, fstring: false }),
     ..lang("JavaScript/TypeScript")
 };
 
@@ -156,6 +200,7 @@ static PYTHON: Language = Language {
         "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True",
         "try", "while", "with", "yield",
     ],
+    interp: Some(Interp { open: "{", close: "}", backtick: false, double: false, fstring: true }),
     ..lang("Python")
 };
 
@@ -179,6 +224,7 @@ static SHELL: Language = Language {
         "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if",
         "in", "local", "return", "then", "until", "while", "param", "foreach", "switch",
     ],
+    interp: Some(Interp { open: "${", close: "}", backtick: false, double: true, fstring: false }),
     ..lang("Shell")
 };
 
@@ -295,6 +341,8 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
     let mut line_comments: Vec<String> = Vec::new();
     let mut keywords: Vec<String> = Vec::new();
     let mut quotes: Option<Vec<char>> = None;
+    let mut interp_marks: Option<(&'static str, &'static str)> = None;
+    let mut interp_in: Option<Vec<String>> = None;
     for (n, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -322,6 +370,13 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
                 quotes = Some(split_list(value).iter().flat_map(|s| s.chars()).collect());
             }
             "keywords" => keywords.extend(split_list(value)),
+            "interpolation" => match split_list(value).as_slice() {
+                [a, b] => interp_marks = Some((leak_str(a.clone()), leak_str(b.clone()))),
+                _ => return Err(format!("第 {} 行：interpolation 要寫「開頭, 結尾」兩項，例如 ${{, }}", n + 1)),
+            },
+            "interpolation_in" => {
+                interp_in = Some(split_list(value));
+            }
             "capital_types" => lang.capital_types = parse_flag(key, value)?,
             "case_insensitive" => lang.case_insensitive = parse_flag(key, value)?,
             "triple_quotes" => lang.triple_quotes = parse_flag(key, value)?,
@@ -339,6 +394,21 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
     let name = name.filter(|n| !n.is_empty()).ok_or("缺少 name")?;
     if exts.is_empty() {
         return Err("缺少 extensions".to_owned());
+    }
+    if let Some((open, close)) = interp_marks {
+        let places = interp_in.unwrap_or_else(|| vec!["backtick".into(), "double".into()]);
+        let mut ip = Interp { open, close, backtick: false, double: false, fstring: false };
+        for p in &places {
+            match p.to_ascii_lowercase().as_str() {
+                "backtick" => ip.backtick = true,
+                "double" => ip.double = true,
+                "fstring" => ip.fstring = true,
+                other => return Err(format!("interpolation_in 只能是 backtick、double、fstring，不是「{other}」")),
+            }
+        }
+        lang.interp = Some(ip);
+    } else if interp_in.is_some() {
+        return Err("有 interpolation_in 但缺少 interpolation".to_owned());
     }
     lang.name = leak_str(name);
     lang.line_comments = leak_strs(line_comments);
@@ -427,6 +497,107 @@ fn find_from(chars: &[char], from: usize, pat: &str) -> Option<usize> {
 /// 一行的分詞結果：字元範圍（相對於這一行）與種類，Plain 不列出；以及行尾的狀態。
 pub fn highlight_line(lang: &Language, line: &str, state: State) -> (Vec<(Range<usize>, Kind)>, State) {
     let chars: Vec<char> = line.chars().collect();
+    highlight_chars(lang, &chars, state)
+}
+
+/// 字串裡的內嵌運算式：把 `chars[from..to]` 當成程式碼分詞，結果放進 `out`。
+/// （運算式裡面還有字串、甚至還有內嵌時，會遞迴處理。）
+fn push_code(lang: &Language, chars: &[char], from: usize, to: usize, out: &mut Vec<(Range<usize>, Kind)>) {
+    if to > from {
+        for (r, k) in highlight_chars(lang, &chars[from..to], State::Normal).0 {
+            out.push((r.start + from..r.end + from, k));
+        }
+    }
+}
+
+/// 找內嵌運算式的結尾：從 `from` 開始，略過運算式裡的字串，數括號的層數。
+fn find_close(lang: &Language, ip: &Interp, chars: &[char], from: usize) -> Option<usize> {
+    let open_ch = ip.open.chars().last()?;
+    let close_len = ip.close.chars().count();
+    let (mut depth, mut i) = (0usize, from);
+    while i < chars.len() {
+        let c = chars[i];
+        if (c == '`' && ip.backtick) || lang.quotes.contains(&c) {
+            i = scan_string(chars, i + 1, c).0;
+            continue;
+        }
+        if matches_at(chars, i, ip.close) {
+            if depth == 0 {
+                return Some(i);
+            }
+            depth -= 1;
+            i += close_len;
+            continue;
+        }
+        if c == open_ch {
+            depth += 1;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 掃一個有內嵌運算式的字串。`span` 是目前這段字串色的起點，`from` 是掃描起點；
+/// `in_expr` 為 true 表示一開始就在運算式裡（接續上一行）。
+/// 回傳（結束位置, 行尾還沒結束時的狀態）：字串收尾了就是 `None`。
+fn scan_interp(
+    lang: &Language,
+    ip: &Interp,
+    chars: &[char],
+    (from, span): (usize, usize),
+    delim: char,
+    in_expr: bool,
+    out: &mut Vec<(Range<usize>, Kind)>,
+) -> (usize, Option<State>) {
+    let (open_len, close_len) = (ip.open.chars().count(), ip.close.chars().count());
+    let (mut i, mut span, mut expr) = (from, span, in_expr);
+    loop {
+        if expr {
+            match find_close(lang, ip, chars, i) {
+                Some(close) => {
+                    push_code(lang, chars, i, close, out);
+                    // 結尾的括號算在字串色裡，跟開頭一致
+                    span = close;
+                    i = close + close_len;
+                    expr = false;
+                }
+                None => {
+                    push_code(lang, chars, i, chars.len(), out);
+                    return (chars.len(), Some(State::InterpExpr(delim)));
+                }
+            }
+            continue;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        let c = chars[i];
+        if c == '\\' {
+            i += 2;
+        } else if c == delim {
+            out.push((span..i + 1, Kind::String));
+            return (i + 1, None);
+        } else if matches_at(chars, i, ip.open) {
+            if ip.fstring && open_len == 1 && chars.get(i + 1) == Some(&c) {
+                i += 2; // {{ 是跳脫的大括號
+            } else {
+                out.push((span..i + open_len, Kind::String));
+                i += open_len;
+                expr = true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    let end = chars.len();
+    if end > span {
+        out.push((span..end, Kind::String));
+    }
+    // 只有反引號字串會跨行，其他引號的字串到行尾就結束
+    (end, (delim == '`').then_some(State::InterpStr('`')))
+}
+
+fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range<usize>, Kind)>, State) {
     let mut out: Vec<(Range<usize>, Kind)> = Vec::new();
     let mut i = 0;
     let mut state = state;
@@ -434,6 +605,20 @@ pub fn highlight_line(lang: &Language, line: &str, state: State) -> (Vec<(Range<
     // 先把上一行沒結束的東西接完
     match state {
         State::Normal => {}
+        State::InterpStr(d) | State::InterpExpr(d) => match &lang.interp {
+            Some(ip) => {
+                let in_expr = matches!(state, State::InterpExpr(_));
+                match scan_interp(lang, ip, chars, (0, 0), d, in_expr, &mut out) {
+                    (_, Some(next)) => return (out, next),
+                    (end, None) => {
+                        i = end;
+                        state = State::Normal;
+                    }
+                }
+            }
+            // 換了語言：沒有內嵌可言，當作從頭開始
+            None => state = State::Normal,
+        },
         State::Block => {
             let (_, end) = lang.block.unwrap_or(("", "*/"));
             match find_from(&chars, 0, end) {
@@ -544,6 +729,17 @@ pub fn highlight_line(lang: &Language, line: &str, state: State) -> (Vec<(Range<
                 None => {
                     out.push((i..chars.len(), Kind::String));
                     return (out, State::Triple(c));
+                }
+            }
+        }
+        if let Some(ip) = &lang.interp {
+            if ip.applies(chars, i) {
+                match scan_interp(lang, ip, chars, (i + 1, i), c, false, &mut out) {
+                    (_, Some(next)) => return (out, next),
+                    (end, None) => {
+                        i = end;
+                        continue;
+                    }
                 }
             }
         }
@@ -874,10 +1070,105 @@ mod tests {
     #[test]
     fn javascript_template_strings_span_lines() {
         let (_, st) = highlight_line(&JAVASCRIPT, "const a = `one", State::Normal);
-        assert_eq!(st, State::Backtick);
-        let (spans, st) = highlight_line(&JAVASCRIPT, "two` + 3", State::Backtick);
+        assert_eq!(st, State::InterpStr('`'));
+        let (spans, st) = highlight_line(&JAVASCRIPT, "two` + 3", State::InterpStr('`'));
         assert_eq!(st, State::Normal);
         assert_eq!(spans[0], (0..4, Kind::String));
+    }
+
+    #[test]
+    fn template_string_expressions_are_code() {
+        let r = kinds(&JAVASCRIPT, "`a ${x + 1} b`");
+        assert_eq!(
+            r,
+            vec![
+                ("`a ${".to_string(), Kind::String),
+                ("1".to_string(), Kind::Number),
+                ("} b`".to_string(), Kind::String),
+            ]
+        );
+        let r = kinds(&JAVASCRIPT, "`${ if (f(a)) { 1 } }` + 2");
+        assert!(r.contains(&("if".into(), Kind::Keyword)));
+        assert!(r.contains(&("f".into(), Kind::Function)), "{r:?}");
+        assert!(r.contains(&("2".into(), Kind::Number)), "運算式結束後回到程式碼：{r:?}");
+    }
+
+    #[test]
+    fn expressions_can_hold_strings_and_nested_templates() {
+        // 字串裡的 } 不算運算式結尾；巢狀樣板字串也要配對
+        let r = kinds(&JAVASCRIPT, "`${ a ? \"}\" : `y${z}` } tail` + 7");
+        assert!(r.contains(&("\"}\"".into(), Kind::String)), "{r:?}");
+        assert!(r.contains(&("7".into(), Kind::Number)), "{r:?}");
+        let tail = r.iter().find(|(t, _)| t.ends_with("tail`")).expect("結尾的字串色");
+        assert_eq!(tail.1, Kind::String);
+    }
+
+    #[test]
+    fn expressions_continue_across_lines() {
+        let (spans, st) = highlight_line(&JAVASCRIPT, "const s = `v ${", State::Normal);
+        assert_eq!(st, State::InterpExpr('`'));
+        assert_eq!(spans.last().unwrap().1, Kind::String);
+        let (spans, st) = highlight_line(&JAVASCRIPT, "  foo(1)} end`; let", State::InterpExpr('`'));
+        assert_eq!(st, State::Normal);
+        let r = kinds(&JAVASCRIPT, "foo(1)}"); // 只是確認運算式的 foo 會是函式
+        assert!(r.iter().any(|(t, k)| t == "foo" && *k == Kind::Function));
+        assert!(spans.iter().any(|(_, k)| *k == Kind::Function));
+        assert!(spans.iter().any(|(_, k)| *k == Kind::Keyword), "後面的 let 回到程式碼");
+        // 運算式整行都沒結束：維持在運算式裡
+        let (_, st) = highlight_line(&JAVASCRIPT, "  still going", State::InterpExpr('`'));
+        assert_eq!(st, State::InterpExpr('`'));
+    }
+
+    #[test]
+    fn python_fstrings_color_expressions_but_plain_strings_do_not() {
+        let r = kinds(&PYTHON, r#"print(f"n={len(x)} {{lit}}", "{no}")"#);
+        assert!(r.contains(&("len".into(), Kind::Function)), "{r:?}");
+        // 沒有 f 前綴的字串、與跳脫的 {{ }}，整段都是字串
+        assert!(r.contains(&("\"{no}\"".into(), Kind::String)), "{r:?}");
+        assert!(r.iter().any(|(t, k)| t.contains("{{lit}}") && *k == Kind::String), "{r:?}");
+        let r = kinds(&PYTHON, "x = rf'{a + 1}'");
+        assert!(r.contains(&("1".into(), Kind::Number)), "rf 前綴也算：{r:?}");
+        let r = kinds(&PYTHON, "x = self'{a + 1}'"); // 前面是識別字：不是前綴
+        assert!(!r.contains(&("1".into(), Kind::Number)), "{r:?}");
+        // f-string 到行尾沒結束也不會卡在字串狀態
+        let (_, st) = highlight_line(&PYTHON, "x = f\"abc {y", State::Normal);
+        assert_eq!(st, State::InterpExpr('"'));
+        let (_, st) = highlight_line(&PYTHON, "z}\"", State::InterpExpr('"'));
+        assert_eq!(st, State::Normal);
+    }
+
+    #[test]
+    fn shell_double_quotes_interpolate_single_quotes_do_not() {
+        // 雙引號裡 ${…} 的內容是程式碼（if 是關鍵字），單引號整段都是字串
+        let r = kinds(&SHELL, "echo \"${if} x\" '${if}'");
+        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 1, "{r:?}");
+        assert!(r.contains(&("'${if}'".into(), Kind::String)), "{r:?}");
+    }
+
+    #[test]
+    fn user_language_can_declare_interpolation() {
+        let base = "name = Rb\nextensions = rb\nquotes = \", '\nkeywords = if end\n";
+        let (_, lang) = parse_language(&format!("{base}interpolation = #{{, }}\ninterpolation_in = double\n")).unwrap();
+        let r = kinds(&lang, "\"a #{if} b\" '#{if}'");
+        assert!(r.contains(&("if".into(), Kind::Keyword)), "{r:?}");
+        assert!(r.contains(&("'#{if}'".into(), Kind::String)), "{r:?}");
+        let err = |t: &str| parse_language(&format!("{base}{t}")).err().unwrap();
+        assert!(err("interpolation = ${").contains("interpolation"));
+        assert!(err("interpolation = ${, }\ninterpolation_in = weird").contains("weird"));
+        assert!(err("interpolation_in = double").contains("interpolation"));
+    }
+
+    #[test]
+    fn interpolation_keeps_cache_and_full_scan_in_agreement() {
+        let text = "const a = `x ${\n  f(1)\n} y\nz`;\nlet b = 2;\n";
+        let buf = Buffer::from_text(text);
+        let mut cache = StateCache::default();
+        let lang: &'static Language = &JAVASCRIPT;
+        let mut state = State::Normal;
+        for l in 0..buf.line_count() {
+            assert_eq!(cache.state_at(lang, &buf, l), state, "第 {l} 行");
+            state = highlight_line(lang, &buf.line_text(l), state).1;
+        }
     }
 
     #[test]
