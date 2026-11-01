@@ -179,6 +179,8 @@ Get the archive for your platform from [Releases](https://github.com/codemee/fed
 - **macOS** (Apple Silicon): download `feditor-macos.dmg`, open it, and drag `FEditor.app` onto the Applications shortcut next to it. It is not notarized, so the first time, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
 - **Linux**: extract and run `./feditor`.
 
+See the [changelog](CHANGELOG.en.md) for what changed in each version.
+
 ## Development
 
 ```powershell

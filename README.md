@@ -179,6 +179,8 @@ editor.run("selectRight", 2);
 - **macOS**（Apple Silicon）：下載 `feditor-macos.dmg`，開啟後把 `FEditor.app` 拖到旁邊的「應用程式」捷徑。沒有公證，第一次開啟要在 Finder 對它按右鍵 →「打開」，或執行 `xattr -dr com.apple.quarantine FEditor.app`。
 - **Linux**：解壓縮後執行 `./feditor`。
 
+每個版本改了什麼，請看[更新紀錄](CHANGELOG.md)。
+
 ## 開發
 
 ```powershell
