@@ -168,7 +168,16 @@ editor.run("selectRight", 2);
 
 - 這台開發機器的 wgpu **Vulkan 後端會崩潰**（`0xC0000005`）。Windows 上預設改用 DX12，可用環境變數 `WGPU_BACKEND` 覆寫。
 - IME 只在 Windows + DX12 驗證過，macOS 與 Linux 尚未驗證。
-- 跨平台建置與發佈的 GitHub Actions 設定在 `.github/workflows/`，但還沒有在 GitHub 上實際跑過；Linux 需要的系統套件列在 `ci.yml` 裡，可能還要依發行版調整。
+- 跨平台建置與發佈的 GitHub Actions 設定在 `.github/workflows/`（Windows、macOS、Linux 都跑過測試與建置）；Linux 需要的系統套件列在 `ci.yml` 裡，其他發行版可能要調整。
+- macOS 的 `FEditor.app` 沒有 Apple 公證，也還沒有在真的 Mac 上實測過；從 Finder 對檔案按「打開方式」目前不會開檔（只支援命令列參數）。
+
+## 下載
+
+到 [Releases](https://github.com/codemee/feditor/releases) 下載對應平台的壓縮檔：
+
+- **Windows**：解壓縮後執行 `feditor.exe`。
+- **macOS**（Apple Silicon）：解壓縮得到 `FEditor.app`，拖到「應用程式」。沒有公證，第一次開啟要在 Finder 對它按右鍵 →「打開」，或執行 `xattr -dr com.apple.quarantine FEditor.app`。
+- **Linux**：解壓縮後執行 `./feditor`。
 
 ## 開發
 

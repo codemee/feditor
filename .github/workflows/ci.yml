@@ -29,3 +29,13 @@ jobs:
             libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev libfontconfig1-dev
       - name: 測試
         run: cargo test --workspace
+      # 發布前先確認 macOS 的 .app 打得出來（Info.plist、圖示、簽章），免得到打標籤才發現壞掉
+      - name: macOS：建置並打包 FEditor.app
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release -p feditor
+          bash packaging/macos/make-app.sh target/release/feditor 0.0.0-ci dist
+          test -x dist/FEditor.app/Contents/MacOS/feditor
+          test -f dist/FEditor.app/Contents/Resources/FEditor.icns
+          plutil -lint dist/FEditor.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/FEditor.app

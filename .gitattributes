@@ -2,3 +2,5 @@
 examples/files/* -text
 *.ico binary
 *.png binary
+# 在 macOS／Linux 上執行的腳本一律用 LF
+*.sh text eol=lf

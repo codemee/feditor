@@ -39,8 +39,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path target/release/feditor.exe, README.md, README.en.md -DestinationPath ${{ matrix.asset }}
-      - name: 打包（macOS／Linux）
-        if: runner.os != 'Windows'
+      - name: 打包（macOS）：FEditor.app
+        if: runner.os == 'macOS'
+        run: |
+          bash packaging/macos/make-app.sh target/release/feditor "${GITHUB_REF_NAME#v}" dist
+          cp README.md README.en.md dist/
+          tar -czf ${{ matrix.asset }} -C dist FEditor.app README.md README.en.md
+      - name: 打包（Linux）
+        if: runner.os == 'Linux'
         run: tar -czf ${{ matrix.asset }} -C target/release feditor -C ../.. README.md README.en.md
       - uses: softprops/action-gh-release@v2
         with:

@@ -168,7 +168,16 @@ Editor commands (`editor.run`): `left` `right` `up` `down` `wordLeft` `wordRight
 
 - On the development machine, the wgpu **Vulkan backend crashes** (`0xC0000005`). On Windows the default is switched to DX12; override it with the `WGPU_BACKEND` environment variable.
 - IME has only been verified on Windows + DX12; macOS and Linux are untested.
-- The GitHub Actions configuration for cross-platform builds and releases is in `.github/workflows/`, but it has not been run on GitHub yet; the system packages Linux needs are listed in `ci.yml` and may need adjusting per distribution.
+- The GitHub Actions configuration for cross-platform builds and releases is in `.github/workflows/` (tests and builds run on Windows, macOS, and Linux); the system packages Linux needs are listed in `ci.yml` and may need adjusting for other distributions.
+- The macOS `FEditor.app` is not notarized by Apple and has not been tried on a real Mac yet; "Open With" on a file in Finder does not open it (only command-line arguments are supported).
+
+## Download
+
+Get the archive for your platform from [Releases](https://github.com/codemee/feditor/releases):
+
+- **Windows**: extract and run `feditor.exe`.
+- **macOS** (Apple Silicon): extract to get `FEditor.app` and drag it into Applications. It is not notarized, so the first time, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
+- **Linux**: extract and run `./feditor`.
 
 ## Development
 
