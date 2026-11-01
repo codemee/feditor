@@ -2030,6 +2030,40 @@ impl App {
                     self.doc.set_encoding(enc);
                 }
 
+                // 語言（語法上色）：「自動」依副檔名，沒有檔名時看內容猜
+                let current = self.doc.lang;
+                let resolved = syntax::resolve(current, self.doc.path.as_deref(), &self.doc.buffer);
+                let shown = resolved.map_or("純文字", |l| l.name);
+                let langs = syntax::all_languages();
+                let lang_width = combo_width(
+                    ui,
+                    langs.iter().map(|l| l.name).chain(["純文字", "自動"]),
+                );
+                let mut picked = None;
+                egui::ComboBox::from_id_salt("language")
+                    .icon(icons::combo_chevron)
+                    .width(lang_width)
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(current == syntax::LangChoice::Auto, "自動").clicked() {
+                            picked = Some(syntax::LangChoice::Auto);
+                        }
+                        if ui.selectable_label(current == syntax::LangChoice::Plain, "純文字").clicked() {
+                            picked = Some(syntax::LangChoice::Plain);
+                        }
+                        for l in &langs {
+                            let choice = syntax::LangChoice::Named(l.name);
+                            if ui.selectable_label(current == choice, l.name).clicked() {
+                                picked = Some(choice);
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定");
+                if let Some(choice) = picked {
+                    self.doc.lang = choice;
+                }
+
                 // 左側：路徑（剩下的空間全給它，放不下就截斷，完整路徑看 tooltip）
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add(egui::Label::new(&path).truncate())
@@ -2248,12 +2282,12 @@ impl eframe::App for App {
             } = &mut *self;
             let reveal = std::mem::take(&mut find.reveal);
             let options = settings.view;
-            editor.comment_prefix = language::comment_prefix(doc.path.as_deref());
-            let language = if options.syntax {
-                syntax::language_for(doc.path.as_deref())
-            } else {
-                None
-            };
+            let resolved = syntax::resolve(doc.lang, doc.path.as_deref(), &doc.buffer);
+            // 行註解符號：語言有就用語言的（手動選了語言、或沒有檔名時才有意義），否則看副檔名
+            editor.comment_prefix = resolved
+                .and_then(|l| l.line_comment())
+                .unwrap_or_else(|| language::comment_prefix(doc.path.as_deref()));
+            let language = if options.syntax { resolved } else { None };
             EditorView {
                 id: editor_id(),
                 buffer: &mut doc.buffer,

@@ -451,7 +451,104 @@ pub fn load_user_languages(dir: Option<&Path>) -> Vec<String> {
 
 /// 依副檔名選語言；不認得的回傳 `None`（不上色）。使用者自訂的語言優先。
 pub fn language_for(path: Option<&Path>) -> Option<&'static Language> {
-    let name = path?.file_name()?.to_string_lossy().to_ascii_lowercase();
+    language_for_name(&path?.file_name()?.to_string_lossy())
+}
+
+/// 使用者選的語言：自動（依副檔名；沒有檔名時看內容）、純文字（不上色）、或指定某個語言。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LangChoice {
+    #[default]
+    Auto,
+    Plain,
+    Named(&'static str),
+}
+
+/// 所有可以選的語言：使用者自訂的在前，其後是內建的；名稱重複的只列第一個。
+pub fn all_languages() -> Vec<&'static Language> {
+    let builtin: [&'static Language; 14] = [
+        &RUST, &C_LIKE, &JAVA_LIKE, &JAVASCRIPT, &PYTHON, &GO, &SHELL, &SQL, &CSS, &LUA, &JSON,
+        &CONFIG, &MARKUP, &MARKDOWN,
+    ];
+    let mut out: Vec<&'static Language> = Vec::new();
+    let users = USER.get().into_iter().flatten().map(|(_, l)| *l);
+    for l in users.chain(builtin) {
+        if !out.iter().any(|o| o.name == l.name) {
+            out.push(l);
+        }
+    }
+    out
+}
+
+/// 依名稱找語言（名稱以 [`all_languages`] 為準）。
+pub fn language_named(name: &str) -> Option<&'static Language> {
+    all_languages().into_iter().find(|l| l.name == name)
+}
+
+/// 沒有檔名時看開頭的內容猜語言：shebang、`<?php`、HTML／XML 標記、JSON。猜不出來回傳 `None`。
+pub fn detect(head: &str) -> Option<&'static Language> {
+    let head = head.trim_start_matches('\u{feff}').trim_start();
+    let first = head.lines().next().unwrap_or("").trim_end();
+    if let Some(rest) = first.strip_prefix("#!") {
+        let rest = rest.to_ascii_lowercase();
+        let ext = if rest.contains("python") {
+            "py"
+        } else if rest.contains("node") || rest.contains("deno") || rest.contains("bun") {
+            "js"
+        } else if rest.contains("lua") {
+            "lua"
+        } else if ["sh", "bash", "zsh", "pwsh", "powershell", "fish", "ksh", "dash"]
+            .iter()
+            .any(|s| rest.split(|c: char| !c.is_alphanumeric()).any(|w| w == *s))
+        {
+            "sh"
+        } else {
+            return None;
+        };
+        return language_for_name(&format!("x.{ext}"));
+    }
+    let lower: String = head.chars().take(64).collect::<String>().to_ascii_lowercase();
+    if lower.starts_with("<?php") {
+        return language_for_name("x.php");
+    }
+    if lower.starts_with("<?xml") || lower.starts_with("<svg") {
+        return language_for_name("x.xml");
+    }
+    if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
+        return language_for_name("x.html");
+    }
+    let mut chars = head.chars();
+    let next = chars.by_ref().skip(1).find(|c| !c.is_whitespace());
+    match (head.chars().next(), next) {
+        (Some('{'), Some('"' | '}')) => language_for_name("x.json"),
+        (Some('['), Some('{' | '"' | '[' | ']' | '0'..='9' | '-')) => language_for_name("x.json"),
+        (Some('<'), _) if first.ends_with('>') && first.len() > 2 => language_for_name("x.html"),
+        _ => None,
+    }
+}
+
+/// 這份文件實際使用的語言：使用者的選擇優先；自動時，有檔名就看副檔名，沒有檔名就看內容。
+pub fn resolve(choice: LangChoice, path: Option<&Path>, buf: &Buffer) -> Option<&'static Language> {
+    match choice {
+        LangChoice::Plain => None,
+        LangChoice::Named(name) => language_named(name),
+        LangChoice::Auto if path.is_some() => language_for(path),
+        LangChoice::Auto => {
+            let n = buf.len_chars().min(400);
+            if n == 0 { None } else { detect(&buf.slice(0..n)) }
+        }
+    }
+}
+
+impl Language {
+    /// 這個語言的行註解符號（第一個）；沒有行註解就是 `None`。
+    pub fn line_comment(&self) -> Option<&'static str> {
+        self.line_comments.first().copied().filter(|c| !c.is_empty())
+    }
+}
+
+/// 依檔名（不含資料夾）選語言。
+pub fn language_for_name(name: &str) -> Option<&'static Language> {
+    let name = name.to_ascii_lowercase();
     let ext = name.rsplit_once('.').map_or(name.as_str(), |(_, e)| e);
     if let Some(users) = USER.get() {
         // 副檔名或完整檔名（例如 makefile）都可以
@@ -1156,6 +1253,63 @@ mod tests {
         assert!(err("interpolation = ${").contains("interpolation"));
         assert!(err("interpolation = ${, }\ninterpolation_in = weird").contains("weird"));
         assert!(err("interpolation_in = double").contains("interpolation"));
+    }
+
+    fn name_of(head: &str) -> Option<&'static str> {
+        detect(head).map(|l| l.name)
+    }
+
+    #[test]
+    fn content_detection_for_unnamed_documents() {
+        assert_eq!(name_of("#!/usr/bin/env python3\nprint(1)"), Some("Python"));
+        assert_eq!(name_of("#!/bin/bash\necho hi"), Some("Shell"));
+        assert_eq!(name_of("#!/usr/bin/env node"), Some("JavaScript/TypeScript"));
+        assert_eq!(name_of("#!/usr/bin/perl"), None, "不認得的直譯器不亂猜");
+        assert_eq!(name_of("\u{feff}  <!DOCTYPE html>\n<p>"), Some("HTML/XML"));
+        assert_eq!(name_of("<?xml version=\"1.0\"?>"), Some("HTML/XML"));
+        assert_eq!(name_of("<div>hello</div>"), Some("HTML/XML"));
+        assert_eq!(name_of("{\n  \"a\": 1\n}"), Some("JSON"));
+        assert_eq!(name_of("[1, 2, 3]"), Some("JSON"));
+        assert_eq!(name_of("[{\"a\":1}]"), Some("JSON"));
+        assert_eq!(name_of("[section]\nkey = 1"), None, "ini 的區段不是 JSON");
+        assert_eq!(name_of("{ not json"), None);
+        assert_eq!(name_of("just some notes"), None);
+        assert_eq!(name_of(""), None);
+        // <?php 要有對應的自訂語言才認得（內建沒有 PHP）
+        assert_eq!(name_of("<?php echo 1;"), language_for_name("x.php").map(|l| l.name));
+    }
+
+    #[test]
+    fn language_choice_overrides_path_and_content() {
+        let rust = Buffer::from_text("fn main() {}");
+        let json = Buffer::from_text("{\"a\": 1}");
+        let rs = Some(Path::new("a.rs"));
+        let name = |c, p, b: &Buffer| resolve(c, p, b).map(|l| l.name);
+        // 自動：有檔名看副檔名（不看內容），沒檔名看內容
+        assert_eq!(name(LangChoice::Auto, rs, &json), Some("Rust"));
+        assert_eq!(name(LangChoice::Auto, None, &json), Some("JSON"));
+        assert_eq!(name(LangChoice::Auto, None, &rust), None);
+        // 手動指定：任何情況都以它為準；純文字不上色
+        assert_eq!(name(LangChoice::Named("Python"), rs, &rust), Some("Python"));
+        assert_eq!(name(LangChoice::Named("Python"), None, &rust), Some("Python"));
+        assert_eq!(name(LangChoice::Plain, rs, &rust), None);
+        assert_eq!(name(LangChoice::Named("不存在"), rs, &rust), None);
+    }
+
+    #[test]
+    fn language_list_has_unique_names_and_every_name_resolves() {
+        let all = all_languages();
+        assert!(all.len() >= 14);
+        let mut names: Vec<_> = all.iter().map(|l| l.name).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), all.len(), "名稱不能重複");
+        for l in &all {
+            assert_eq!(language_named(l.name).map(|x| x.name), Some(l.name));
+        }
+        assert_eq!(language_named("Rust").unwrap().line_comment(), Some("//"));
+        assert_eq!(language_named("Python").unwrap().line_comment(), Some("#"));
+        assert_eq!(language_named("CSS").unwrap().line_comment(), None);
     }
 
     #[test]

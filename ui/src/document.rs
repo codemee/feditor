@@ -26,6 +26,8 @@ pub struct Document {
     format_changed: bool,
     /// 最後一次讀取或寫入這個檔案時，磁碟上的修改時間。用來發現別的程式改了檔案。
     disk_mtime: Option<std::time::SystemTime>,
+    /// 語法上色用的語言：自動（預設）、純文字、或手動指定。只屬於這個分頁，不寫進檔案或工作階段。
+    pub lang: crate::syntax::LangChoice,
 }
 
 /// 緩衝區內容的指紋；只走過 rope 的各個區塊，不需要組出整份字串。
@@ -147,7 +149,9 @@ impl Document {
         })?;
         let bytes = std::fs::read(&path)?;
         let (doc, warnings) = Self::from_decoded(&path, fileio::decode_with(&bytes, encoding));
+        let lang = self.lang; // 重新載入不改變使用者選的語言
         *self = doc;
+        self.lang = lang;
         Ok(warnings)
     }
 
@@ -173,6 +177,7 @@ impl Document {
                 saved,
                 format_changed: false,
                 disk_mtime: mtime_of(path),
+                lang: Default::default(),
                 buffer,
                 format: d.format,
                 dirty: false,
@@ -336,9 +341,11 @@ mod tests {
         let (mut doc, _) = Document::open(&p).unwrap();
         doc.buffer = Buffer::from_text("亂碼");
         doc.dirty = true;
+        doc.lang = crate::syntax::LangChoice::Plain;
         doc.reload_with(BIG5).unwrap();
         assert_eq!(doc.text(), "你好，世界");
         assert!(!doc.dirty);
+        assert_eq!(doc.lang, crate::syntax::LangChoice::Plain, "重新載入要保留語言選擇");
     }
 
     #[test]
