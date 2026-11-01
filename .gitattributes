@@ -1,0 +1,4 @@
+# 測試用範例檔刻意含有各種編碼與換行，必須原樣保存
+examples/files/* -text
+*.ico binary
+*.png binary

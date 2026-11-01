@@ -1,0 +1,833 @@
+//! 輕量的語法高亮：逐行分詞，只標出註解、字串、數字、關鍵字、型別與函式名稱。
+//!
+//! 不是完整的語法分析，目標是「看得出結構、永遠不會拖慢編輯」：
+//!
+//! - 每一行獨立分詞，只帶一個跨行狀態（區塊註解、三引號字串、反引號字串）；
+//! - 編輯區只排版看得到的行，所以只替它們分詞；
+//! - 跨行狀態用 [`StateCache`] 逐行累積，修改文字後作廢重算；超過 [`MAX_FULL_LINES`] 行的文件
+//!   改成「往回看 [`LOOKBACK`] 行」估計，不會因為檔案很大而卡住。
+//!
+//! 與畫面無關，方便單元測試。
+
+use feditor_core::Buffer;
+use std::ops::Range;
+use std::path::Path;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Kind {
+    #[default]
+    Plain,
+    Comment,
+    String,
+    Number,
+    Keyword,
+    Type,
+    Function,
+}
+
+/// 跨行的狀態：一行結束時還沒結束的東西。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum State {
+    #[default]
+    Normal,
+    /// 在區塊註解裡。
+    Block,
+    /// 在三引號字串裡（記錄是哪種引號）。
+    Triple(char),
+    /// 在反引號字串（JavaScript 的樣板字串）裡。
+    Backtick,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Code,
+    /// HTML／XML。
+    Markup,
+    Markdown,
+}
+
+pub struct Language {
+    pub name: &'static str,
+    mode: Mode,
+    line_comments: &'static [&'static str],
+    block: Option<(&'static str, &'static str)>,
+    /// 字串的引號字元。
+    quotes: &'static [char],
+    triple_quotes: bool,
+    backtick_strings: bool,
+    /// Rust：單引號可能是字元常值，也可能是生命週期。
+    rust_char: bool,
+    keywords: &'static [&'static str],
+    /// 大寫開頭的識別字當成型別。
+    capital_types: bool,
+    /// 行首的 `[區段]` 與「鍵 =」（ini、toml、yaml）。
+    config: bool,
+    case_insensitive: bool,
+}
+
+const fn lang(name: &'static str) -> Language {
+    Language {
+        name,
+        mode: Mode::Code,
+        line_comments: &[],
+        block: None,
+        quotes: &['"', '\''],
+        triple_quotes: false,
+        backtick_strings: false,
+        rust_char: false,
+        keywords: &[],
+        capital_types: false,
+        config: false,
+        case_insensitive: false,
+    }
+}
+
+const SLASH_BLOCK: Option<(&str, &str)> = Some(("/*", "*/"));
+
+static RUST: Language = Language {
+    line_comments: &["//"],
+    block: SLASH_BLOCK,
+    quotes: &['"'],
+    rust_char: true,
+    capital_types: true,
+    keywords: &[
+        "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+        "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+        "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
+        "true", "type", "unsafe", "use", "where", "while",
+    ],
+    ..lang("Rust")
+};
+
+static C_LIKE: Language = Language {
+    line_comments: &["//"],
+    block: SLASH_BLOCK,
+    capital_types: true,
+    keywords: &[
+        "auto", "bool", "break", "case", "catch", "char", "class", "const", "continue", "default",
+        "delete", "do", "double", "else", "enum", "explicit", "extern", "false", "float", "for",
+        "friend", "goto", "if", "include", "inline", "int", "long", "namespace", "new", "nullptr",
+        "operator", "private", "protected", "public", "register", "return", "short", "signed",
+        "sizeof", "static", "struct", "switch", "template", "this", "throw", "true", "try",
+        "typedef", "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "while",
+    ],
+    ..lang("C/C++")
+};
+
+static JAVA_LIKE: Language = Language {
+    line_comments: &["//"],
+    block: SLASH_BLOCK,
+    capital_types: true,
+    keywords: &[
+        "abstract", "as", "async", "await", "base", "boolean", "break", "byte", "case", "catch",
+        "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "extends",
+        "false", "final", "finally", "float", "for", "foreach", "if", "implements", "import", "in",
+        "instanceof", "int", "interface", "internal", "is", "long", "namespace", "new", "null",
+        "override", "package", "private", "protected", "public", "return", "sealed", "short",
+        "static", "string", "super", "switch", "this", "throw", "throws", "true", "try", "using",
+        "var", "virtual", "void", "while", "yield",
+    ],
+    ..lang("Java/C#")
+};
+
+static JAVASCRIPT: Language = Language {
+    line_comments: &["//"],
+    block: SLASH_BLOCK,
+    backtick_strings: true,
+    capital_types: true,
+    keywords: &[
+        "async", "await", "break", "case", "catch", "class", "const", "continue", "debugger",
+        "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for",
+        "from", "function", "if", "implements", "import", "in", "instanceof", "interface", "let",
+        "new", "null", "of", "private", "protected", "public", "readonly", "return", "static",
+        "super", "switch", "this", "throw", "true", "try", "type", "typeof", "undefined", "var",
+        "void", "while", "with", "yield",
+    ],
+    ..lang("JavaScript/TypeScript")
+};
+
+static PYTHON: Language = Language {
+    line_comments: &["#"],
+    triple_quotes: true,
+    capital_types: true,
+    keywords: &[
+        "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+        "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import",
+        "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True",
+        "try", "while", "with", "yield",
+    ],
+    ..lang("Python")
+};
+
+static GO: Language = Language {
+    line_comments: &["//"],
+    block: SLASH_BLOCK,
+    quotes: &['"', '\''],
+    backtick_strings: true,
+    keywords: &[
+        "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",
+        "false", "for", "func", "go", "goto", "if", "import", "interface", "map", "nil",
+        "package", "range", "return", "select", "struct", "switch", "true", "type", "var",
+    ],
+    capital_types: true,
+    ..lang("Go")
+};
+
+static SHELL: Language = Language {
+    line_comments: &["#"],
+    keywords: &[
+        "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if",
+        "in", "local", "return", "then", "until", "while", "param", "foreach", "switch",
+    ],
+    ..lang("Shell")
+};
+
+static SQL: Language = Language {
+    line_comments: &["--"],
+    block: SLASH_BLOCK,
+    case_insensitive: true,
+    keywords: &[
+        "add", "all", "alter", "and", "as", "asc", "between", "by", "case", "create", "delete",
+        "desc", "distinct", "drop", "else", "end", "exists", "from", "group", "having", "in",
+        "index", "inner", "insert", "into", "is", "join", "left", "like", "limit", "not", "null",
+        "on", "or", "order", "outer", "primary", "right", "select", "set", "table", "then",
+        "union", "unique", "update", "values", "view", "when", "where",
+    ],
+    ..lang("SQL")
+};
+
+static CSS: Language = Language {
+    block: SLASH_BLOCK,
+    keywords: &["important"],
+    ..lang("CSS")
+};
+
+static LUA: Language = Language {
+    line_comments: &["--"],
+    block: Some(("--[[", "]]")),
+    keywords: &[
+        "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+        "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+    ],
+    ..lang("Lua")
+};
+
+static JSON: Language = Language {
+    quotes: &['"'],
+    keywords: &["true", "false", "null"],
+    ..lang("JSON")
+};
+
+static CONFIG: Language = Language {
+    line_comments: &["#", ";"],
+    config: true,
+    keywords: &["true", "false", "null", "yes", "no", "on", "off"],
+    ..lang("設定檔")
+};
+
+static MARKUP: Language = Language {
+    mode: Mode::Markup,
+    block: Some(("<!--", "-->")),
+    ..lang("HTML/XML")
+};
+
+static MARKDOWN: Language = Language {
+    mode: Mode::Markdown,
+    ..lang("Markdown")
+};
+
+/// 依副檔名選語言；不認得的回傳 `None`（不上色）。
+pub fn language_for(path: Option<&Path>) -> Option<&'static Language> {
+    let name = path?.file_name()?.to_string_lossy().to_ascii_lowercase();
+    let ext = name.rsplit_once('.').map_or(name.as_str(), |(_, e)| e);
+    Some(match ext {
+        "rs" => &RUST,
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "ino" => &C_LIKE,
+        "java" | "cs" | "kt" | "kts" | "scala" | "dart" | "swift" => &JAVA_LIKE,
+        "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "slint" => &JAVASCRIPT,
+        "py" | "pyw" => &PYTHON,
+        "go" => &GO,
+        "sh" | "bash" | "zsh" | "ps1" | "psm1" | "bat" | "cmd" => &SHELL,
+        "sql" => &SQL,
+        "css" | "scss" | "less" => &CSS,
+        "lua" => &LUA,
+        "json" | "jsonc" => &JSON,
+        "toml" | "ini" | "cfg" | "conf" | "yml" | "yaml" | "properties" | "gitignore" => &CONFIG,
+        "html" | "htm" | "xml" | "svg" | "xaml" | "vue" => &MARKUP,
+        "md" | "markdown" => &MARKDOWN,
+        _ => return None,
+    })
+}
+
+fn is_ident_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
+fn is_ident(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn matches_at(chars: &[char], i: usize, pat: &str) -> bool {
+    pat.chars().enumerate().all(|(k, p)| chars.get(i + k) == Some(&p))
+}
+
+fn find_from(chars: &[char], from: usize, pat: &str) -> Option<usize> {
+    (from..chars.len()).find(|&i| matches_at(chars, i, pat))
+}
+
+/// 一行的分詞結果：字元範圍（相對於這一行）與種類，Plain 不列出；以及行尾的狀態。
+pub fn highlight_line(lang: &Language, line: &str, state: State) -> (Vec<(Range<usize>, Kind)>, State) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out: Vec<(Range<usize>, Kind)> = Vec::new();
+    let mut i = 0;
+    let mut state = state;
+
+    // 先把上一行沒結束的東西接完
+    match state {
+        State::Normal => {}
+        State::Block => {
+            let (_, end) = lang.block.unwrap_or(("", "*/"));
+            match find_from(&chars, 0, end) {
+                Some(p) => {
+                    i = p + end.chars().count();
+                    out.push((0..i, Kind::Comment));
+                    state = State::Normal;
+                }
+                None => {
+                    if !chars.is_empty() {
+                        out.push((0..chars.len(), Kind::Comment));
+                    }
+                    return (out, State::Block);
+                }
+            }
+        }
+        State::Triple(q) => {
+            let pat: String = std::iter::repeat_n(q, 3).collect();
+            match find_from(&chars, 0, &pat) {
+                Some(p) => {
+                    i = p + 3;
+                    out.push((0..i, Kind::String));
+                    state = State::Normal;
+                }
+                None => {
+                    if !chars.is_empty() {
+                        out.push((0..chars.len(), Kind::String));
+                    }
+                    return (out, State::Triple(q));
+                }
+            }
+        }
+        State::Backtick => match scan_string(&chars, 0, '`') {
+            (end, true) => {
+                out.push((0..end, Kind::String));
+                i = end;
+                state = State::Normal;
+            }
+            (end, false) => {
+                if end > 0 {
+                    out.push((0..end, Kind::String));
+                }
+                return (out, State::Backtick);
+            }
+        },
+    }
+
+    match lang.mode {
+        Mode::Markup => return highlight_markup(lang, &chars, i, out),
+        Mode::Markdown => return (highlight_markdown(&chars), State::Normal),
+        Mode::Code => {}
+    }
+
+    // 設定檔：行首的 [區段]，與「鍵 =」「鍵:」
+    if lang.config && i == 0 {
+        let indent = chars.iter().take_while(|c| c.is_whitespace()).count();
+        if chars.get(indent) == Some(&'[') {
+            if let Some(close) = chars.iter().rposition(|c| *c == ']') {
+                if close > indent {
+                    out.push((indent..close + 1, Kind::Type));
+                    i = close + 1;
+                }
+            }
+        } else if let Some(sep) = chars.iter().position(|c| *c == '=' || *c == ':') {
+            let key_end = chars[..sep].iter().rposition(|c| !c.is_whitespace()).map_or(0, |p| p + 1);
+            let key_start = indent + usize::from(chars.get(indent) == Some(&'-')) * 2;
+            let is_comment = lang.line_comments.iter().any(|c| matches_at(&chars, indent, c));
+            if !is_comment && key_end > key_start && chars[key_start..key_end].iter().all(|c| is_ident(*c) || *c == '.' || *c == '-' || *c == ' ') {
+                out.push((key_start..key_end, Kind::Function));
+            }
+        }
+    }
+
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(pre) = lang.line_comments.iter().find(|p| matches_at(&chars, i, p)) {
+            // 設定檔裡 `#` 要在行首或前面是空白才算註解（網址裡的 # 不是）
+            let ok = !lang.config || i == 0 || chars[i - 1].is_whitespace();
+            if ok || pre.is_empty() {
+                out.push((i..chars.len(), Kind::Comment));
+                return (out, State::Normal);
+            }
+        }
+        if let Some((open, close)) = lang.block {
+            if matches_at(&chars, i, open) {
+                match find_from(&chars, i + open.chars().count(), close) {
+                    Some(p) => {
+                        let end = p + close.chars().count();
+                        out.push((i..end, Kind::Comment));
+                        i = end;
+                        continue;
+                    }
+                    None => {
+                        out.push((i..chars.len(), Kind::Comment));
+                        return (out, State::Block);
+                    }
+                }
+            }
+        }
+        if lang.triple_quotes && (c == '"' || c == '\'') && matches_at(&chars, i, &format!("{c}{c}{c}")) {
+            let pat = format!("{c}{c}{c}");
+            match find_from(&chars, i + 3, &pat) {
+                Some(p) => {
+                    out.push((i..p + 3, Kind::String));
+                    i = p + 3;
+                    continue;
+                }
+                None => {
+                    out.push((i..chars.len(), Kind::String));
+                    return (out, State::Triple(c));
+                }
+            }
+        }
+        if lang.rust_char && c == '\'' {
+            // 字元常值 'a'、'\n'；其他（'a、'static）是生命週期
+            let end = if chars.get(i + 1) == Some(&'\\') {
+                (i + 2..(i + 8).min(chars.len())).find(|&k| chars[k] == '\'').map(|k| k + 1)
+            } else if chars.get(i + 2) == Some(&'\'') {
+                Some(i + 3)
+            } else {
+                None
+            };
+            if let Some(end) = end {
+                out.push((i..end, Kind::String));
+                i = end;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if lang.backtick_strings && c == '`' {
+            match scan_string(&chars, i + 1, '`') {
+                (end, true) => {
+                    out.push((i..end, Kind::String));
+                    i = end;
+                }
+                (end, false) => {
+                    out.push((i..end, Kind::String));
+                    return (out, State::Backtick);
+                }
+            }
+            continue;
+        }
+        if !lang.rust_char && lang.quotes.contains(&c) || lang.rust_char && c == '"' {
+            let (end, _) = scan_string(&chars, i + 1, c);
+            out.push((i..end, Kind::String));
+            i = end;
+            continue;
+        }
+        if c.is_ascii_digit() && (i == 0 || !is_ident(chars[i - 1])) {
+            let mut j = i + 1;
+            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_' || (chars[j] == '.' && chars.get(j + 1).is_some_and(char::is_ascii_digit))) {
+                j += 1;
+            }
+            out.push((i..j, Kind::Number));
+            i = j;
+            continue;
+        }
+        if is_ident_start(c) {
+            let mut j = i + 1;
+            while j < chars.len() && is_ident(chars[j]) {
+                j += 1;
+            }
+            let word: String = chars[i..j].iter().collect();
+            let is_kw = if lang.case_insensitive {
+                lang.keywords.iter().any(|k| k.eq_ignore_ascii_case(&word))
+            } else {
+                lang.keywords.contains(&word.as_str())
+            };
+            let next = chars[j..].iter().find(|c| !matches!(c, ' ' | '\t'));
+            let kind = if is_kw {
+                Kind::Keyword
+            } else if lang.capital_types && c.is_uppercase() && word.chars().any(|ch| ch.is_lowercase()) {
+                Kind::Type
+            } else if next == Some(&'(') {
+                Kind::Function
+            } else {
+                Kind::Plain
+            };
+            if kind != Kind::Plain {
+                out.push((i..j, kind));
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    (out, state)
+}
+
+/// 從 `from` 開始掃一個字串，直到遇到結尾的 `quote`（略過反斜線跳脫）。
+/// 回傳（字串結束後的位置, 有沒有找到結尾）。沒找到結尾時位置是行尾。
+fn scan_string(chars: &[char], from: usize, quote: char) -> (usize, bool) {
+    let mut i = from;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            c if c == quote => return (i + 1, true),
+            _ => i += 1,
+        }
+    }
+    (chars.len(), false)
+}
+
+fn highlight_markup(
+    lang: &Language,
+    chars: &[char],
+    mut i: usize,
+    mut out: Vec<(Range<usize>, Kind)>,
+) -> (Vec<(Range<usize>, Kind)>, State) {
+    let (open, close) = lang.block.unwrap_or(("<!--", "-->"));
+    while i < chars.len() {
+        if matches_at(chars, i, open) {
+            match find_from(chars, i + open.chars().count(), close) {
+                Some(p) => {
+                    let end = p + close.chars().count();
+                    out.push((i..end, Kind::Comment));
+                    i = end;
+                    continue;
+                }
+                None => {
+                    out.push((i..chars.len(), Kind::Comment));
+                    return (out, State::Block);
+                }
+            }
+        }
+        if chars[i] == '<' && chars.get(i + 1).is_some_and(|c| is_ident_start(*c) || matches!(c, '/' | '!' | '?')) {
+            // 標籤名稱（含 < 與 /）
+            let mut j = i + 1;
+            if matches!(chars.get(j), Some('/' | '!' | '?')) {
+                j += 1;
+            }
+            while j < chars.len() && (is_ident(chars[j]) || matches!(chars[j], '-' | ':' | '.')) {
+                j += 1;
+            }
+            out.push((i..j, Kind::Keyword));
+            // 標籤內：屬性值（字串）、屬性名稱（函式色），直到 >
+            while j < chars.len() && chars[j] != '>' {
+                if chars[j] == '"' || chars[j] == '\'' {
+                    let (end, _) = scan_string(chars, j + 1, chars[j]);
+                    out.push((j..end, Kind::String));
+                    j = end;
+                } else if is_ident_start(chars[j]) {
+                    let s = j;
+                    while j < chars.len() && (is_ident(chars[j]) || matches!(chars[j], '-' | ':')) {
+                        j += 1;
+                    }
+                    out.push((s..j, Kind::Function));
+                } else {
+                    j += 1;
+                }
+            }
+            if j < chars.len() {
+                out.push((j..j + 1, Kind::Keyword));
+                j += 1;
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    (out, State::Normal)
+}
+
+fn highlight_markdown(chars: &[char]) -> Vec<(Range<usize>, Kind)> {
+    let mut out = Vec::new();
+    let indent = chars.iter().take_while(|c| **c == ' ').count();
+    let rest = &chars[indent..];
+    if rest.first() == Some(&'#') {
+        let hashes = rest.iter().take_while(|c| **c == '#').count();
+        if hashes <= 6 && rest.get(hashes).is_none_or(|c| *c == ' ') {
+            out.push((indent..chars.len(), Kind::Keyword));
+            return out;
+        }
+    }
+    if matches_at(chars, indent, "```") || matches_at(chars, indent, "~~~") {
+        out.push((indent..chars.len(), Kind::Comment));
+        return out;
+    }
+    if matches!(rest.first(), Some('-' | '*' | '+')) && rest.get(1) == Some(&' ') {
+        out.push((indent..indent + 1, Kind::Keyword));
+    }
+    // 行內程式碼 `...`
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '`' {
+            if let Some(end) = chars[i + 1..].iter().position(|c| *c == '`') {
+                out.push((i..i + 1 + end + 1, Kind::String));
+                i += end + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// 一行裡每個字元的種類（長度等於字元數）。
+pub fn kinds_of(lang: &Language, line: &str, state: State) -> Vec<Kind> {
+    let n = line.chars().count();
+    let mut kinds = vec![Kind::Plain; n];
+    for (range, kind) in highlight_line(lang, line, state).0 {
+        for k in kinds.iter_mut().take(range.end.min(n)).skip(range.start) {
+            *k = kind;
+        }
+    }
+    kinds
+}
+
+/// 文件超過這個行數就不累積整份文件的跨行狀態，改用「往回看」估計。
+pub const MAX_FULL_LINES: usize = 20_000;
+/// 估計時往回看幾行。
+pub const LOOKBACK: usize = 1000;
+
+/// 每一行開頭的跨行狀態，逐行累積。
+#[derive(Debug, Default)]
+pub struct StateCache {
+    rev: u64,
+    chars: usize,
+    lang: Option<&'static str>,
+    /// `starts[i]` 是第 `i` 行開頭的狀態。
+    starts: Vec<State>,
+}
+
+impl StateCache {
+    /// 第 `line` 行開頭的狀態。
+    pub fn state_at(&mut self, lang: &'static Language, buf: &Buffer, line: usize) -> State {
+        if buf.line_count() > MAX_FULL_LINES {
+            let from = line.saturating_sub(LOOKBACK);
+            let mut state = State::Normal;
+            for l in from..line {
+                state = highlight_line(lang, &buf.line_text(l), state).1;
+            }
+            return state;
+        }
+        if self.rev != buf.revision()
+            || self.chars != buf.len_chars()
+            || self.lang != Some(lang.name)
+            || self.starts.is_empty()
+        {
+            self.rev = buf.revision();
+            self.chars = buf.len_chars();
+            self.lang = Some(lang.name);
+            self.starts.clear();
+            self.starts.push(State::Normal);
+        }
+        while self.starts.len() <= line {
+            let l = self.starts.len() - 1;
+            let next = highlight_line(lang, &buf.line_text(l), self.starts[l]).1;
+            self.starts.push(next);
+        }
+        self.starts[line]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kinds(lang: &Language, line: &str) -> Vec<(String, Kind)> {
+        let chars: Vec<char> = line.chars().collect();
+        highlight_line(lang, line, State::Normal)
+            .0
+            .into_iter()
+            .map(|(r, k)| (chars[r].iter().collect(), k))
+            .collect()
+    }
+
+    #[test]
+    fn language_is_picked_by_extension() {
+        let p = |s: &str| language_for(Some(Path::new(s))).map(|l| l.name);
+        assert_eq!(p("a/main.rs"), Some("Rust"));
+        assert_eq!(p("X.PY"), Some("Python"));
+        assert_eq!(p("index.html"), Some("HTML/XML"));
+        assert_eq!(p("notes.txt"), None);
+        assert_eq!(p("Makefile"), None);
+        assert!(language_for(None).is_none());
+    }
+
+    #[test]
+    fn rust_tokens() {
+        let r = kinds(&RUST, r#"let x: Vec<u8> = foo("hi", 42); // note"#);
+        assert!(r.contains(&("let".into(), Kind::Keyword)));
+        assert!(r.contains(&("Vec".into(), Kind::Type)));
+        assert!(r.contains(&("foo".into(), Kind::Function)));
+        assert!(r.contains(&("\"hi\"".into(), Kind::String)));
+        assert!(r.contains(&("42".into(), Kind::Number)));
+        assert!(r.contains(&("// note".into(), Kind::Comment)));
+    }
+
+    #[test]
+    fn rust_lifetimes_are_not_strings_but_char_literals_are() {
+        let r = kinds(&RUST, "fn f<'a>(x: &'a str) -> char { 'x' }");
+        assert!(r.contains(&("'x'".into(), Kind::String)));
+        assert!(!r.iter().any(|(t, k)| *k == Kind::String && t.contains("'a")), "{r:?}");
+        let r = kinds(&RUST, r"let n = '\n'; let s = '\'';");
+        assert!(r.contains(&(r"'\n'".into(), Kind::String)));
+    }
+
+    #[test]
+    fn keywords_inside_strings_and_comments_stay_plain() {
+        let r = kinds(&RUST, r#"let s = "fn if"; // for while"#);
+        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 1, "{r:?}");
+    }
+
+    #[test]
+    fn string_escapes_do_not_end_the_string() {
+        let r = kinds(&RUST, r#"let s = "a\"b"; let t = 1;"#);
+        assert!(r.contains(&(r#""a\"b""#.into(), Kind::String)));
+        assert!(r.contains(&("1".into(), Kind::Number)));
+    }
+
+    #[test]
+    fn block_comments_carry_across_lines() {
+        let (spans, st) = highlight_line(&RUST, "x /* start", State::Normal);
+        assert_eq!(st, State::Block);
+        assert_eq!(spans, vec![(2..10, Kind::Comment)]);
+        let (spans, st) = highlight_line(&RUST, "still inside", State::Block);
+        assert_eq!((spans, st), (vec![(0..12, Kind::Comment)], State::Block));
+        let (spans, st) = highlight_line(&RUST, "end */ let", State::Block);
+        assert_eq!(st, State::Normal);
+        assert_eq!(spans[0], (0..6, Kind::Comment));
+        assert!(spans.iter().any(|(r, k)| *r == (7..10) && *k == Kind::Keyword));
+    }
+
+    #[test]
+    fn python_triple_quotes_and_hash_comments() {
+        let (spans, st) = highlight_line(&PYTHON, "x = \"\"\"doc", State::Normal);
+        assert_eq!(st, State::Triple('"'));
+        assert!(spans.contains(&(4..10, Kind::String)));
+        let (_, st) = highlight_line(&PYTHON, "end\"\"\" + 1", State::Triple('"'));
+        assert_eq!(st, State::Normal);
+        let r = kinds(&PYTHON, "def f(x): # hi");
+        assert!(r.contains(&("def".into(), Kind::Keyword)));
+        assert!(r.contains(&("# hi".into(), Kind::Comment)));
+    }
+
+    #[test]
+    fn javascript_template_strings_span_lines() {
+        let (_, st) = highlight_line(&JAVASCRIPT, "const a = `one", State::Normal);
+        assert_eq!(st, State::Backtick);
+        let (spans, st) = highlight_line(&JAVASCRIPT, "two` + 3", State::Backtick);
+        assert_eq!(st, State::Normal);
+        assert_eq!(spans[0], (0..4, Kind::String));
+    }
+
+    #[test]
+    fn numbers_need_a_word_boundary() {
+        let r = kinds(&RUST, "let a1 = 0x1F + 3.5 + x2;");
+        assert!(r.contains(&("0x1F".into(), Kind::Number)));
+        assert!(r.contains(&("3.5".into(), Kind::Number)));
+        assert!(!r.iter().any(|(t, _)| t == "1" || t == "2"), "{r:?}");
+    }
+
+    #[test]
+    fn cjk_text_is_indexed_by_characters_not_bytes() {
+        let r = kinds(&RUST, r#"let 名稱 = "你好"; // 註解"#);
+        assert!(r.contains(&(r#""你好""#.into(), Kind::String)));
+        assert!(r.contains(&("// 註解".into(), Kind::Comment)));
+        let ks = kinds_of(&RUST, r#"a "你好" b"#, State::Normal);
+        assert_eq!(ks.len(), 8);
+        assert_eq!(ks[2], Kind::String);
+        assert_eq!(ks[5], Kind::String);
+        assert_eq!(ks[7], Kind::Plain);
+    }
+
+    #[test]
+    fn sql_is_case_insensitive() {
+        let r = kinds(&SQL, "SeLeCt * From t WHERE x = 1 -- c");
+        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 3, "{r:?}");
+        assert!(r.contains(&("-- c".into(), Kind::Comment)));
+    }
+
+    #[test]
+    fn markup_tags_attributes_and_comments() {
+        let r = kinds(&MARKUP, r#"<div class="a">text</div> <!-- c -->"#);
+        assert!(r.contains(&("<div".into(), Kind::Keyword)));
+        assert!(r.contains(&("class".into(), Kind::Function)));
+        assert!(r.contains(&("\"a\"".into(), Kind::String)));
+        assert!(r.contains(&("</div".into(), Kind::Keyword)));
+        assert!(r.contains(&("<!-- c -->".into(), Kind::Comment)));
+        let (_, st) = highlight_line(&MARKUP, "<!-- open", State::Normal);
+        assert_eq!(st, State::Block);
+    }
+
+    #[test]
+    fn markdown_headings_fences_and_inline_code() {
+        assert_eq!(kinds(&MARKDOWN, "## Title"), vec![("## Title".into(), Kind::Keyword)]);
+        assert_eq!(kinds(&MARKDOWN, "```rust"), vec![("```rust".into(), Kind::Comment)]);
+        let r = kinds(&MARKDOWN, "- use `cargo` now");
+        assert!(r.contains(&("-".into(), Kind::Keyword)));
+        assert!(r.contains(&("`cargo`".into(), Kind::String)));
+        assert!(kinds(&MARKDOWN, "#hashtag").is_empty(), "# 後面沒有空白不是標題");
+    }
+
+    #[test]
+    fn config_files_sections_keys_and_url_hashes() {
+        let r = kinds(&CONFIG, "[package]");
+        assert_eq!(r, vec![("[package]".into(), Kind::Type)]);
+        let r = kinds(&CONFIG, "name = \"x\" # trailing");
+        assert!(r.contains(&("name".into(), Kind::Function)));
+        assert!(r.contains(&("# trailing".into(), Kind::Comment)));
+        let r = kinds(&CONFIG, "url = http://a/b#frag");
+        assert!(!r.iter().any(|(_, k)| *k == Kind::Comment), "{r:?}");
+        assert_eq!(kinds(&CONFIG, "# whole line"), vec![("# whole line".into(), Kind::Comment)]);
+        let r = kinds(&CONFIG, "enabled: true");
+        assert!(r.contains(&("true".into(), Kind::Keyword)));
+    }
+
+    #[test]
+    fn json_keys_values_and_keywords() {
+        let r = kinds(&JSON, r#"{"a": [1, true, null, "x"]}"#);
+        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::String).count(), 2);
+        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 2);
+        assert!(r.contains(&("1".into(), Kind::Number)));
+    }
+
+    #[test]
+    fn state_cache_follows_edits_and_matches_a_full_scan() {
+        let text = "a\n/* c\nb\n*/\nlet x = 1;\n";
+        let mut buf = Buffer::from_text(text);
+        let mut cache = StateCache::default();
+        let lang: &'static Language = &RUST;
+        assert_eq!(cache.state_at(lang, &buf, 0), State::Normal);
+        assert_eq!(cache.state_at(lang, &buf, 2), State::Block);
+        assert_eq!(cache.state_at(lang, &buf, 4), State::Normal);
+        // 刪掉註解開頭：後面的行不再在區塊註解裡
+        buf.remove(2..4);
+        assert_eq!(cache.state_at(lang, &buf, 2), State::Normal);
+    }
+
+    #[test]
+    fn huge_documents_use_the_lookback_estimate() {
+        let mut text = String::new();
+        for _ in 0..(MAX_FULL_LINES + 10) {
+            text.push_str("x\n");
+        }
+        let mut buf = Buffer::from_text(&text);
+        buf.insert(0, "/*\n");
+        let mut cache = StateCache::default();
+        // 離開頭很遠的行，往回看不到註解開頭：估計成 Normal（這是設計上的取捨）
+        assert_eq!(cache.state_at(&RUST, &buf, 15_000), State::Normal);
+        // 開頭附近仍然正確
+        assert_eq!(cache.state_at(&RUST, &buf, 5), State::Block);
+    }
+}

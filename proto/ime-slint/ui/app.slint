@@ -1,0 +1,20 @@
+import { TextEdit } from "std-widgets.slint";
+
+export component App inherits Window {
+    title: "IME 驗證 - Slint";
+    default-font-family: "Microsoft JhengHei";
+    preferred-width: 800px;
+    preferred-height: 500px;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+        Text {
+            text: "Slint IME 測試：請用注音／倉頡／拼音輸入，觀察候選字窗位置與組字中文字";
+        }
+        TextEdit {
+            vertical-stretch: 1;
+            font-size: 16px;
+        }
+    }
+}

@@ -1,0 +1,12 @@
+[package]
+name = "feditor-script-js"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+feditor-script = { version = "0.1.0", path = "../script" }
+rquickjs = "0.14.0"
+
+
+[dev-dependencies]
+feditor-core = { path = "../core" }

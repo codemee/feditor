@@ -1,0 +1,20 @@
+[package]
+name = "feditor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eframe = "0.37.0"
+encoding_rs = "0.8.44"
+feditor-core = { version = "0.1.0", path = "../core" }
+feditor-script = { version = "0.1.0", path = "../script" }
+feditor-script-js = { version = "0.1.0", path = "../script-js" }
+fontique = "0.11.1"
+rfd = "0.17.2"
+skrifa = "0.44.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.34"

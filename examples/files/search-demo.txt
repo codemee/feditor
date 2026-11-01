@@ -1,0 +1,143 @@
+搜尋與取代測試檔 / search & replace demo
+
+第 1 行：Fox 與 FOX 與 fox 大小寫混用
+第 2 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 3 行：沒有關鍵字的一般文字，用來撐出長度。
+第 4 行：foo@example.com 與 bar@test.org
+第 5 行：   前面有空白的縮排行
+第 6 行：price 100, 2500 and 42 元
+第 7 行：The quick brown fox jumps over the lazy dog. Order #91
+第 8 行：Fox 與 FOX 與 fox 大小寫混用
+第 9 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 10 行：沒有關鍵字的一般文字，用來撐出長度。
+第 11 行：foo@example.com 與 bar@test.org
+第 12 行：   前面有空白的縮排行
+第 13 行：price 100, 2500 and 42 元
+第 14 行：The quick brown fox jumps over the lazy dog. Order #182
+第 15 行：Fox 與 FOX 與 fox 大小寫混用
+第 16 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 17 行：沒有關鍵字的一般文字，用來撐出長度。
+第 18 行：foo@example.com 與 bar@test.org
+第 19 行：   前面有空白的縮排行
+第 20 行：price 100, 2500 and 42 元
+第 21 行：The quick brown fox jumps over the lazy dog. Order #273
+第 22 行：Fox 與 FOX 與 fox 大小寫混用
+第 23 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 24 行：沒有關鍵字的一般文字，用來撐出長度。
+第 25 行：foo@example.com 與 bar@test.org
+第 26 行：   前面有空白的縮排行
+第 27 行：price 100, 2500 and 42 元
+第 28 行：The quick brown fox jumps over the lazy dog. Order #364
+第 29 行：Fox 與 FOX 與 fox 大小寫混用
+第 30 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 31 行：沒有關鍵字的一般文字，用來撐出長度。
+第 32 行：foo@example.com 與 bar@test.org
+第 33 行：   前面有空白的縮排行
+第 34 行：price 100, 2500 and 42 元
+第 35 行：The quick brown fox jumps over the lazy dog. Order #455
+第 36 行：Fox 與 FOX 與 fox 大小寫混用
+第 37 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 38 行：沒有關鍵字的一般文字，用來撐出長度。
+第 39 行：foo@example.com 與 bar@test.org
+第 40 行：   前面有空白的縮排行
+第 41 行：price 100, 2500 and 42 元
+第 42 行：The quick brown fox jumps over the lazy dog. Order #546
+第 43 行：Fox 與 FOX 與 fox 大小寫混用
+第 44 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 45 行：沒有關鍵字的一般文字，用來撐出長度。
+第 46 行：foo@example.com 與 bar@test.org
+第 47 行：   前面有空白的縮排行
+第 48 行：price 100, 2500 and 42 元
+第 49 行：The quick brown fox jumps over the lazy dog. Order #637
+第 50 行：Fox 與 FOX 與 fox 大小寫混用
+第 51 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 52 行：沒有關鍵字的一般文字，用來撐出長度。
+第 53 行：foo@example.com 與 bar@test.org
+第 54 行：   前面有空白的縮排行
+第 55 行：price 100, 2500 and 42 元
+第 56 行：The quick brown fox jumps over the lazy dog. Order #728
+第 57 行：Fox 與 FOX 與 fox 大小寫混用
+第 58 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 59 行：沒有關鍵字的一般文字，用來撐出長度。
+第 60 行：foo@example.com 與 bar@test.org
+第 61 行：   前面有空白的縮排行
+第 62 行：price 100, 2500 and 42 元
+第 63 行：The quick brown fox jumps over the lazy dog. Order #819
+第 64 行：Fox 與 FOX 與 fox 大小寫混用
+第 65 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 66 行：沒有關鍵字的一般文字，用來撐出長度。
+第 67 行：foo@example.com 與 bar@test.org
+第 68 行：   前面有空白的縮排行
+第 69 行：price 100, 2500 and 42 元
+第 70 行：The quick brown fox jumps over the lazy dog. Order #910
+第 71 行：Fox 與 FOX 與 fox 大小寫混用
+第 72 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 73 行：沒有關鍵字的一般文字，用來撐出長度。
+第 74 行：foo@example.com 與 bar@test.org
+第 75 行：   前面有空白的縮排行
+第 76 行：price 100, 2500 and 42 元
+第 77 行：The quick brown fox jumps over the lazy dog. Order #1001
+第 78 行：Fox 與 FOX 與 fox 大小寫混用
+第 79 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 80 行：沒有關鍵字的一般文字，用來撐出長度。
+第 81 行：foo@example.com 與 bar@test.org
+第 82 行：   前面有空白的縮排行
+第 83 行：price 100, 2500 and 42 元
+第 84 行：The quick brown fox jumps over the lazy dog. Order #1092
+第 85 行：Fox 與 FOX 與 fox 大小寫混用
+第 86 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 87 行：沒有關鍵字的一般文字，用來撐出長度。
+第 88 行：foo@example.com 與 bar@test.org
+第 89 行：   前面有空白的縮排行
+第 90 行：price 100, 2500 and 42 元
+第 91 行：The quick brown fox jumps over the lazy dog. Order #1183
+第 92 行：Fox 與 FOX 與 fox 大小寫混用
+第 93 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 94 行：沒有關鍵字的一般文字，用來撐出長度。
+第 95 行：foo@example.com 與 bar@test.org
+第 96 行：   前面有空白的縮排行
+第 97 行：price 100, 2500 and 42 元
+第 98 行：The quick brown fox jumps over the lazy dog. Order #1274
+第 99 行：Fox 與 FOX 與 fox 大小寫混用
+第 100 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 101 行：沒有關鍵字的一般文字，用來撐出長度。
+第 102 行：foo@example.com 與 bar@test.org
+第 103 行：   前面有空白的縮排行
+第 104 行：price 100, 2500 and 42 元
+第 105 行：The quick brown fox jumps over the lazy dog. Order #1365
+第 106 行：Fox 與 FOX 與 fox 大小寫混用
+第 107 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 108 行：沒有關鍵字的一般文字，用來撐出長度。
+第 109 行：foo@example.com 與 bar@test.org
+第 110 行：   前面有空白的縮排行
+第 111 行：price 100, 2500 and 42 元
+第 112 行：The quick brown fox jumps over the lazy dog. Order #1456
+第 113 行：Fox 與 FOX 與 fox 大小寫混用
+第 114 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 115 行：沒有關鍵字的一般文字，用來撐出長度。
+第 116 行：foo@example.com 與 bar@test.org
+第 117 行：   前面有空白的縮排行
+第 118 行：price 100, 2500 and 42 元
+第 119 行：The quick brown fox jumps over the lazy dog. Order #1547
+第 120 行：Fox 與 FOX 與 fox 大小寫混用
+第 121 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 122 行：沒有關鍵字的一般文字，用來撐出長度。
+第 123 行：foo@example.com 與 bar@test.org
+第 124 行：   前面有空白的縮排行
+第 125 行：price 100, 2500 and 42 元
+第 126 行：The quick brown fox jumps over the lazy dog. Order #1638
+第 127 行：Fox 與 FOX 與 fox 大小寫混用
+第 128 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 129 行：沒有關鍵字的一般文字，用來撐出長度。
+第 130 行：foo@example.com 與 bar@test.org
+第 131 行：   前面有空白的縮排行
+第 132 行：price 100, 2500 and 42 元
+第 133 行：The quick brown fox jumps over the lazy dog. Order #1729
+第 134 行：Fox 與 FOX 與 fox 大小寫混用
+第 135 行：firefox, foxes, a-fox, (fox) — 完整單字測試
+第 136 行：沒有關鍵字的一般文字，用來撐出長度。
+第 137 行：foo@example.com 與 bar@test.org
+第 138 行：   前面有空白的縮排行
+第 139 行：price 100, 2500 and 42 元
+第 140 行：The quick brown fox jumps over the lazy dog. Order #1820
+最後一行：ZEBRA 只出現在檔案的最底端，用來測試捲動到結果。

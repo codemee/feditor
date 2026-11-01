@@ -1,0 +1,47 @@
+# 推送 v* 標籤時，為三個平台建置 release 版並附加到 GitHub Release。
+# 尚未在 GitHub 上實際跑過；macOS 版沒有簽章與公證，第一次開啟要在系統設定裡允許。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: feditor-windows-x64.zip
+          - os: macos-latest
+            asset: feditor-macos.tar.gz
+          - os: ubuntu-latest
+            asset: feditor-linux-x64.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux 系統套件
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev libfontconfig1-dev
+      - name: 建置
+        run: cargo build --release -p feditor
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path target/release/feditor.exe, README.md, README.en.md -DestinationPath ${{ matrix.asset }}
+      - name: 打包（macOS／Linux）
+        if: runner.os != 'Windows'
+        run: tar -czf ${{ matrix.asset }} -C target/release feditor -C ../.. README.md README.en.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

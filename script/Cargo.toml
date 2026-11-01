@@ -1,0 +1,7 @@
+[package]
+name = "feditor-script"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+feditor-core = { version = "0.1.0", path = "../core" }
