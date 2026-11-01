@@ -20,10 +20,10 @@ use document::{Document, SaveDocError};
 use eframe::egui;
 use egui::text::CCursor;
 use egui::text_selection::CCursorRange;
-use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::Encoding;
 use editor::model::EditorState;
 use editor::view::EditorView;
-use feditor_core::fileio::{LineEnding, common_encodings};
+use feditor_core::fileio::{LineEnding, common_encodings, format_choices, format_label};
 use find::{FindState, Summary};
 use icons::Icon;
 use settings::{
@@ -1950,7 +1950,7 @@ impl App {
         action
     }
 
-    /// 狀態列：左邊是檔案狀態，右邊是這個檔案的格式設定（編碼、BOM、換行、重新載入）。
+    /// 狀態列：左邊是檔案狀態，右邊是這個檔案的格式設定（語言、編碼與 BOM、換行、重新載入）。
     /// 這些控制項不放標題，說明都在 tooltip。
     fn status_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
@@ -1965,7 +1965,7 @@ impl App {
             // 整列由右往左排：先放右側的格式控制項，最後讓路徑吃掉剩下的空間，放不下時截斷。
             // 這樣路徑很長時，也不會和右邊的控制項重疊。（未儲存的標示在標題列，這裡不重複。）
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // 由右往左加入，所以畫面上由左到右的順序是：編碼、BOM、換行、重新載入
+                // 由右往左加入，所以畫面上由左到右的順序是：語言、編碼（含 BOM）、換行、重新載入
 
                 // 重新載入：點擊後彈出編碼清單
                 let can_reload = self.doc.path.is_some();
@@ -2003,42 +2003,32 @@ impl App {
                     .response
                     .on_hover_text("換行格式（存檔時使用）");
 
-                let bom_applies = [UTF_8, UTF_16LE, UTF_16BE].contains(&self.doc.format.encoding);
-                let bom_tip = if bom_applies {
-                    "BOM：在檔案開頭寫入位元組順序標記"
-                } else {
-                    "BOM：此編碼不適用"
-                };
-                let bom = self.doc.format.bom;
-                if icons::small_toggle(ui, Icon::Bom, bom_tip, bom, bom_applies).clicked() {
-                    self.doc.set_bom(!bom);
-                }
-
+                // 編碼與 BOM 合在同一個清單：UTF-8、UTF-16 的「帶 BOM」各自是獨立的一項
                 let mut chosen = None;
-                // 寬度以「最長的可能顯示文字」為準：所有編碼名稱，加上 "UTF-8 BOM"
-                let enc_width = combo_width(
-                    ui,
-                    common_encodings()
-                        .iter()
-                        .map(|e| e.name())
-                        .chain(std::iter::once("UTF-8 BOM")),
-                );
+                let labels: Vec<String> = format_choices()
+                    .iter()
+                    .map(|(e, b)| format_label(e, *b))
+                    .collect();
+                let enc_width = combo_width(ui, labels.iter().map(String::as_str));
+                let (cur_enc, cur_bom) = (self.doc.format.encoding, self.doc.format.bom);
+                let cur_label = format_label(cur_enc, cur_bom);
                 egui::ComboBox::from_id_salt("encoding")
                     .icon(icons::combo_chevron)
                     .width(enc_width)
-                    .selected_text(self.doc.format.encoding_label())
+                    .selected_text(cur_label.as_str())
                     .show_ui(ui, |ui| flat_list(ui, |ui| {
-                        for enc in common_encodings() {
-                            let selected = self.doc.format.encoding == enc;
-                            if ui.selectable_label(selected, enc.name()).clicked() {
-                                chosen = Some(enc);
+                        for ((enc, bom), label) in format_choices().into_iter().zip(&labels) {
+                            let selected = *label == cur_label;
+                            if ui.selectable_label(selected, label).clicked() {
+                                chosen = Some((enc, bom));
                             }
                         }
                     }))
                     .response
-                    .on_hover_text("編碼（存檔時使用）。無法表示的字元會讓存檔失敗，不會被替換");
-                if let Some(enc) = chosen {
+                    .on_hover_text("編碼與 BOM（存檔時使用）。無法表示的字元會讓存檔失敗，不會被替換");
+                if let Some((enc, bom)) = chosen {
                     self.doc.set_encoding(enc);
+                    self.doc.set_bom(bom);
                 }
 
                 // 語言（語法上色）：「自動」依副檔名，沒有檔名時看內容猜

@@ -30,7 +30,7 @@ Operations are **toolbar buttons**; there are no menus. Buttons show icons only;
 | Record Macro | | Start/stop recording: keys and typing are recorded into a macro that can be replayed |
 | Tab bar | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | Shown only when two or more files are open; click to switch, middle-click or × to close; unsaved tabs have a "●" after the name |
 | Clear Output (top right of the output pane) | | Clear macro output and messages |
-| Encoding, BOM, Line ending (right side of the status bar) | | Shows and changes the save format (UTF-8, Big5, GBK, Shift_JIS, EUC-KR, UTF-16) |
+| Language, Encoding (with BOM), Line ending (right side of the status bar) | | Shows and changes the save format. In the encoding list, "with BOM" for UTF-8 and UTF-16 is its own entry: UTF-8, UTF-8 BOM, Big5, GBK, Shift_JIS, EUC-KR, UTF-16LE BOM, UTF-16LE, UTF-16BE BOM, UTF-16BE |
 | Reload (right side of the status bar) | | Re-read the current file with a specific encoding when auto-detection is wrong |
 
 The left side of the status bar shows the file path and whether it is unsaved; the right side holds the format settings of this file. Together they make up the file status. You can also open a file from the command line: `feditor <path>`.

@@ -24,6 +24,31 @@ pub fn common_encodings() -> [&'static Encoding; 7] {
     ]
 }
 
+/// 存檔格式的選項：編碼加上有無 BOM。UTF-8 與 UTF-16 有「帶 BOM」與「不帶 BOM」兩種，各自獨立一項。
+pub fn format_choices() -> [(&'static Encoding, bool); 10] {
+    [
+        (UTF_8, false),
+        (UTF_8, true),
+        (encoding_rs::BIG5, false),
+        (encoding_rs::GBK, false),
+        (encoding_rs::SHIFT_JIS, false),
+        (encoding_rs::EUC_KR, false),
+        (UTF_16LE, true),
+        (UTF_16LE, false),
+        (UTF_16BE, true),
+        (UTF_16BE, false),
+    ]
+}
+
+/// 編碼加 BOM 的顯示名稱：只有 UTF-8、UTF-16 的 BOM 有意義，帶 BOM 時名稱後面加「 BOM」。
+pub fn format_label(encoding: &'static Encoding, bom: bool) -> String {
+    if bom && [UTF_8, UTF_16LE, UTF_16BE].contains(&encoding) {
+        format!("{} BOM", encoding.name())
+    } else {
+        encoding.name().to_owned()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineEnding {
     Lf,
@@ -80,13 +105,9 @@ impl Default for FileFormat {
 }
 
 impl FileFormat {
-    /// 顯示用名稱，例如 `UTF-8`、`UTF-8 BOM`、`Big5`。
+    /// 顯示用名稱，例如 `UTF-8`、`UTF-8 BOM`、`Big5`、`UTF-16LE BOM`。
     pub fn encoding_label(&self) -> String {
-        if self.bom && self.encoding == UTF_8 {
-            "UTF-8 BOM".to_owned()
-        } else {
-            self.encoding.name().to_owned()
-        }
+        format_label(self.encoding, self.bom)
     }
 
     /// 切換編碼時調整 BOM：UTF-16 預設帶 BOM，其他編碼不帶。
@@ -502,5 +523,21 @@ mod tests {
         f.set_encoding(UTF_8);
         f.bom = true;
         assert_eq!(f.encoding_label(), "UTF-8 BOM");
+        f.set_encoding(UTF_16LE);
+        assert_eq!(f.encoding_label(), "UTF-16LE BOM", "UTF-16 預設帶 BOM");
+        f.bom = false;
+        assert_eq!(f.encoding_label(), "UTF-16LE");
+    }
+
+    #[test]
+    fn format_choices_are_unique_and_labels_are_distinct() {
+        let choices = format_choices();
+        let mut labels: Vec<String> = choices.iter().map(|(e, b)| format_label(e, *b)).collect();
+        labels.sort();
+        labels.dedup();
+        assert_eq!(labels.len(), choices.len(), "每個選項的名稱都不同");
+        // 不適用 BOM 的編碼，帶不帶 BOM 名稱都一樣，所以不該各列一項
+        assert_eq!(format_label(encoding_rs::BIG5, true), "Big5");
+        assert!(choices.iter().all(|(e, b)| !*b || [UTF_8, UTF_16LE, UTF_16BE].contains(e)));
     }
 }

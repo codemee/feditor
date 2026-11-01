@@ -16,7 +16,6 @@ pub enum Icon {
     Run,
     Rerun,
     Clear,
-    Bom,
     Reload,
     Search,
     CaseSensitive,
@@ -220,13 +219,6 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             line(&[(3.8, 4.5), (4.6, 14.0), (11.4, 14.0), (12.2, 4.5)]);
             line(&[(6.6, 7.0), (6.8, 12.0)]);
             line(&[(9.4, 7.0), (9.2, 12.0)]);
-        }
-        Icon::Bom => {
-            // 頁首有標記的紙張：BOM（位元組順序標記）
-            closed(&[(3.5, 1.5), (12.5, 1.5), (12.5, 14.5), (3.5, 14.5)]);
-            painter.rect_filled(rect_of(3.5, 1.5, 8.0, 5.5), CornerRadius::ZERO, color);
-            line(&[(5.5, 8.5), (10.5, 8.5)]);
-            line(&[(5.5, 11.5), (10.5, 11.5)]);
         }
         Icon::Search => {
             // 放大鏡
