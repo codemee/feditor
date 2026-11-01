@@ -111,7 +111,17 @@ fn no_hover_outline(ui: &mut egui::Ui) {
     let w = &mut ui.visuals_mut().widgets;
     for s in [&mut w.hovered, &mut w.active, &mut w.open] {
         s.bg_stroke = egui::Stroke::NONE;
+        s.expansion = 0.0; // hover 時底色不要比原本的範圍大一圈
     }
+}
+
+/// 下拉清單裡面（選項）的樣式：選項 hover 時不畫外框，並在右邊留出捲軸的位置，
+/// 這樣捲軸不會壓在選項（特別是被選取的那一項）的底色上。放在 `show_ui` 的開頭呼叫。
+fn flat_list(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    no_hover_outline(ui);
+    egui::Frame::NONE
+        .inner_margin(egui::Margin { right: 14, ..Default::default() })
+        .show(ui, add);
 }
 
 /// 工具列的群組分隔線：只畫一小段，比按鈕 hover 時的底色還矮。
@@ -1604,7 +1614,7 @@ impl App {
                             .width(250.0)
                             .height(320.0)
                             .selected_text(shown)
-                            .show_ui(ui, |ui| {
+                            .show_ui(ui, |ui| flat_list(ui, |ui| {
                                 if ui.selectable_label(current.is_none(), &default_label).clicked()
                                 {
                                     action = Some(Action::SetFontFamily(None));
@@ -1615,7 +1625,7 @@ impl App {
                                         action = Some(Action::SetFontFamily(Some(name.clone())));
                                     }
                                 }
-                            });
+                            }));
                     }
                 }
                 ui.end_row();
@@ -1966,6 +1976,7 @@ impl App {
                     can_reload,
                 );
                 egui::Popup::menu(&reload).show(|ui| {
+                    no_hover_outline(ui);
                     ui.label("重新載入為：");
                     for enc in common_encodings() {
                         if ui.button(enc.name()).clicked() {
@@ -1981,14 +1992,14 @@ impl App {
                     .icon(icons::combo_chevron)
                     .width(le_width)
                     .selected_text(self.doc.format.line_ending.label())
-                    .show_ui(ui, |ui| {
+                    .show_ui(ui, |ui| flat_list(ui, |ui| {
                         for le in LineEnding::ALL {
                             let selected = self.doc.format.line_ending == le;
                             if ui.selectable_label(selected, le.label()).clicked() {
                                 self.doc.set_line_ending(le);
                             }
                         }
-                    })
+                    }))
                     .response
                     .on_hover_text("換行格式（存檔時使用）");
 
@@ -2016,14 +2027,14 @@ impl App {
                     .icon(icons::combo_chevron)
                     .width(enc_width)
                     .selected_text(self.doc.format.encoding_label())
-                    .show_ui(ui, |ui| {
+                    .show_ui(ui, |ui| flat_list(ui, |ui| {
                         for enc in common_encodings() {
                             let selected = self.doc.format.encoding == enc;
                             if ui.selectable_label(selected, enc.name()).clicked() {
                                 chosen = Some(enc);
                             }
                         }
-                    })
+                    }))
                     .response
                     .on_hover_text("編碼（存檔時使用）。無法表示的字元會讓存檔失敗，不會被替換");
                 if let Some(enc) = chosen {
@@ -2035,16 +2046,13 @@ impl App {
                 let resolved = syntax::resolve(current, self.doc.path.as_deref(), &self.doc.buffer);
                 let shown = resolved.map_or("純文字", |l| l.name);
                 let langs = syntax::all_languages();
-                let lang_width = combo_width(
-                    ui,
-                    langs.iter().map(|l| l.name).chain(["純文字", "自動"]),
-                );
+                let lang_width = combo_width(ui, langs.iter().map(|l| l.name).chain(["純文字", "自動"]));
                 let mut picked = None;
                 egui::ComboBox::from_id_salt("language")
                     .icon(icons::combo_chevron)
                     .width(lang_width)
                     .selected_text(shown)
-                    .show_ui(ui, |ui| {
+                    .show_ui(ui, |ui| flat_list(ui, |ui| {
                         if ui.selectable_label(current == syntax::LangChoice::Auto, "自動").clicked() {
                             picked = Some(syntax::LangChoice::Auto);
                         }
@@ -2057,7 +2065,7 @@ impl App {
                                 picked = Some(choice);
                             }
                         }
-                    })
+                    }))
                     .response
                     .on_hover_text("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定");
                 if let Some(choice) = picked {
