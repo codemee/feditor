@@ -2541,7 +2541,12 @@ fn main() -> eframe::Result {
             // 第一個命令列參數視為要開啟的檔案
             let initial = std::env::args_os().nth(1).map(PathBuf::from);
             let restore = initial.is_none();
+            // 先載入自訂語言，這樣還原的分頁一開始就有顏色
+            let syntax_msgs = syntax::load_user_languages(syntax::syntax_dir().as_deref());
             let mut app = App::new(initial, settings);
+            for m in syntax_msgs {
+                app.push(LogKind::Warn, m);
+            }
             // 不帶檔名啟動：把上次開著的檔案開回來。之後才開始記錄，免得還原到一半就覆蓋掉
             if restore {
                 app.restore_session();

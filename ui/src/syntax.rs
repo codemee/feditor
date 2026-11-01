@@ -236,10 +236,159 @@ static MARKDOWN: Language = Language {
     ..lang("Markdown")
 };
 
-/// 依副檔名選語言；不認得的回傳 `None`（不上色）。
+// ── 使用者自訂語言 ───────────────────────────────────────────
+
+/// 使用者語言：（副檔名或檔名（小寫）, 語言）。啟動時載入一次，優先於內建語言。
+static USER: std::sync::OnceLock<Vec<(Vec<String>, &'static Language)>> = std::sync::OnceLock::new();
+
+/// 自訂語言檔的資料夾：設定資料夾下的 `syntax`。
+pub fn syntax_dir() -> Option<std::path::PathBuf> {
+    crate::settings::Settings::default_path().and_then(|p| p.parent().map(|d| d.join("syntax")))
+}
+
+fn leak_str(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+fn leak_strs(v: Vec<String>) -> &'static [&'static str] {
+    Box::leak(v.into_iter().map(leak_str).collect::<Vec<_>>().into_boxed_slice())
+}
+
+/// 以逗號或空白分隔的清單。
+fn split_list(value: &str) -> Vec<String> {
+    value
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn parse_flag(key: &str, value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Ok(true),
+        "false" | "no" | "off" | "0" => Ok(false),
+        _ => Err(format!("{key} 要寫 true 或 false，不是「{value}」")),
+    }
+}
+
+/// 解析一個自訂語言檔。回傳（副檔名／檔名清單（小寫）, 語言）。格式是簡單的 `key = value`：
+///
+/// ```text
+/// name = PHP
+/// extensions = php, phtml          # 也可以寫完整檔名，例如 makefile
+/// line_comment = //, #
+/// block_comment = /*, */           # 開頭與結尾，以逗號分開
+/// quotes = ", '                    # 字串的引號字元
+/// keywords = if else while return  # 逗號或空白分隔，可寫多行
+/// capital_types = true             # 大寫開頭的識別字當成型別
+/// case_insensitive = false         # 關鍵字不分大小寫（SQL）
+/// triple_quotes = false            # 三引號字串（Python）
+/// backtick_strings = false         # 反引號字串（JavaScript）
+/// mode = code                      # code／markup（HTML）／markdown／config（ini）
+/// ```
+///
+/// `#` 開頭的整行是註解；`keywords` 可以重複出現，內容會合併。
+pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
+    let mut name = None;
+    let mut exts: Vec<String> = Vec::new();
+    let mut lang = lang("");
+    let mut line_comments: Vec<String> = Vec::new();
+    let mut keywords: Vec<String> = Vec::new();
+    let mut quotes: Option<Vec<char>> = None;
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("第 {} 行：需要「鍵 = 值」", n + 1));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        match key {
+            "name" => name = Some(value.to_owned()),
+            "extensions" => exts.extend(split_list(value).into_iter().map(|e| {
+                e.trim_start_matches('.').to_ascii_lowercase()
+            })),
+            // 行註解符號本身可能含 # ，所以這個值不做「# 開頭是註解」的處理，用逗號／空白分隔
+            "line_comment" => line_comments.extend(split_list(value)),
+            "block_comment" => {
+                let parts = split_list(value);
+                match parts.as_slice() {
+                    [a, b] => lang.block = Some((leak_str(a.clone()), leak_str(b.clone()))),
+                    _ => return Err(format!("第 {} 行：block_comment 要寫「開頭, 結尾」兩項", n + 1)),
+                }
+            }
+            "quotes" => {
+                quotes = Some(split_list(value).iter().flat_map(|s| s.chars()).collect());
+            }
+            "keywords" => keywords.extend(split_list(value)),
+            "capital_types" => lang.capital_types = parse_flag(key, value)?,
+            "case_insensitive" => lang.case_insensitive = parse_flag(key, value)?,
+            "triple_quotes" => lang.triple_quotes = parse_flag(key, value)?,
+            "backtick_strings" => lang.backtick_strings = parse_flag(key, value)?,
+            "mode" => match value.to_ascii_lowercase().as_str() {
+                "code" => {}
+                "markup" => lang.mode = Mode::Markup,
+                "markdown" => lang.mode = Mode::Markdown,
+                "config" => lang.config = true,
+                _ => return Err(format!("第 {} 行：mode 只能是 code、markup、markdown、config", n + 1)),
+            },
+            _ => return Err(format!("第 {} 行：不認得的設定「{key}」", n + 1)),
+        }
+    }
+    let name = name.filter(|n| !n.is_empty()).ok_or("缺少 name")?;
+    if exts.is_empty() {
+        return Err("缺少 extensions".to_owned());
+    }
+    lang.name = leak_str(name);
+    lang.line_comments = leak_strs(line_comments);
+    lang.keywords = leak_strs(keywords);
+    if let Some(q) = quotes {
+        lang.quotes = Box::leak(q.into_boxed_slice());
+    }
+    Ok((exts, lang))
+}
+
+/// 讀取設定資料夾下 `syntax/*.conf` 的自訂語言。每個檔案一種語言；壞掉的檔案略過，
+/// 錯誤訊息收在回傳值裡讓呼叫端顯示。只會真正載入一次（之後再呼叫不會重讀）。
+pub fn load_user_languages(dir: Option<&Path>) -> Vec<String> {
+    let mut messages = Vec::new();
+    let mut found: Vec<(Vec<String>, &'static Language)> = Vec::new();
+    if let Some(dir) = dir {
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("conf")))
+            .collect();
+        files.sort();
+        for path in files {
+            let label = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let Ok(bytes) = std::fs::read(&path) else {
+                messages.push(format!("無法讀取語言檔 {label}"));
+                continue;
+            };
+            match parse_language(&String::from_utf8_lossy(&bytes)) {
+                Ok((exts, lang)) => found.push((exts, Box::leak(Box::new(lang)))),
+                Err(e) => messages.push(format!("語言檔 {label} 有誤，已略過：{e}")),
+            }
+        }
+    }
+    let _ = USER.set(found);
+    messages
+}
+
+/// 依副檔名選語言；不認得的回傳 `None`（不上色）。使用者自訂的語言優先。
 pub fn language_for(path: Option<&Path>) -> Option<&'static Language> {
     let name = path?.file_name()?.to_string_lossy().to_ascii_lowercase();
     let ext = name.rsplit_once('.').map_or(name.as_str(), |(_, e)| e);
+    if let Some(users) = USER.get() {
+        // 副檔名或完整檔名（例如 makefile）都可以
+        if let Some((_, lang)) = users.iter().find(|(exts, _)| exts.iter().any(|e| e == ext || *e == name)) {
+            return Some(lang);
+        }
+    }
     Some(match ext {
         "rs" => &RUST,
         "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "ino" => &C_LIKE,
@@ -829,5 +978,67 @@ mod tests {
         assert_eq!(cache.state_at(&RUST, &buf, 15_000), State::Normal);
         // 開頭附近仍然正確
         assert_eq!(cache.state_at(&RUST, &buf, 5), State::Block);
+    }
+
+    const PHP_CONF: &str = "\
+# 範例
+name = Zed
+extensions = .ZZ, zzfile
+line_comment = //, #
+block_comment = /*, */
+quotes = \", '
+keywords = if else
+keywords = while, return
+capital_types = true
+";
+
+    #[test]
+    fn parses_a_user_language_file() {
+        let (exts, lang) = parse_language(PHP_CONF).unwrap();
+        assert_eq!(exts, vec!["zz", "zzfile"], "副檔名去掉開頭的點並轉小寫");
+        assert_eq!(lang.name, "Zed");
+        assert_eq!(lang.line_comments, &["//", "#"]);
+        assert_eq!(lang.block, Some(("/*", "*/")));
+        assert_eq!(lang.quotes, &['"', '\'']);
+        assert_eq!(lang.keywords, &["if", "else", "while", "return"], "多行 keywords 會合併");
+        assert!(lang.capital_types);
+        let r = kinds(&lang, "if foo(Bar, \"s\") # c");
+        assert!(r.contains(&("if".into(), Kind::Keyword)));
+        assert!(r.contains(&("foo".into(), Kind::Function)));
+        assert!(r.contains(&("Bar".into(), Kind::Type)));
+        assert!(r.contains(&("# c".into(), Kind::Comment)));
+    }
+
+    #[test]
+    fn bad_user_language_files_report_what_is_wrong() {
+        let err = |t: &str| parse_language(t).err().unwrap();
+        assert!(err("extensions = a").contains("name"));
+        assert!(err("name = A").contains("extensions"));
+        assert!(err("name = A\nextensions = a\nbogus = 1").contains("bogus"));
+        assert!(err("name = A\nextensions = a\nmode = fancy").contains("mode"));
+        assert!(err("name = A\nextensions = a\nblock_comment = /*").contains("block_comment"));
+        assert!(err("name = A\nextensions = a\ncapital_types = maybe").contains("true"));
+        assert!(err("name = A\nextensions = a\njust words").contains("第 3 行"));
+    }
+
+    #[test]
+    fn user_languages_load_from_a_folder_and_win_over_builtin() {
+        let dir = std::env::temp_dir().join(format!("feditor-syntax-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("zed.conf"), PHP_CONF).unwrap();
+        // 蓋掉內建的 .lua，再放一個壞檔與一個非 .conf 的檔案
+        std::fs::write(dir.join("lua.conf"), "name = MyLua\nextensions = lua\nkeywords = foo\n").unwrap();
+        std::fs::write(dir.join("broken.conf"), "name = X").unwrap();
+        std::fs::write(dir.join("readme.txt"), "ignored").unwrap();
+        let messages = load_user_languages(Some(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(messages.len(), 1, "只有壞檔會有訊息：{messages:?}");
+        assert!(messages[0].contains("broken.conf"));
+        let p = |s: &str| language_for(Some(Path::new(s))).map(|l| l.name);
+        assert_eq!(p("a.zz"), Some("Zed"));
+        assert_eq!(p("ZZFILE"), Some("Zed"), "完整檔名也可以");
+        assert_eq!(p("x.lua"), Some("MyLua"), "自訂語言優先於內建");
+        assert_eq!(p("x.rs"), Some("Rust"));
     }
 }
