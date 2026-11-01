@@ -9,6 +9,7 @@ mod icons;
 mod language;
 mod macro_lib;
 mod macros;
+mod modal;
 mod session;
 mod settings;
 mod syntax;
@@ -81,6 +82,20 @@ fn theme_label(choice: ThemeChoice) -> &'static str {
         ThemeChoice::Light => "淺色",
         ThemeChoice::Dark => "深色",
     }
+}
+
+/// 確認對話框回答之後要接著做的事。
+enum Then {
+    CloseTab,
+    CloseWindow,
+    Reload(&'static Encoding),
+    DeleteMacro(usize),
+    External,
+}
+
+struct Pending {
+    spec: modal::Spec,
+    then: Then,
 }
 
 /// 圖示按鈕之間的間距（像素）。
@@ -304,6 +319,10 @@ struct App {
     log: Vec<(LogKind, String)>,
     last_title: String,
     allow_close: bool,
+    /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
+    modal: Option<Pending>,
+    /// 關閉視窗時，使用者已經選了「不儲存」的分頁（索引）。
+    close_skipped: Vec<usize>,
     find: FindState,
     /// 下一個畫面要把鍵盤焦點放到搜尋框。
     focus_find: bool,
@@ -345,6 +364,8 @@ impl App {
             log: Vec::new(),
             last_title: String::new(),
             allow_close: false,
+            modal: None,
+            close_skipped: Vec::new(),
             find: FindState::default(),
             focus_find: false,
             editor: EditorState::default(),
@@ -531,25 +552,67 @@ impl App {
     }
     // ── 檔案 ────────────────────────────────────────────────
 
-    /// 有未儲存修改時詢問使用者。回傳 `true` 表示可以繼續（已儲存或選擇不儲存）。
-    fn confirm_discard(&mut self, then: &str) -> bool {
-        if !self.doc.dirty {
-            return true;
+    /// 對作用中的文件顯示「要儲存嗎？」對話框；答案由 [`App::resolve_modal`] 處理。
+    fn ask_save(&mut self, then: Then, before: &str) {
+        let spec = modal::Spec::new(
+            "尚未儲存",
+            format!("「{}」有尚未儲存的修改。要在{}之前儲存嗎？", self.doc.name(), before),
+        )
+        .button("儲存", modal::Answer::Yes)
+        .button("不儲存", modal::Answer::No)
+        .button("取消", modal::Answer::Cancel);
+        self.modal = Some(Pending { spec, then });
+    }
+
+    /// 使用者回答了確認對話框：接著做原本被擋住的事。
+    fn resolve_modal(&mut self, then: Then, answer: modal::Answer, ctx: &egui::Context) {
+        use modal::Answer::{No, Yes};
+        match then {
+            Then::CloseTab => match answer {
+                Yes if self.save() => self.close_active_tab(),
+                No => self.close_active_tab(),
+                _ => {}
+            },
+            Then::CloseWindow => {
+                match answer {
+                    Yes if self.save() => {}
+                    No => self.close_skipped.push(self.tabs.active()),
+                    _ => return, // 取消，或儲存失敗／另存新檔被取消：不關了
+                }
+                self.next_close_prompt(ctx);
+            }
+            Then::Reload(enc) => {
+                if answer == Yes {
+                    self.do_reload(enc);
+                }
+            }
+            Then::DeleteMacro(i) => {
+                if answer == Yes {
+                    self.do_delete_macro(i);
+                }
+            }
+            // 檔案被別的程式改了，而且自己也有修改：「是」重新載入，其他一律保留自己的
+            Then::External => self.handle_external_change(|_| answer == Yes),
         }
-        let answer = rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title("尚未儲存")
-            .set_description(format!(
-                "「{}」有尚未儲存的修改。要在{}之前儲存嗎？",
-                self.doc.name(),
-                then
-            ))
-            .set_buttons(rfd::MessageButtons::YesNoCancel)
-            .show();
-        match answer {
-            rfd::MessageDialogResult::Yes => self.save(),
-            rfd::MessageDialogResult::No => true,
-            _ => false,
+    }
+
+    /// 關閉視窗：依序問每個有未儲存修改的分頁；都處理完了才真的關。
+    fn next_close_prompt(&mut self, ctx: &egui::Context) {
+        let next = self
+            .tabs
+            .dirty_tabs(&self.doc)
+            .into_iter()
+            .find(|i| !self.close_skipped.contains(i));
+        match next {
+            Some(i) => {
+                self.switch_tab(i);
+                self.ask_save(Then::CloseWindow, "關閉");
+            }
+            None => {
+                self.close_skipped.clear();
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
     }
 
@@ -595,7 +658,7 @@ impl App {
     }
 
     /// 作用中的檔案被別的程式改了：沒有未儲存的修改就直接重新載入；有的話問使用者
-    /// （sk 收到檔名，回傳 	rue 表示要重新載入、捨棄自己的修改）。
+    /// （`ask` 收到檔名，回傳 `true` 表示要重新載入、捨棄自己的修改）。
     fn handle_external_change(&mut self, ask: impl FnOnce(&str) -> bool) {
         if !self.doc.changed_on_disk() {
             return;
@@ -627,17 +690,24 @@ impl App {
     }
 
     fn check_external_changes(&mut self) {
-        self.handle_external_change(|name| {
-            rfd::MessageDialog::new()
-                .set_level(rfd::MessageLevel::Warning)
-                .set_title("檔案已被修改")
-                .set_description(format!(
-                    "「{name}」已被其他程式修改，而且你在編輯器裡也有尚未儲存的修改。要重新載入嗎？（會捨棄你的修改）"
-                ))
-                .set_buttons(rfd::MessageButtons::YesNo)
-                .show()
-                == rfd::MessageDialogResult::Yes
-        });
+        if self.modal.is_some() {
+            return;
+        }
+        if self.doc.dirty && self.doc.changed_on_disk() {
+            let spec = modal::Spec::new(
+                "檔案已被修改",
+                format!(
+                    "「{}」已被其他程式修改，而且你在編輯器裡也有尚未儲存的修改。要重新載入嗎？（會捨棄你的修改）",
+                    self.doc.name()
+                ),
+            )
+            .button("重新載入", modal::Answer::Yes)
+            .button("保留我的版本", modal::Answer::No);
+            self.modal = Some(Pending { spec, then: Then::External });
+        } else {
+            // 沒有未儲存的修改：直接重新載入，不會詢問
+            self.handle_external_change(|_| false);
+        }
     }
 
     fn new_document(&mut self) {
@@ -662,23 +732,17 @@ impl App {
             return;
         }
         self.switch_tab(i);
-        if !self.confirm_discard("關閉分頁") {
-            return;
+        if self.doc.dirty {
+            self.ask_save(Then::CloseTab, "關閉分頁");
+        } else {
+            self.close_active_tab();
         }
+    }
+
+    fn close_active_tab(&mut self) {
         let i = self.tabs.active();
         self.tabs.close(&mut self.doc, &mut self.editor, i);
         self.tab_changed();
-    }
-
-    /// 所有有未儲存修改的分頁都問過一輪（關閉視窗用）。任何一個選「取消」就回傳 `false`。
-    fn confirm_all_discard(&mut self, then: &str) -> bool {
-        for i in self.tabs.dirty_tabs(&self.doc) {
-            self.switch_tab(i);
-            if !self.confirm_discard(then) {
-                return false;
-            }
-        }
-        true
     }
 
     fn open(&mut self) {
@@ -759,16 +823,16 @@ impl App {
 
     fn reload(&mut self, encoding: &'static Encoding) {
         if self.doc.dirty {
-            let ok = rfd::MessageDialog::new()
-                .set_level(rfd::MessageLevel::Warning)
-                .set_title("重新載入")
-                .set_description("重新載入會捨棄尚未儲存的修改，確定嗎？")
-                .set_buttons(rfd::MessageButtons::YesNo)
-                .show();
-            if ok != rfd::MessageDialogResult::Yes {
-                return;
-            }
+            let spec = modal::Spec::new("重新載入", "重新載入會捨棄尚未儲存的修改，確定嗎？")
+                .button("重新載入", modal::Answer::Yes)
+                .button("取消", modal::Answer::Cancel);
+            self.modal = Some(Pending { spec, then: Then::Reload(encoding) });
+        } else {
+            self.do_reload(encoding);
         }
+    }
+
+    fn do_reload(&mut self, encoding: &'static Encoding) {
         match self.doc.reload_with(encoding) {
             Ok(warnings) => {
                 self.text_replaced();
@@ -1068,18 +1132,22 @@ impl App {
     }
 
     fn delete_macro(&mut self, i: usize) {
+        let Some(entry) = self.macros.get(i) else {
+            return;
+        };
+        let spec = modal::Spec::new(
+            "刪除巨集",
+            format!("確定要刪除巨集「{}」嗎？檔案會被刪除。", entry.name),
+        )
+        .button("刪除", modal::Answer::Yes)
+        .button("取消", modal::Answer::Cancel);
+        self.modal = Some(Pending { spec, then: Then::DeleteMacro(i) });
+    }
+
+    fn do_delete_macro(&mut self, i: usize) {
         let Some(entry) = self.macros.get(i).cloned() else {
             return;
         };
-        let answer = rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title("刪除巨集")
-            .set_description(format!("確定要刪除巨集「{}」嗎？檔案會被刪除。", entry.name))
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show();
-        if answer != rfd::MessageDialogResult::Yes {
-            return;
-        }
         match std::fs::remove_file(&entry.path) {
             Ok(()) => self.push(LogKind::Info, format!("已刪除巨集 {}", entry.name)),
             Err(e) => self.push(LogKind::Error, format!("無法刪除 {}：{e}", entry.path.display())),
@@ -1625,41 +1693,64 @@ impl App {
                         let (name, full, dirty) = self.tabs.label(&self.doc, i);
                         let text = if dirty { format!("{name} ●") } else { name };
                         let selected = i == self.tabs.active();
-                        let response = ui.selectable_label(selected, text).on_hover_text(full);
-                        if response.clicked() {
+                        // 整個分頁是一個元件：名稱在左，× 在右側內部，滑鼠移到分頁上才畫出 ×
+                        // （× 的位置一直保留，顯示與隱藏時分頁寬度不會跳動）
+                        let font = egui::TextStyle::Button.resolve(ui.style());
+                        let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);
+                        let (pad, close_w) = (8.0, 14.0);
+                        let size = egui::vec2(
+                            pad + galley.size().x + 6.0 + close_w + 4.0,
+                            ui.spacing().interact_size.y,
+                        );
+                        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                        let close = egui::Rect::from_center_size(
+                            egui::pos2(rect.right() - 4.0 - close_w / 2.0, rect.center().y),
+                            egui::vec2(close_w, close_w),
+                        );
+                        let close_resp =
+                            ui.interact(close, ui.make_persistent_id(("tab_close", i)), egui::Sense::click());
+                        let over = response.hovered() || close_resp.hovered();
+                        let visuals = ui.style().interact_selectable(&response, selected);
+                        if selected || over {
+                            ui.painter().rect_filled(
+                                rect,
+                                egui::CornerRadius::same(4),
+                                visuals.weak_bg_fill,
+                            );
+                        }
+                        let text_pos = egui::pos2(
+                            rect.left() + pad,
+                            rect.center().y - galley.size().y / 2.0,
+                        );
+                        ui.painter()
+                            .galley_with_override_text_color(text_pos, galley, visuals.fg_stroke.color);
+                        if over {
+                            if close_resp.hovered() {
+                                ui.painter().rect_filled(
+                                    close,
+                                    egui::CornerRadius::same(3),
+                                    ui.visuals().widgets.hovered.bg_fill,
+                                );
+                            }
+                            let c = close.center();
+                            let d = 3.0;
+                            let stroke = egui::Stroke::new(1.0, visuals.fg_stroke.color);
+                            ui.painter().line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
+                            ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
+                        }
+                        if close_resp.clicked() {
+                            action = Some(Action::CloseTab(i));
+                        } else if response.clicked() {
                             action = Some(Action::SwitchTab(i));
                         }
                         if response.middle_clicked() {
                             action = Some(Action::CloseTab(i));
                         }
-                        // 小小的 ×：位置一直保留（避免版面跳動），滑鼠移到這個分頁上才畫出來
-                        let (close, close_resp) =
-                            ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
-                        let over = response.hovered()
-                            || ui.rect_contains_pointer(response.rect.union(close));
-                        if over || selected && close_resp.has_focus() {
-                            let color = if close_resp.hovered() {
-                                ui.visuals().strong_text_color()
-                            } else {
-                                ui.visuals().weak_text_color()
-                            };
-                            if close_resp.hovered() {
-                                ui.painter().rect_filled(
-                                    close,
-                                    egui::CornerRadius::same(3),
-                                    ui.visuals().widgets.hovered.weak_bg_fill,
-                                );
-                            }
-                            let c = close.center();
-                            let d = 3.0;
-                            let stroke = egui::Stroke::new(1.0, color);
-                            ui.painter().line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
-                            ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
+                        if close_resp.hovered() {
+                            close_resp.on_hover_text("關閉分頁");
+                        } else {
+                            response.on_hover_text(full);
                         }
-                        if close_resp.on_hover_text("關閉分頁").clicked() {
-                            action = Some(Action::CloseTab(i));
-                        }
-                        ui.add_space(6.0);
                     }
                 });
             });
@@ -2023,9 +2114,9 @@ impl eframe::App for App {
             && !self.allow_close
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            if self.confirm_all_discard("關閉") {
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            if self.modal.is_none() {
+                self.close_skipped.clear();
+                self.next_close_prompt(&ctx);
             }
         }
 
@@ -2183,6 +2274,12 @@ impl eframe::App for App {
         }
         if self.macro_open {
             self.show_macro_area(&ctx, &mut action);
+        }
+        if let Some(p) = self.modal.take() {
+            match modal::show(&ctx, &p.spec) {
+                Some(answer) => self.resolve_modal(p.then, answer, &ctx),
+                None => self.modal = Some(p),
+            }
         }
 
         if let Some(a) = action {
