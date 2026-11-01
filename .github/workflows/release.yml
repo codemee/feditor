@@ -20,7 +20,7 @@ jobs:
           - os: windows-latest
             asset: feditor-windows-x64.zip
           - os: macos-latest
-            asset: feditor-macos.tar.gz
+            asset: feditor-macos.dmg
           - os: ubuntu-latest
             asset: feditor-linux-x64.tar.gz
     steps:
@@ -39,12 +39,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path target/release/feditor.exe, README.md, README.en.md -DestinationPath ${{ matrix.asset }}
-      - name: 打包（macOS）：FEditor.app
+      - name: 打包（macOS）：FEditor.app → .dmg
         if: runner.os == 'macOS'
         run: |
           bash packaging/macos/make-app.sh target/release/feditor "${GITHUB_REF_NAME#v}" dist
-          cp README.md README.en.md dist/
-          tar -czf ${{ matrix.asset }} -C dist FEditor.app README.md README.en.md
+          bash packaging/macos/make-dmg.sh dist/FEditor.app ${{ matrix.asset }}
       - name: 打包（Linux）
         if: runner.os == 'Linux'
         run: tar -czf ${{ matrix.asset }} -C target/release feditor -C ../.. README.md README.en.md

@@ -176,7 +176,7 @@ Editor commands (`editor.run`): `left` `right` `up` `down` `wordLeft` `wordRight
 Get the archive for your platform from [Releases](https://github.com/codemee/feditor/releases):
 
 - **Windows**: extract and run `feditor.exe`.
-- **macOS** (Apple Silicon): extract to get `FEditor.app` and drag it into Applications. It is not notarized, so the first time, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
+- **macOS** (Apple Silicon): download `feditor-macos.dmg`, open it, and drag `FEditor.app` onto the Applications shortcut next to it. It is not notarized, so the first time, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
 - **Linux**: extract and run `./feditor`.
 
 ## Development

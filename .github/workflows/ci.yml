@@ -39,3 +39,5 @@ jobs:
           test -f dist/FEditor.app/Contents/Resources/FEditor.icns
           plutil -lint dist/FEditor.app/Contents/Info.plist
           codesign --verify --deep --strict dist/FEditor.app
+          bash packaging/macos/make-dmg.sh dist/FEditor.app dist/feditor-macos.dmg
+          hdiutil verify dist/feditor-macos.dmg
