@@ -2,10 +2,11 @@
 
 # Changelog
 
-## Unreleased
+## [0.1.3] - 2026-11-02
 
 ### Added
-- **Interface language**: the settings panel offers "Follow system", "中文" (Chinese), and "English", and the change applies immediately. With "Follow system", a Chinese system gets Chinese and everything else gets English.
+- **Split panes**: drag a tab to the left, right, or bottom edge of the editor area to split off a new pane in that direction (the area is previewed while dragging). Panes nest, and each has its own independent tab bar and a close-pane button (the pane's tabs move to the neighbouring pane). Panes are rounded cards with a gap between them (the focused one has an accent border). Dividers can be dragged, and a pane never gets smaller than 240×140 points.
+- **Interface language**: a three-state button in the settings panel cycles "Follow system" (globe icon), "中文" (Chinese, a "中" icon), and "English" (an "En" icon), and the change applies immediately. With "Follow system", a Chinese system gets Chinese and everything else gets English.
 - The status bar shows the caret position as "行 X，欄 Y" (line X, column Y, starting at 1). In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns, chosen under "欄號" (column number) in the settings panel (default 1).
 
 ### Changed
@@ -58,6 +59,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.1.3]: https://github.com/codemee/feditor/releases/tag/v0.1.3
 [0.1.2]: https://github.com/codemee/feditor/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codemee/feditor/releases/tag/v0.1.1
 [0.1.0]: https://github.com/codemee/feditor/releases/tag/v0.1.0

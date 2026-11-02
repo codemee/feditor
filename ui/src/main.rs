@@ -14,6 +14,8 @@ mod language;
 mod macro_lib;
 mod macros;
 mod modal;
+mod pane_ops;
+mod panes;
 mod scheme;
 mod session;
 mod settings;
@@ -29,7 +31,6 @@ use egui::text::CCursor;
 use egui::text_selection::CCursorRange;
 use encoding_rs::Encoding;
 use editor::model::EditorState;
-use editor::view::EditorView;
 use feditor_core::fileio::{LineEnding, common_encodings, format_choices, format_label};
 use find::{FindState, Summary};
 use icons::Icon;
@@ -42,8 +43,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-fn editor_id() -> egui::Id {
-    egui::Id::unique("editor")
+/// 窗格 `pane` 的編輯畫面的 id（鍵盤焦點、捲動位置都掛在它上面）。
+fn editor_id(pane: panes::PaneId) -> egui::Id {
+    egui::Id::unique(("editor", pane))
 }
 
 fn find_input_id() -> egui::Id {
@@ -80,6 +82,16 @@ fn theme_icon(choice: ThemeChoice) -> Icon {
         ThemeChoice::System => Icon::ThemeSystem,
         ThemeChoice::Light => Icon::ThemeLight,
         ThemeChoice::Dark => Icon::ThemeDark,
+    }
+}
+
+/// 介面語言狀態鈕目前要顯示的圖示。
+fn language_icon(choice: feditor_core::i18n::LangChoice) -> Icon {
+    use feditor_core::i18n::LangChoice;
+    match choice {
+        LangChoice::System => Icon::LangSystem,
+        LangChoice::Chinese => Icon::LangChinese,
+        LangChoice::English => Icon::LangEnglish,
     }
 }
 
@@ -355,17 +367,22 @@ enum Action {
     SetWideCols(u8),
     /// 介面語言：跟隨系統、中文、英文。
     SetLanguage(feditor_core::i18n::LangChoice),
-    SwitchTab(usize),
     CloseTab(usize),
     NextTab,
     PrevTab,
+    /// 某個窗格的分頁列上的操作（切換、關閉、改名）。先讓那個窗格取得焦點，再照一般的分頁操作處理。
+    PaneTab(panes::PaneId, pane_ops::TabCmd),
+    /// 關閉窗格：裡面的分頁移到相鄰的窗格。
+    ClosePane(panes::PaneId),
+    /// 開始拖曳某個窗格的某個分頁。
+    BeginTabDrag(panes::PaneId, usize),
+    /// 把某個窗格的某個分頁搬到別處（放進另一個窗格，或切出新窗格）。
+    MoveTab(panes::PaneId, usize, pane_ops::Target),
     /// 展開或收起巨集面板。
     ToggleMacroMenu,
     RunMacroEntry(usize),
     EditMacro(usize),
     RenameMacro(usize),
-    /// 雙按分頁：重新命名檔案（沒有檔案的文件則是另存新檔）。
-    RenameTab(usize),
     DeleteMacro(usize),
     /// 開始（或取消）等待使用者按下這支巨集的新快捷鍵。
     CaptureShortcut(usize),
@@ -451,17 +468,24 @@ const PREV_TAB: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
 );
 
 struct App {
-    /// 目前作用中分頁的文件與編輯狀態；其他分頁放在 	abs 裡（見 	abs.rs）。
+    /// 有焦點的窗格、它目前作用中分頁的文件與編輯狀態；這個窗格的其他分頁放在 `tabs` 裡（見 `tabs.rs`）。
     doc: Document,
+    /// 有焦點的窗格的分頁集。沒有焦點的窗格放在 `layout.others`（見 `pane_ops.rs`）。
     tabs: tabs::TabSet,
+    /// 窗格版面（分割視窗）。
+    layout: panes::Layout<tabs::TabSet>,
+    /// 正在拖曳的分頁。
+    tab_drag: Option<pane_ops::TabDrag>,
+    /// 換了有焦點的窗格：下一個畫面把鍵盤焦點也移過去。
+    pending_editor_focus: bool,
     last_macro: Option<PathBuf>,
     log: Vec<(LogKind, String)>,
     last_title: String,
     allow_close: bool,
     /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
     modal: Option<Pending>,
-    /// 關閉視窗時，使用者已經選了「不儲存」的分頁（索引）。
-    close_skipped: Vec<usize>,
+    /// 關閉視窗時，使用者已經選了「不儲存」的分頁：（窗格, 分頁編號）。
+    close_skipped: Vec<(panes::PaneId, usize)>,
     find: FindState,
     /// 下一個畫面要把鍵盤焦點放到搜尋框。
     focus_find: bool,
@@ -507,6 +531,9 @@ impl App {
         let mut app = Self {
             doc: Document::new(),
             tabs: tabs::TabSet::new(),
+            layout: panes::Layout::default(),
+            tab_drag: None,
+            pending_editor_focus: false,
             last_macro: None,
             log: Vec::new(),
             last_title: String::new(),
@@ -673,7 +700,7 @@ impl App {
 
     fn open_find(&mut self, ctx: &egui::Context, replace: bool) {
         // 在編輯區按快捷鍵時，若選取了一小段單行文字，就帶入搜尋框
-        let editor_focused = ctx.memory(|m| m.has_focus(editor_id()));
+        let editor_focused = ctx.memory(|m| m.has_focus(editor_id(self.layout.focus)));
         let picked = editor_focused
             .then(|| self.editor.selected_text(&self.doc.buffer))
             .flatten()
@@ -693,7 +720,7 @@ impl App {
     fn close_find(&mut self, ctx: &egui::Context) {
         self.find.open = false;
         // 找到的那一筆已經是選取狀態；把鍵盤焦點帶回編輯區，方便直接打字取代
-        ctx.memory_mut(|m| m.request_focus(editor_id()));
+        ctx.memory_mut(|m| m.request_focus(editor_id(self.layout.focus)));
     }
 
     fn replace_one(&mut self) {
@@ -802,8 +829,8 @@ impl App {
         document::validate_file_name(name)?;
         let target = old.with_file_name(name);
         if target != old {
-            if let Some(other) = self.tabs.find_path(&self.doc, &target) {
-                if other != self.tabs.active() {
+            if let Some(other) = self.find_open_path(&target) {
+                if other != (self.layout.focus, self.tabs.active()) {
                     return Err(tf!("另一個分頁已經開著「{name}」", name = name));
                 }
             }
@@ -891,7 +918,7 @@ impl App {
             Then::CloseWindow => {
                 match answer {
                     Yes if self.save() => {}
-                    No => self.close_skipped.push(self.tabs.active()),
+                    No => self.close_skipped.push((self.layout.focus, self.tabs.active())),
                     _ => return, // 取消，或儲存失敗／另存新檔被取消：不關了
                 }
                 self.next_close_prompt(ctx);
@@ -913,13 +940,10 @@ impl App {
 
     /// 關閉視窗：依序問每個有未儲存修改的分頁；都處理完了才真的關。
     fn next_close_prompt(&mut self, ctx: &egui::Context) {
-        let next = self
-            .tabs
-            .dirty_tabs(&self.doc)
-            .into_iter()
-            .find(|i| !self.close_skipped.contains(i));
+        let next = self.all_dirty().into_iter().find(|k| !self.close_skipped.contains(k));
         match next {
-            Some(i) => {
+            Some((pane, i)) => {
+                self.focus_pane(pane);
                 self.switch_tab(i);
                 self.ask_save(Then::CloseWindow, t("關閉"));
             }
@@ -947,7 +971,7 @@ impl App {
 
     fn save_session(&self) {
         if self.session_enabled {
-            self.tabs.session(&self.doc, &self.editor).save();
+            self.session_all().save();
         }
     }
 
@@ -1055,6 +1079,11 @@ impl App {
     }
 
     fn close_active_tab(&mut self) {
+        // 有多個窗格時，窗格裡最後一個分頁關掉就連窗格一起關（不留空白文件）
+        if self.tabs.len() == 1 && self.layout.pane_count() > 1 {
+            self.remove_focused_pane();
+            return;
+        }
         let i = self.tabs.active();
         self.tabs.close(&mut self.doc, &mut self.editor, i);
         self.tab_changed();
@@ -1070,7 +1099,8 @@ impl App {
 
     /// 開啟指定路徑：已經開著就切過去，否則開在新分頁（作用中是空白文件時直接用它）。
     fn open_path(&mut self, path: &std::path::Path) {
-        if let Some(i) = self.tabs.find_path(&self.doc, path) {
+        if let Some((pane, i)) = self.find_open_path(path) {
+            self.focus_pane(pane);
             self.switch_tab(i);
             self.push(LogKind::Info, tf!("{} 已經開啟，切換到該分頁", self.doc.name()));
             return;
@@ -1322,14 +1352,23 @@ impl App {
                 self.macro_open = false;
                 self.ask_rename_macro(i, None, None);
             }
-            Action::RenameTab(i) => self.start_rename_tab(i),
             Action::DeleteMacro(i) => self.delete_macro(i),
             Action::CaptureShortcut(i) => {
                 self.capturing_shortcut = if self.capturing_shortcut == Some(i) { None } else { Some(i) };
             }
             Action::ToggleRecord => self.toggle_record(),
             Action::OpenMacroDir => self.open_macro_dir(),
-            Action::SwitchTab(i) => self.switch_tab(i),
+            Action::PaneTab(pane, cmd) => {
+                self.focus_pane(pane);
+                match cmd {
+                    pane_ops::TabCmd::Switch(i) => self.switch_tab(i),
+                    pane_ops::TabCmd::Close(i) => self.close_tab(i),
+                    pane_ops::TabCmd::Rename(i) => self.start_rename_tab(i),
+                }
+            }
+            Action::ClosePane(pane) => self.close_pane(pane),
+            Action::BeginTabDrag(pane, i) => self.begin_tab_drag(pane, i),
+            Action::MoveTab(pane, i, target) => self.move_tab(pane, i, target),
             Action::CloseTab(i) => self.close_tab(if i == usize::MAX { self.tabs.active() } else { i }),
             Action::NextTab => self.switch_tab(self.tabs.neighbor(true)),
             Action::PrevTab => self.switch_tab(self.tabs.neighbor(false)),
@@ -2124,22 +2163,16 @@ impl App {
         // ── 介面 ──
         group_title(ui, t("介面"));
         settings_grid(ui, "settings_ui", |ui| {
-            // 介面語言：選項用各自的語言寫（中文、English），在看不懂的介面裡也找得到
+            // 介面語言：三態狀態鈕（跟隨系統＝地球、中文＝「中」、英文＝「En」），旁邊寫出目前的選擇。
+            // 選項名稱用各自的語言寫（中文、English），在看不懂的介面裡也找得到
             form_row(ui, t("介面語言"), |ui| {
-                let language = self.settings.language;
-                egui::ComboBox::from_id_salt("ui_language")
-                    .icon(icons::combo_chevron)
-                    .width(190.0)
-                    .selected_text(language.label())
-                    .show_ui(ui, |ui| flat_list(ui, |ui| {
-                        for choice in feditor_core::i18n::LangChoice::ALL {
-                            if ui.selectable_label(language == choice, choice.label()).clicked() {
-                                action = Some(Action::SetLanguage(choice));
-                            }
-                        }
-                    }))
-                    .response
-                    .on_hover_text(t("介面顯示的語言。跟隨系統：中文系統用中文，其他一律用英文"));
+                let current = self.settings.language;
+                let next = current.next();
+                let tip = tf!("介面語言：{}（點擊切換為「{}」）", current.label(), next.label());
+                if icons::button(ui, language_icon(current), &tip, true).clicked() {
+                    action = Some(Action::SetLanguage(next));
+                }
+                ui.label(current.label());
             });
 
             // 外觀：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
@@ -2310,86 +2343,6 @@ impl App {
                     .on_hover_text(t("狀態列「行、欄」的欄號算法：1 是一個字一欄（多數編輯器），2 是和畫面寬度一致"));
             });
         });
-        action
-    }
-
-    /// 分頁列（有兩個以上的分頁才顯示）：點擊切換、中鍵或 × 關閉。未儲存的分頁在名稱後面加「●」。
-    fn tab_bar(&self, ui: &mut egui::Ui) -> Option<Action> {
-        let mut action = None;
-        egui::ScrollArea::horizontal()
-            .id_salt("tab_scroll")
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    tight_buttons(ui);
-                    no_hover_outline(ui);
-                    for i in 0..self.tabs.len() {
-                        let (name, full, dirty) = self.tabs.label(&self.doc, i);
-                        let text = if dirty { format!("{name} ●") } else { name };
-                        let selected = i == self.tabs.active();
-                        // 整個分頁是一個元件：名稱在左，× 在右側內部，滑鼠移到分頁上才畫出 ×
-                        // （× 的位置一直保留，顯示與隱藏時分頁寬度不會跳動）
-                        let font = egui::TextStyle::Button.resolve(ui.style());
-                        let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);
-                        let (pad, close_w) = (8.0, 14.0);
-                        let size = egui::vec2(
-                            pad + galley.size().x + 6.0 + close_w + 4.0,
-                            ui.spacing().interact_size.y,
-                        );
-                        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-                        let close = egui::Rect::from_center_size(
-                            egui::pos2(rect.right() - 4.0 - close_w / 2.0, rect.center().y),
-                            egui::vec2(close_w, close_w),
-                        );
-                        let close_resp =
-                            ui.interact(close, ui.make_persistent_id(("tab_close", i)), egui::Sense::click());
-                        let over = response.hovered() || close_resp.hovered();
-                        let visuals = ui.style().interact_selectable(&response, selected);
-                        if selected || over {
-                            ui.painter().rect_filled(
-                                rect,
-                                egui::CornerRadius::same(4),
-                                visuals.weak_bg_fill,
-                            );
-                        }
-                        let text_pos = egui::pos2(
-                            rect.left() + pad,
-                            rect.center().y - galley.size().y / 2.0,
-                        );
-                        ui.painter()
-                            .galley_with_override_text_color(text_pos, galley, visuals.fg_stroke.color);
-                        if over {
-                            if close_resp.hovered() {
-                                ui.painter().rect_filled(
-                                    close,
-                                    egui::CornerRadius::same(3),
-                                    ui.visuals().widgets.hovered.bg_fill,
-                                );
-                            }
-                            let c = close.center();
-                            let d = 3.0;
-                            let stroke = egui::Stroke::new(1.0, visuals.fg_stroke.color);
-                            ui.painter().line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
-                            ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
-                        }
-                        if close_resp.clicked() {
-                            action = Some(Action::CloseTab(i));
-                        } else if response.double_clicked() {
-                            action = Some(Action::RenameTab(i));
-                        } else if response.clicked() {
-                            action = Some(Action::SwitchTab(i));
-                        }
-                        if response.middle_clicked() {
-                            action = Some(Action::CloseTab(i));
-                        }
-                        if close_resp.hovered() {
-                            close_resp.on_hover_text(t("關閉分頁"));
-                        } else {
-                            response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
-                        }
-                    }
-                });
-            });
         action
     }
 
@@ -2825,7 +2778,7 @@ impl eframe::App for App {
 
         // 關閉視窗前，若有未儲存的修改先詢問
         if ctx.input(|i| i.viewport().close_requested())
-            && !self.tabs.dirty_tabs(&self.doc).is_empty()
+            && !self.all_dirty().is_empty()
             && !self.allow_close
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -2927,13 +2880,6 @@ impl eframe::App for App {
                 action = Some(a);
             }
         });
-        if self.tabs.len() > 1 {
-            egui::Panel::top("tabs").show(ui, |ui| {
-                if let Some(a) = self.tab_bar(ui) {
-                    action = Some(a);
-                }
-            });
-        }
         if self.find.open {
             egui::Panel::top("find").show(ui, |ui| {
                 if let Some(a) = self.find_bar(ui) {
@@ -2974,34 +2920,8 @@ impl eframe::App for App {
                 });
         }
         egui::CentralPanel::default().show(ui, |ui| {
-            let App {
-                doc,
-                find,
-                editor,
-                settings,
-                ..
-            } = &mut *self;
-            let reveal = std::mem::take(&mut find.reveal);
-            let options = settings.view;
-            let resolved = syntax::resolve(doc.lang, doc.path.as_deref(), &doc.buffer);
-            // 行註解符號：語言有就用語言的（手動選了語言、或沒有檔名時才有意義），否則看副檔名
-            editor.comment_prefix = resolved
-                .and_then(|l| l.line_comment())
-                .unwrap_or_else(|| language::comment_prefix(doc.path.as_deref()));
-            let language = if options.syntax { resolved } else { None };
-            EditorView {
-                id: editor_id(),
-                buffer: &mut doc.buffer,
-                state: editor,
-                highlight: find.current_chars.clone(),
-                reveal,
-                options,
-                language,
-            }
-            .show(ui);
-            // 使用者在編輯區改了文字：標成未儲存，之前找到的位置與筆數作廢
-            if doc.sync() {
-                find.invalidate();
+            if let Some(a) = self.panes_ui(ui) {
+                action = Some(a);
             }
         });
         if self.settings_open {
@@ -3142,6 +3062,214 @@ mod tests {
         assert_eq!(app.caret_position_text(), "行 2，欄 5", "全形字算 2 欄");
         app.editor.set_caret(&mut app.doc.buffer, 5, false);
         assert_eq!(app.caret_position_text(), "行 1，欄 6", "行尾");
+    }
+
+    // ── 窗格（分割視窗） ─────────────────────────────────────
+
+    use pane_ops::Target;
+    use panes::Side;
+
+    /// 開 a、b 兩個檔案（分頁依序是 a、b，作用中是 b）。
+    fn app_with_two_files() -> (App, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in [("a.txt", "aaa"), ("b.txt", "bbb"), ("c.txt", "ccc")] {
+            std::fs::write(dir.path().join(name), text).unwrap();
+        }
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&dir.path().join("a.txt"));
+        app.open_path(&dir.path().join("b.txt"));
+        (app, dir)
+    }
+
+    fn pane_names(app: &App) -> Vec<(panes::PaneId, Vec<String>)> {
+        app.layout
+            .root
+            .leaves()
+            .into_iter()
+            .map(|id| {
+                let n = if id == app.layout.focus { app.tabs.len() } else { app.layout.others[&id].len() };
+                let names = (0..n)
+                    .map(|i| {
+                        if id == app.layout.focus {
+                            app.tabs.label(&app.doc, i).0
+                        } else {
+                            app.layout.others[&id].label_stashed(i).0
+                        }
+                    })
+                    .collect();
+                (id, names)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dragging_a_tab_to_a_side_splits_the_pane_and_moves_the_tab() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        // 把 a（不是作用中的）拖到左側：新窗格在左邊，裡面是 a，焦點跟過去
+        app.move_tab(first, 0, Target::Split(first, Side::Left));
+        let panes = pane_names(&app);
+        assert_eq!(panes.len(), 2);
+        assert_eq!(panes[0].1, ["a.txt"], "左邊是新窗格");
+        assert_eq!(panes[1], (first, vec!["b.txt".to_owned()]));
+        assert_eq!(app.layout.focus, panes[0].0);
+        assert_eq!(app.doc.text(), "aaa");
+        assert_eq!(app.tabs.len(), 1);
+        // 沒有焦點的窗格，內容也完整：b 還在
+        assert_eq!(app.layout.others[&first].label_stashed(0).0, "b.txt");
+    }
+
+    #[test]
+    fn splitting_to_the_right_or_bottom_puts_the_new_pane_after() {
+        for (side, expect_new_last) in [(Side::Right, true), (Side::Bottom, true)] {
+            let (mut app, _dir) = app_with_two_files();
+            let first = app.layout.focus;
+            app.move_tab(first, 1, Target::Split(first, side)); // 作用中的 b
+            let panes = pane_names(&app);
+            assert_eq!(panes.len(), 2, "{side:?}");
+            assert_eq!(expect_new_last, panes[1].0 == app.layout.focus, "{side:?}：新窗格在後面");
+            assert_eq!(panes[1].1, ["b.txt"]);
+            assert_eq!(panes[0].1, ["a.txt"]);
+            assert_eq!(app.doc.text(), "bbb");
+        }
+    }
+
+    #[test]
+    fn a_lone_tab_cannot_be_split_off_its_own_pane_and_a_pane_is_not_a_drop_target_for_itself() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 0, Target::Into(first));
+        assert_eq!(app.layout.pane_count(), 1);
+        app.close_tab(0); // 只剩 b
+        assert_eq!(app.tabs.len(), 1);
+        app.move_tab(first, 0, Target::Split(first, Side::Left));
+        assert_eq!(app.layout.pane_count(), 1, "只剩一個分頁的窗格，切不出新窗格");
+        assert_eq!(app.doc.text(), "bbb");
+    }
+
+    #[test]
+    fn moving_the_last_tab_out_of_a_pane_closes_that_pane() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 1, Target::Split(first, Side::Right)); // [a] | [b]
+        let second = app.layout.focus;
+        assert_ne!(first, second);
+        // 把 b 拖回左邊那個窗格：右邊空了，窗格自動關掉
+        app.move_tab(second, 0, Target::Into(first));
+        assert_eq!(app.layout.pane_count(), 1);
+        assert_eq!(app.layout.focus, first);
+        assert_eq!(pane_names(&app), [(first, vec!["a.txt".to_owned(), "b.txt".to_owned()])]);
+        assert_eq!(app.doc.text(), "bbb", "搬過去的分頁成為作用中分頁");
+        assert!(app.layout.others.is_empty());
+    }
+
+    #[test]
+    fn closing_a_pane_moves_its_tabs_to_the_neighbour_and_keeps_unsaved_edits() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 1, Target::Split(first, Side::Right)); // [a] | [b]
+        let second = app.layout.focus;
+        // b 有未儲存的修改
+        app.doc.buffer.insert(0, "x");
+        assert!(app.doc.sync());
+        app.close_pane(second);
+        assert_eq!(app.layout.pane_count(), 1);
+        assert_eq!(pane_names(&app)[0].1, ["a.txt", "b.txt"], "分頁接在相鄰窗格的後面");
+        assert_eq!(app.doc.text(), "xbbb", "沒有關掉任何文件，修改還在");
+        assert!(app.doc.dirty);
+        assert_eq!(app.all_dirty(), vec![(first, 1)]);
+        // 只剩一個窗格時關不掉
+        app.close_pane(first);
+        assert_eq!(app.layout.pane_count(), 1);
+    }
+
+    #[test]
+    fn closing_the_last_tab_of_a_pane_closes_the_pane_instead_of_leaving_a_blank_document() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 1, Target::Split(first, Side::Right)); // [a] | [b]
+        app.close_tab(0); // 關掉右邊窗格唯一的分頁 b
+        assert_eq!(app.layout.pane_count(), 1);
+        assert_eq!(app.layout.focus, first);
+        assert_eq!(app.doc.text(), "aaa");
+        assert_eq!(app.tabs.len(), 1, "沒有多出空白文件");
+    }
+
+    #[test]
+    fn opening_a_file_that_is_open_in_another_pane_switches_to_that_pane() {
+        let (mut app, dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 0, Target::Split(first, Side::Left)); // [a] | [b]，焦點在 a
+        assert_eq!(app.doc.text(), "aaa");
+        app.open_path(&dir.path().join("b.txt"));
+        assert_eq!(app.layout.focus, first, "焦點跳到開著 b 的窗格");
+        assert_eq!(app.doc.text(), "bbb");
+        assert_eq!(app.layout.pane_count(), 2, "沒有多開分頁或窗格");
+        assert_eq!(pane_names(&app).iter().map(|(_, n)| n.len()).sum::<usize>(), 2);
+        // 新開的檔案放進有焦點的窗格
+        app.open_path(&dir.path().join("c.txt"));
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.doc.text(), "ccc");
+    }
+
+    #[test]
+    fn dirty_tabs_and_the_session_cover_every_pane() {
+        let (mut app, dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 0, Target::Split(first, Side::Left)); // [a] | [b]
+        app.doc.buffer.insert(0, "x"); // a 變髒（有焦點的窗格）
+        assert!(app.doc.sync());
+        app.focus_pane(first);
+        app.doc.buffer.insert(0, "y"); // b 也髒（原本沒有焦點，現在有）
+        assert!(app.doc.sync());
+        assert_eq!(app.all_dirty().len(), 2, "兩個窗格各一個未儲存的分頁");
+        let session = app.session_all();
+        let names: Vec<_> = session.files.iter().map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["a.txt", "b.txt"], "依畫面由左到右");
+        assert_eq!(session.active, 1, "作用中的是有焦點窗格的作用中分頁");
+        let _ = dir;
+    }
+
+    #[test]
+    fn focusing_another_pane_keeps_a_recording_in_progress() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 0, Target::Split(first, Side::Left));
+        app.editor.recording = Some(Vec::new());
+        app.focus_pane(first);
+        assert_eq!(app.layout.focus, first);
+        assert!(app.editor.recording.is_some(), "錄製跟著使用者走，不屬於某個窗格");
+        assert!(app.layout.others.values().all(|s| s.len() >= 1));
+    }
+
+    #[test]
+    fn dropping_a_dragged_tab_is_cancelled_when_nothing_useful_is_under_the_pointer() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.begin_tab_drag(first, 0);
+        assert_eq!(app.tab_drag.as_ref().map(|d| d.label.as_str()), Some("a.txt"));
+        app.begin_tab_drag(first, 9);
+        assert_eq!(app.tab_drag.as_ref().unwrap().index, 0, "不存在的分頁不能拖");
+    }
+
+    #[test]
+    fn panes_draw_without_panicking_and_each_pane_gets_its_own_tab_bar() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 0, Target::Split(first, Side::Left));
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)));
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(raw.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    assert!(app.panes_ui(ui).is_none());
+                });
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(app.layout.pane_count(), 2);
+        assert!(app.tab_drag.is_none());
     }
 
     #[test]

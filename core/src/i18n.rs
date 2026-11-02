@@ -24,6 +24,15 @@ pub enum LangChoice {
 impl LangChoice {
     pub const ALL: [LangChoice; 3] = [LangChoice::System, LangChoice::Chinese, LangChoice::English];
 
+    /// 點一下按鈕時的下一個選項：跟隨系統 → 中文 → English → 跟隨系統。
+    pub fn next(self) -> Self {
+        match self {
+            LangChoice::System => LangChoice::Chinese,
+            LangChoice::Chinese => LangChoice::English,
+            LangChoice::English => LangChoice::System,
+        }
+    }
+
     /// 存進設定檔的值。
     pub fn key(self) -> &'static str {
         match self {
@@ -185,6 +194,20 @@ mod tests {
         assert_eq!(resolve(LangChoice::System, Some("ja-JP")), Lang::English);
         assert_eq!(resolve(LangChoice::System, Some("en-US")), Lang::English);
         assert_eq!(resolve(LangChoice::System, None), Lang::English, "取不到就用英文");
+    }
+
+    #[test]
+    fn next_cycles_through_all_three_choices() {
+        let mut c = LangChoice::System;
+        let mut seen = vec![c];
+        for _ in 0..3 {
+            c = c.next();
+            seen.push(c);
+        }
+        assert_eq!(
+            seen,
+            [LangChoice::System, LangChoice::Chinese, LangChoice::English, LangChoice::System]
+        );
     }
 
     #[test]

@@ -57,6 +57,14 @@ pub enum Icon {
     Keyboard,
     /// 重新命名（文字游標 I 形）。
     Rename,
+    /// 關閉窗格（窗格外框裡一個 ×）。
+    ClosePane,
+    /// 介面語言：跟隨系統（地球）。
+    LangSystem,
+    /// 介面語言：中文（「中」字）。
+    LangChinese,
+    /// 介面語言：英文（「En」）。
+    LangEnglish,
 }
 
 /// 按鈕尺寸。工具列用 `Normal`，狀態列用 `Small`。
@@ -149,6 +157,18 @@ fn widget(
     }
 
     response
+}
+
+/// 用介面字型把文字寫在圖示格子正中間（語言按鈕的「中」「En」）。
+/// 直接用字型而不是手畫線條，字形才會和旁邊的文字一模一樣。
+fn glyph(painter: &Painter, rect: Rect, text: &str, size: f32, color: Color32) {
+    painter.text(
+        rect.center(),
+        eframe::egui::Align2::CENTER_CENTER,
+        text,
+        eframe::egui::FontId::proportional(size),
+        color,
+    );
 }
 
 /// 畫出圖示。`bg` 是圖示底下的底色，供需要「挖洞」的圖示使用。
@@ -277,6 +297,29 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         Icon::Close => {
             line(&[(3.5, 3.5), (12.5, 12.5)]);
             line(&[(12.5, 3.5), (3.5, 12.5)]);
+        }
+        Icon::LangSystem => {
+            // 地球：圓、赤道、一條直的子午線（橢圓）與上下兩條緯線
+            let c = p(8.0, 8.0);
+            painter.circle_stroke(c, 6.2 * s, stroke);
+            line(&[(1.8, 8.0), (14.2, 8.0)]);
+            let meridian: Vec<(f32, f32)> = (0..=24)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / 24.0;
+                    (8.0 + 2.8 * a.cos(), 8.0 + 6.2 * a.sin())
+                })
+                .collect();
+            line(&meridian);
+            line(&[(3.1, 4.6), (12.9, 4.6)]);
+            line(&[(3.1, 11.4), (12.9, 11.4)]);
+        }
+        Icon::LangChinese => glyph(painter, rect, "中", 13.0 * s, color),
+        Icon::LangEnglish => glyph(painter, rect, "En", 12.0 * s, color),
+        Icon::ClosePane => {
+            // 窗格的外框，裡面一個 ×
+            painter.rect_stroke(rect_of(1.8, 2.8, 14.2, 13.2), CornerRadius::same(1), stroke, StrokeKind::Inside);
+            line(&[(5.8, 6.0), (10.2, 10.0)]);
+            line(&[(10.2, 6.0), (5.8, 10.0)]);
         }
         Icon::ThemeSystem => {
             // 半黑半白的圓：左半邊填滿，右半邊只有外框

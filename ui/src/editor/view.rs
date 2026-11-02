@@ -710,7 +710,8 @@ impl EditorView<'_> {
 
                 // ── 繪製 ──
                 let painter = ui.painter().with_clip_rect(visible);
-                painter.rect_filled(visible, 0.0, ui.visuals().extreme_bg_color);
+                // 小圓角：窗格是圓角卡片，編輯區放在裡面，角落不能是方的
+                painter.rect_filled(visible, eframe::egui::CornerRadius::same(4), ui.visuals().extreme_bg_color);
 
                 let (caret_line, caret_col) = caret_line_col(buffer, state);
                 let preedit_len = state

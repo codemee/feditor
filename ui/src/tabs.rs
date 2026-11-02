@@ -6,6 +6,7 @@
 use crate::document::Document;
 use feditor_core::i18n::t;
 use crate::editor::model::EditorState;
+#[cfg(test)]
 use crate::session::Session;
 use std::path::Path;
 
@@ -115,25 +116,104 @@ impl TabSet {
         }
     }
 
-    fn doc_at<'a>(&'a self, doc: &'a Document, i: usize) -> &'a Document {
-        if i == self.active { doc } else { &self.slots[i].doc }
+    // ── 窗格用的操作 ──────────────────────────────────────────
+    //
+    // 一個 `TabSet` 屬於一個窗格。有焦點的窗格，作用中分頁的內容放在 `App` 的 `doc`／`editor`
+    //（上面的 `switch` 等函式就是這樣用）；沒有焦點的窗格，所有分頁的內容都在 `slots` 裡。
+    // 跨窗格的操作（搬分頁、換焦點）先用 [`TabSet::stash`] 把內容收回來，操作完再 [`TabSet::unstash`]。
+
+    /// 只有一個分頁的分頁集。
+    pub fn from_tab(tab: Tab) -> Self {
+        Self { slots: vec![tab], active: 0 }
     }
 
-    /// 這個路徑是不是已經開在某個分頁裡。
-    pub fn find_path(&self, doc: &Document, path: &Path) -> Option<usize> {
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// 把作用中分頁的內容收回 `slots`。回傳進行中的巨集錄製（它跟著使用者走，不屬於某個分頁）。
+    pub fn stash(&mut self, doc: &mut Document, editor: &mut EditorState) -> Recording {
+        let recording = editor.recording.take();
+        self.slots[self.active] = Tab {
+            doc: std::mem::take(doc),
+            editor: std::mem::take(editor),
+        };
+        recording
+    }
+
+    /// [`TabSet::stash`] 的反向：把作用中分頁的內容換進 `doc`／`editor`，並接回錄製。
+    pub fn unstash(&mut self, doc: &mut Document, editor: &mut EditorState, recording: Recording) {
+        self.load(doc, editor, self.active);
+        editor.recording = recording;
+    }
+
+    /// 取出第 `i` 個分頁（內容必須已經收回）。取完可能變成空的，呼叫端要接著處理（關掉那個窗格）。
+    pub fn take_tab(&mut self, i: usize) -> Tab {
+        let tab = self.slots.remove(i);
+        if i < self.active || self.active >= self.slots.len() {
+            self.active = self.active.saturating_sub(1).min(self.slots.len().saturating_sub(1));
+        }
+        tab
+    }
+
+    /// 在位置 `at`（超出就放最後）放進一個分頁，並讓它成為作用中分頁。
+    pub fn push_tab(&mut self, tab: Tab, at: usize) {
+        let at = at.min(self.slots.len());
+        self.slots.insert(at, tab);
+        self.active = at;
+    }
+
+    /// 讓第 `i` 個分頁成為作用中分頁（內容必須已經收回；超出範圍就不動）。
+    pub fn activate(&mut self, i: usize) {
+        if i < self.slots.len() {
+            self.active = i;
+        }
+    }
+
+    /// 取出所有分頁（內容必須已經收回），分頁集變空。原本作用中分頁的編號另外回傳。
+    pub fn drain(&mut self) -> (Vec<Tab>, usize) {
+        let active = self.active;
+        self.active = 0;
+        (std::mem::take(&mut self.slots), active)
+    }
+
+    /// 沒有焦點的窗格：它目前顯示的分頁內容，畫面要拿去畫。
+    pub fn active_slot_mut(&mut self) -> (&mut Document, &mut EditorState) {
+        let tab = &mut self.slots[self.active];
+        (&mut tab.doc, &mut tab.editor)
+    }
+
+    /// 要查第 `i` 個分頁的文件。`live` 是「作用中分頁在外面」時的那一份（沒有焦點的窗格傳 `None`）。
+    fn doc_in<'a>(&'a self, live: Option<&'a Document>, i: usize) -> &'a Document {
+        match live {
+            Some(doc) if i == self.active => doc,
+            _ => &self.slots[i].doc,
+        }
+    }
+
+    fn find_path_with(&self, live: Option<&Document>, path: &Path) -> Option<usize> {
         let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
         let wanted = canon(path);
         (0..self.slots.len()).find(|&i| {
-            self.doc_at(doc, i)
+            self.doc_in(live, i)
                 .path
                 .as_deref()
                 .is_some_and(|p| canon(p) == wanted)
         })
     }
 
-    /// 分頁標籤：（檔名, 完整路徑, 有沒有未儲存的修改）。
-    pub fn label(&self, doc: &Document, i: usize) -> (String, String, bool) {
-        let d = self.doc_at(doc, i);
+    /// 這個路徑是不是已經開在某個分頁裡。
+    pub fn find_path(&self, doc: &Document, path: &Path) -> Option<usize> {
+        self.find_path_with(Some(doc), path)
+    }
+
+    /// 同上，給沒有焦點的窗格用（所有內容都在 `slots` 裡）。
+    pub fn find_path_stashed(&self, path: &Path) -> Option<usize> {
+        self.find_path_with(None, path)
+    }
+
+    fn label_with(&self, live: Option<&Document>, i: usize) -> (String, String, bool) {
+        let d = self.doc_in(live, i);
         let full = d
             .path
             .as_ref()
@@ -141,22 +221,40 @@ impl TabSet {
         (d.name(), full, d.dirty)
     }
 
+    /// 分頁標籤：（檔名, 完整路徑, 有沒有未儲存的修改）。
+    pub fn label(&self, doc: &Document, i: usize) -> (String, String, bool) {
+        self.label_with(Some(doc), i)
+    }
+
+    /// 同上，給沒有焦點的窗格用。
+    pub fn label_stashed(&self, i: usize) -> (String, String, bool) {
+        self.label_with(None, i)
+    }
+
+    /// 這個分頁集裡有存過檔的分頁：（路徑, 游標位置, 是不是作用中分頁）。`live` 同 [`TabSet::doc_in`]。
+    pub fn session_entries(&self, live: Option<(&Document, &EditorState)>) -> Vec<(std::path::PathBuf, usize, bool)> {
+        (0..self.slots.len())
+            .filter_map(|i| {
+                let (d, e) = match live {
+                    Some(pair) if i == self.active => pair,
+                    _ => (&self.slots[i].doc, &self.slots[i].editor),
+                };
+                d.path.as_ref().map(|p| (p.clone(), e.sel.head, i == self.active))
+            })
+            .collect()
+    }
+
     /// 目前開著哪些檔案（只算有存過檔的分頁）與各自的游標位置，用來記住工作階段。
+    /// 實際存檔用的是跨窗格的 App::session_all；這個只算單一分頁集，測試用。
+    #[cfg(test)]
     pub fn session(&self, doc: &Document, editor: &EditorState) -> Session {
         let mut files = Vec::new();
         let mut active = 0;
-        for i in 0..self.slots.len() {
-            let (d, e) = if i == self.active {
-                (doc, editor)
-            } else {
-                (&self.slots[i].doc, &self.slots[i].editor)
-            };
-            if let Some(p) = &d.path {
-                if i == self.active {
-                    active = files.len();
-                }
-                files.push((p.clone(), e.sel.head));
+        for (path, caret, is_active) in self.session_entries(Some((doc, editor))) {
+            if is_active {
+                active = files.len();
             }
+            files.push((path, caret));
         }
         Session { files, active }
     }
@@ -164,10 +262,20 @@ impl TabSet {
     /// 有未儲存修改的分頁編號。
     pub fn dirty_tabs(&self, doc: &Document) -> Vec<usize> {
         (0..self.slots.len())
-            .filter(|&i| self.doc_at(doc, i).dirty)
+            .filter(|&i| self.doc_in(Some(doc), i).dirty)
+            .collect()
+    }
+
+    /// 同上，給沒有焦點的窗格用。
+    pub fn dirty_tabs_stashed(&self) -> Vec<usize> {
+        (0..self.slots.len())
+            .filter(|&i| self.slots[i].doc.dirty)
             .collect()
     }
 }
+
+/// 進行中的巨集錄製（見 `EditorState::recording`）。
+pub type Recording = Option<Vec<crate::editor::commands::Recorded>>;
 
 #[cfg(test)]
 mod tests {
@@ -220,6 +328,96 @@ mod tests {
         assert_eq!(f.tabs.active(), 1);
         f.switch(2);
         assert_eq!(f.doc.text(), "second");
+    }
+
+    #[test]
+    fn stash_and_unstash_round_trip_keep_text_state_and_the_recording() {
+        let mut f = fixture();
+        f.push("second");
+        f.editor.sel.head = 4;
+        f.editor.recording = Some(Vec::new());
+        let rec = f.tabs.stash(&mut f.doc, &mut f.editor);
+        assert!(rec.is_some(), "錄製交還給呼叫端");
+        assert!(f.editor.recording.is_none() && f.doc.text().is_empty(), "內容已經收回分頁集");
+        f.tabs.unstash(&mut f.doc, &mut f.editor, rec);
+        assert_eq!(f.doc.text(), "second");
+        assert_eq!(f.editor.sel.head, 4);
+        assert!(f.editor.recording.is_some());
+    }
+
+    #[test]
+    fn take_tab_keeps_the_active_tab_pointing_at_the_right_one() {
+        // 取走作用中分頁前面的分頁：編號跟著減一，作用中的內容不變
+        let mut f = fixture();
+        f.push("b");
+        f.push("c");
+        f.push("d"); // first, b, c, d；作用中是 d
+        f.tabs.stash(&mut f.doc, &mut f.editor);
+        assert_eq!(f.tabs.take_tab(1).doc.text(), "b");
+        assert_eq!(f.tabs.active(), 2);
+        f.tabs.unstash(&mut f.doc, &mut f.editor, None);
+        assert_eq!(f.doc.text(), "d");
+        // 取走作用中的最後一個：改指向前一個
+        f.tabs.stash(&mut f.doc, &mut f.editor);
+        assert_eq!(f.tabs.take_tab(2).doc.text(), "d");
+        assert_eq!(f.tabs.active(), 1);
+        // 取走作用中的、後面還有分頁：原本在後面的補上來
+        let mut g = fixture();
+        g.push("b");
+        g.push("c");
+        g.switch(1);
+        g.tabs.stash(&mut g.doc, &mut g.editor);
+        g.tabs.take_tab(1);
+        assert_eq!(g.tabs.active(), 1);
+        g.tabs.unstash(&mut g.doc, &mut g.editor, None);
+        assert_eq!(g.doc.text(), "c");
+        // 取走後面的分頁：作用中不變
+        let mut h = fixture();
+        h.push("b");
+        h.push("c");
+        h.switch(0);
+        h.tabs.stash(&mut h.doc, &mut h.editor);
+        h.tabs.take_tab(2);
+        assert_eq!(h.tabs.active(), 0);
+    }
+
+    fn named_tab(text: &str) -> Tab {
+        Tab { doc: named(text), editor: EditorState::default() }
+    }
+
+    #[test]
+    fn push_tab_inserts_at_a_position_and_activates_it() {
+        let mut set = TabSet::from_tab(named_tab("a"));
+        set.push_tab(named_tab("b"), 1);
+        set.push_tab(named_tab("c"), 0);
+        set.push_tab(named_tab("d"), 99);
+        assert_eq!(set.len(), 4);
+        assert_eq!(set.active(), 3, "超出範圍就放最後");
+        let order: Vec<String> = (0..4).map(|i| set.label_stashed(i).0).collect();
+        assert_eq!(order.len(), 4);
+        let (tabs, active) = set.drain();
+        assert_eq!((tabs.len(), active), (4, 3));
+        assert!(set.is_empty());
+        let mut tabs = tabs;
+        let texts: Vec<String> = tabs.iter_mut().map(|t| t.doc.text().to_owned()).collect();
+        assert_eq!(texts, ["c", "a", "b", "d"]);
+    }
+
+    #[test]
+    fn queries_work_on_a_set_whose_contents_are_all_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.txt");
+        std::fs::write(&p, "hi").unwrap();
+        let (doc, _) = Document::open(&p).unwrap();
+        let mut set = TabSet::from_tab(Tab { doc, editor: EditorState::default() });
+        set.push_tab(named_tab("unsaved"), 1);
+        assert_eq!(set.find_path_stashed(&p), Some(0));
+        assert_eq!(set.find_path_stashed(&dir.path().join("nope.txt")), None);
+        assert!(set.dirty_tabs_stashed().is_empty());
+        let entries = set.session_entries(None);
+        assert_eq!(entries.len(), 1, "沒存過檔的分頁不記");
+        assert_eq!(entries[0].0, p);
+        assert!(!entries[0].2, "作用中的是第二個分頁（沒檔名），所以這個不是作用中");
     }
 
     #[test]

@@ -6,9 +6,9 @@ edition.workspace = true
 [dependencies]
 eframe = "0.37.0"
 encoding_rs = "0.8.44"
-feditor-core = { version = "0.1.2", path = "../core" }
-feditor-script = { version = "0.1.2", path = "../script" }
-feditor-script-js = { version = "0.1.2", path = "../script-js" }
+feditor-core = { version = "0.1.3", path = "../core" }
+feditor-script = { version = "0.1.3", path = "../script" }
+feditor-script-js = { version = "0.1.3", path = "../script-js" }
 fontique = "0.11.1"
 rfd = "0.17.2"
 skrifa = "0.44.0"

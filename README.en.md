@@ -8,10 +8,10 @@ A cross-platform text editor with scripting macros, modeled after EmEditor. Writ
 
 | Path | Description |
 |---|---|
-| `core/` | `feditor-core`: text buffer (ropey) with undo/redo, file encodings, search, line wrapping, search in files. Independent of the UI and macro engines |
+| `core/` | `feditor-core`: text buffer (ropey) with undo/redo, file encodings, search, line wrapping, search in files, and the interface language (Chinese/English table). Independent of the UI and macro engines |
 | `script/` | `feditor-script`: language-agnostic macro API (`EditorApi`, `ScriptEngine`) |
 | `script-js/` | `feditor-script-js`: JavaScript macro engine (QuickJS via rquickjs) |
-| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs, macro library, syntax highlighting, and session restore |
+| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs and split panes (`panes.rs`, `pane_ops.rs`), macro library, syntax highlighting, and session restore |
 | `examples/` | Example macros (`macros/`) and test files in various encodings (`files/`) |
 | `proto/` | Standalone IME verification prototypes (egui, iced, Slint); not part of the main workspace |
 
@@ -28,7 +28,8 @@ Operations are **toolbar buttons**; there are no menus. Buttons show icons only;
 | Font size | Ctrl +/−, Ctrl+wheel, Ctrl+0 | Adjusts the editor font size; synced with the settings panel |
 | Macro panel / Rerun | F5 (rerun) | The panel lists your macros: run, set a shortcut, edit, delete; all changes are rolled back if a macro fails |
 | Record Macro | | Start/stop recording: keys and typing are recorded into a macro that can be replayed |
-| Tab bar | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | Shown only when two or more files are open; click to switch, middle-click or × to close (the × only appears when the pointer is over the tab), **double-click a tab to rename the file**; unsaved tabs have a "●" after the name |
+| Tab bar | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | Shown only when two or more files are open; click to switch, middle-click or × to close (the × only appears when the pointer is over the tab), **double-click a tab to rename the file**, **drag a tab to split the pane** (see below); unsaved tabs have a "●" after the name |
+| Close pane (right end of each pane's tab bar) | | Only present when there are several panes; the pane's tabs move to the neighbouring pane |
 | Clear Output (top right of the output pane) | | Clear macro output and messages |
 | Language, Encoding (with BOM), Line ending (right side of the status bar) | | Shows and changes the save format. In the encoding list, "with BOM" for UTF-8 and UTF-16 is its own entry: UTF-8, UTF-8 BOM, Big5, GBK, Shift_JIS, EUC-KR, UTF-16LE BOM, UTF-16LE, UTF-16BE BOM, UTF-16BE |
 | Reload (right side of the status bar) | | Re-read the current file with a specific encoding when auto-detection is wrong |
@@ -42,14 +43,20 @@ Above the status bar is the **output panel**, which holds file-opening messages,
 
 - New and Open create a new tab; if the current document is blank and unmodified it is reused, and a file that is already open is switched to instead of being opened twice. Each tab has its own caret, selection, and undo history. When closing the window, every unsaved tab is asked about in turn.
 - **Double-click a tab to rename the file**: a dialog opens with only the base name selected (the extension is not overwritten); Enter or "Rename" actually renames the file on disk (it stays in the same folder). If the name is invalid (empty, contains `\ / : * ? " < > |`, or is a reserved Windows name), the folder already has a file with that name, or another tab already has that file open, the dialog explains why and nothing is overwritten. A tab with unsaved changes can be renamed too; its content and unsaved state are unchanged. For a tab that is not saved to a file yet, a double-click opens "Save As".
-- **Session**: when started without a file argument, the files that were open last time (and their caret positions) are reopened. It is stored in `session.conf` in the settings folder; blank never-saved documents are not recorded.
-- **External change detection**: when another program modifies a file (checked when the window regains focus and once per second for the active file), a document without unsaved changes is reloaded automatically with the caret kept; otherwise you are asked whether to reload, and choosing to keep your version means you are not asked again.
+- **Split panes**: drag a tab to the **left, right, or bottom** edge of the editor area (a preview shows the area the new pane will take) and a new pane is split off in that direction with the tab moved into it. You can keep splitting, in any mix of side-by-side and stacked. Every pane has its own independent tab bar; drag a tab onto another pane's tab bar or the middle of its editor to move it into that pane. Panes are rounded cards with a gap between them; the gap is the divider and can be dragged to resize.
+  - **Minimum pane size**: a pane never gets smaller than 240×140 points (a divider cannot be dragged past that); on a side where splitting would leave two panes below the minimum, no split zone is offered.
+  - A tab is *moved*, not copied: the same document never appears in two panes; opening a file that is already open switches to the pane that holds it.
+  - The pane with an accent line on top has the **focus** (click in a pane to change it); find, save, macros, and the status bar all act on its current tab.
+  - Closing the last tab of a pane closes the pane too; you can also press the button at the right end of a pane's tab bar to close the pane, and its tabs (including unsaved changes) move to the neighbouring pane, so no document is closed.
+  - Press Esc while dragging to cancel. There is no "top" split for now, and tabs cannot be reordered by dragging within the same pane.
+- **Session**: when started without a file argument, the files that were open last time (and their caret positions) are reopened. It is stored in `session.conf` in the settings folder; blank never-saved documents are not recorded. The pane layout is not saved; next time everything opens in a single pane.
+- **External change detection**: when another program modifies a file (checked when the window regains focus and once per second for the active file of the focused pane), a document without unsaved changes is reloaded automatically with the caret kept; otherwise you are asked whether to reload, and choosing to keep your version means you are not asked again.
 
 ### Appearance
 
 The "⋯" button at the far right of the toolbar opens **Settings**: interface language, appearance and color schemes, font, and font size.
 
-The **interface language** is "Follow system", "中文" (Chinese), or "English", and changing it takes effect immediately without a restart. "Follow system" decides by the operating system's language: Chinese on a Chinese system, English otherwise. It is stored as `language` (`system` / `zh` / `en`) in the settings file. What is translated is the interface text, tooltips, and messages; documents such as the README, and the comment inside recorded macro files, are not affected.
+The **interface language** is a three-state button in the settings panel: "Follow system" (globe), "中文" (Chinese, a "中" icon), or "English" (an "En" icon); each click cycles to the next one and takes effect immediately without a restart. "Follow system" decides by the operating system's language: Chinese on a Chinese system, English otherwise. It is stored as `language` (`system` / `zh` / `en`) in the settings file. What is translated is the interface text, tooltips, and messages; documents such as the README, and the comment inside recorded macro files, are not affected.
 
 - **Appearance**: a single three-state button; its icon changes with the current state (◐ follow system, ☀ light, ☾ dark) and each click advances to the next one (follow system → light → dark → follow system).
 - **Color scheme**: **light and dark each get their own scheme**, independent of each other (for example GitHub Light for light and Dracula for dark); the one for the current appearance is used, also when following the system. Your choice is remembered. Built-in schemes:
