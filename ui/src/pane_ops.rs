@@ -10,7 +10,7 @@ use crate::editor::view::EditorView;
 use crate::panes::{self, PaneId, Side, Zone};
 use crate::settings::ViewOptions;
 use crate::tabs::TabSet;
-use crate::{Action, App, Document, Icon, editor_id, icons, language, no_hover_outline, syntax, tight_buttons};
+use crate::{Action, App, Document, Icon, editor_id, find_input_id, icons, language, no_hover_outline, syntax, tight_buttons};
 use eframe::egui;
 use feditor_core::i18n::t;
 use feditor_core::tf;
@@ -19,6 +19,11 @@ use std::ops::Range;
 /// 窗格卡片的圓角半徑，以及編輯畫面離卡片邊緣的距離（要夠大，編輯區的角才不會超出卡片的圓角）。
 const CARD_RADIUS: u8 = 8;
 const CARD_INSET: f32 = 4.0;
+/// 分頁的高度與上緣圓角。分頁列下緣沒有留白，作用中的分頁才能和編輯區接在一起。
+const TAB_HEIGHT: f32 = 26.0;
+/// 分頁列和編輯內容之間多留的高度（用編輯區底色補滿）。
+const TAB_BODY_PAD: f32 = 4.0;
+const TAB_RADIUS: u8 = 7;
 
 /// 窗格分頁列上的分頁操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,6 +251,22 @@ impl App {
         crate::session::Session { files, active }
     }
 
+    /// 窗格的編輯畫面左邊行號區的寬度（和 `EditorView` 算的一樣：最大行號的位數加 1.5 個字元寬）。
+    /// 分頁列最左邊的分頁要從行號區右邊（也就是文字區）開始，底色才和編輯區一致。
+    fn gutter_width(&self, ctx: &egui::Context, pane: PaneId) -> f32 {
+        if !self.settings.view.show_line_numbers {
+            return 0.0;
+        }
+        let lines = if pane == self.layout.focus {
+            self.doc.buffer.line_count()
+        } else {
+            self.layout.others.get(&pane).map_or(1, |s| s.active_doc_stashed().buffer.line_count())
+        };
+        let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
+        let char_w = ctx.fonts_mut(|f| f.glyph_width(&font, '0'));
+        (lines.to_string().len() as f32 + 1.5) * char_w
+    }
+
     // ── 拖曳分頁 ─────────────────────────────────────────────
 
     pub(crate) fn begin_tab_drag(&mut self, pane: PaneId, index: usize) {
@@ -270,6 +291,8 @@ impl App {
         let mut action = None;
         // 外面要包一層 horizontal：with_layout 會佔滿所有可用的高度，不包的話分頁列會跑到窗格正中間
         ui.horizontal(|ui| {
+            // 列高先撐到分頁的高度，右邊的按鈕才會和分頁文字垂直置中
+            ui.set_min_height(TAB_HEIGHT);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 tight_buttons(ui);
                 if show_close_pane
@@ -304,13 +327,11 @@ impl App {
         let mut action = None;
         let (name, full, dirty) = self.pane_label(pane, i);
         let text = if dirty { format!("{name} ●") } else { name };
-        // 只有有焦點的窗格的作用中分頁畫成選取狀態，其他窗格的作用中分頁用較淡的底色
-        let selected = i == self.pane_active(pane) && pane == self.layout.focus;
         let active_here = i == self.pane_active(pane);
         let font = egui::TextStyle::Button.resolve(ui.style());
         let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);
         let (pad, close_w) = (8.0, 14.0);
-        let size = egui::vec2(pad + galley.size().x + 6.0 + close_w + 4.0, ui.spacing().interact_size.y);
+        let size = egui::vec2(pad + galley.size().x + 6.0 + close_w + 4.0, TAB_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let close = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 4.0 - close_w / 2.0, rect.center().y),
@@ -318,29 +339,68 @@ impl App {
         );
         let close_resp = ui.interact(close, ui.make_persistent_id(("tab_close", pane, i)), egui::Sense::click());
         let over = response.hovered() || close_resp.hovered();
-        let visuals = ui.style().interact_selectable(&response, selected);
-        if selected || over {
-            ui.painter().rect_filled(rect, egui::CornerRadius::same(4), visuals.weak_bg_fill);
-        } else if active_here {
+        let (fill, text_color, hover_fill, divider, accent) = {
+            let v = ui.visuals();
+            (
+                v.extreme_bg_color,
+                if active_here {
+                    v.strong_text_color()
+                } else if over {
+                    v.text_color()
+                } else {
+                    v.weak_text_color()
+                },
+                v.widgets.hovered.weak_bg_fill.gamma_multiply(0.7),
+                v.widgets.noninteractive.bg_stroke.color,
+                v.selection.bg_fill,
+            )
+        };
+        // 活頁簿標籤：作用中的分頁和下面的編輯區同一個底色，上方兩個圓角、下緣和編輯區接在一起；
+        // 其他分頁沒有色塊，只有較淡的文字，滑鼠移上去才浮出一層淡底，分頁之間用細線隔開
+        if active_here {
             ui.painter().rect_filled(
                 rect,
-                egui::CornerRadius::same(4),
-                ui.visuals().widgets.inactive.weak_bg_fill.gamma_multiply(0.6),
+                egui::CornerRadius { nw: TAB_RADIUS, ne: TAB_RADIUS, sw: 0, se: 0 },
+                fill,
             );
+            // 下緣一條細的強調線（像活頁簿的工作表標籤）：深色主題裡作用中與非作用中分頁的底色差很小，
+            // 靠它一眼分得出來
+            // 分頁列的捲動區會把畫在邊緣的東西裁掉，所以畫在自己的圖層上
+            let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("tab_accent"));
+            ui.ctx().layer_painter(layer).rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.left() + 4.0, rect.bottom() - 2.0),
+                    egui::pos2(rect.right() - 4.0, rect.bottom()),
+                ),
+                egui::CornerRadius::same(1),
+                accent,
+            );
+        } else {
+            if over {
+                ui.painter().rect_filled(rect.shrink2(egui::vec2(0.0, 2.0)), egui::CornerRadius::same(5), hover_fill);
+            }
+            let next_is_active = i + 1 == self.pane_active(pane);
+            if !over && !next_is_active && i + 1 < self.pane_tab_count(pane) {
+                let x = rect.right() + 1.0;
+                let c = rect.center().y;
+                ui.painter().line_segment(
+                    [egui::pos2(x, c - 7.0), egui::pos2(x, c + 7.0)],
+                    egui::Stroke::new(1.0, divider),
+                );
+            }
         }
         let text_pos = egui::pos2(rect.left() + pad, rect.center().y - galley.size().y / 2.0);
-        ui.painter().galley_with_override_text_color(text_pos, galley, visuals.fg_stroke.color);
+        ui.painter().galley_with_override_text_color(text_pos, galley, text_color);
         if over {
             if close_resp.hovered() {
                 ui.painter().rect_filled(close, egui::CornerRadius::same(3), ui.visuals().widgets.hovered.bg_fill);
             }
             let c = close.center();
             let d = 3.0;
-            let stroke = egui::Stroke::new(1.0, visuals.fg_stroke.color);
+            let stroke = egui::Stroke::new(1.0, text_color);
             ui.painter().line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
             ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
-        }
-        if close_resp.clicked() {
+        }        if close_resp.clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Close(i)));
         } else if response.double_clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Rename(i)));
@@ -380,9 +440,13 @@ impl App {
                 }
             }
         }
-        if std::mem::take(&mut self.pending_editor_focus) && !ctx.memory(|m| m.focused().is_some_and(|f| f != editor_id(self.layout.focus))) {
-            // 焦點換到另一個窗格之後，鍵盤也要跟過去（除非使用者正在別的輸入框打字）
-            ctx.memory_mut(|m| m.request_focus(editor_id(self.layout.focus)));
+        if std::mem::take(&mut self.pending_editor_focus) {
+            // 換了窗格或分頁之後，鍵盤也要回到編輯區。點分頁時，分頁元件自己會拿到鍵盤焦點，
+            // 所以只有使用者正在搜尋框打字（例如用 Ctrl+Tab 換分頁）時才不搶
+            let typing_in_find = ctx.memory(|m| m.has_focus(find_input_id()));
+            if !typing_in_find {
+                ctx.memory_mut(|m| m.request_focus(editor_id(self.layout.focus)));
+            }
         }
 
         let mut shapes: Vec<(PaneId, egui::Rect, f32)> = Vec::new();
@@ -411,8 +475,10 @@ impl App {
 
             let mut bar_h = 0.0;
             if multi || self.pane_tab_count(id) > 1 {
+                // 最左邊的分頁對齊編輯區的文字區（行號區的右邊），不是壓在行號區上
+                let left = (CARD_INSET + self.gutter_width(&ctx, id)).round().clamp(8.0, 120.0) as i8;
                 let framed = egui::Frame::new()
-                    .inner_margin(egui::Margin { left: 8, right: 8, top: 6, bottom: 3 })
+                    .inner_margin(egui::Margin { left, right: 8, top: 5, bottom: 0 })
                     .show(&mut child, |ui| {
                         ui.set_min_width(ui.available_width());
                         self.pane_tab_bar(ui, id, multi)
@@ -426,8 +492,21 @@ impl App {
 
             // 編輯畫面放在卡片裡面，四周留一點邊（編輯區自己的背景是小圓角）
             let inset = CARD_INSET;
+            let top = rect.min.y + bar_h.max(inset);
+            // 有分頁列時，編輯內容再往下挪一點：作用中分頁下緣的強調線和被捲到最上緣的那一行文字才不會疊在一起。
+            // 挪出來的這一條用編輯區的底色補上（文字區那一段），分頁還是和編輯區連成一體
+            let pad = if bar_h > 0.0 { TAB_BODY_PAD } else { 0.0 };
+            if pad > 0.0 {
+                let strip_left = rect.min.x + inset + self.gutter_width(&ctx, id);
+                let fill = ui.visuals().extreme_bg_color;
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_max(egui::pos2(strip_left, top), egui::pos2(rect.max.x - inset, top + pad + 1.0)),
+                    egui::CornerRadius::ZERO,
+                    fill,
+                );
+            }
             let body = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + inset, rect.min.y + bar_h.max(inset)),
+                egui::pos2(rect.min.x + inset, top + pad),
                 egui::pos2(rect.max.x - inset, rect.max.y - inset),
             );
             child.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {

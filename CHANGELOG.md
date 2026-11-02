@@ -2,6 +2,14 @@
 
 # 更新紀錄
 
+## [0.1.4] - 2026-11-02
+
+### 變更
+- **分頁改成活頁簿標籤的樣式**：作用中的分頁和下面的編輯區同一個底色、上方圓角、下緣接在一起，下緣有一條細強調線（像活頁簿的工作表標籤）；其他分頁沒有色塊，只有較淡的文字，彼此用細線隔開，滑鼠移上去才浮出淡底。分頁列最左邊的分頁對齊編輯區的文字區（行號區的右邊）。
+
+### 修正
+- 切換、新增、開啟或關閉分頁後，鍵盤焦點回到編輯區，可以直接打字（點分頁時焦點原本會停在分頁上）。
+
 ## [0.1.3] - 2026-11-02
 
 ### 新增
@@ -59,6 +67,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.1.4]: https://github.com/codemee/feditor/releases/tag/v0.1.4
 [0.1.3]: https://github.com/codemee/feditor/releases/tag/v0.1.3
 [0.1.2]: https://github.com/codemee/feditor/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codemee/feditor/releases/tag/v0.1.1

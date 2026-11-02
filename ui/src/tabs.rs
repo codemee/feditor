@@ -177,6 +177,11 @@ impl TabSet {
         (std::mem::take(&mut self.slots), active)
     }
 
+    /// 沒有焦點的窗格：它目前顯示的分頁的文件（唯讀）。
+    pub fn active_doc_stashed(&self) -> &Document {
+        &self.slots[self.active].doc
+    }
+
     /// 沒有焦點的窗格：它目前顯示的分頁內容，畫面要拿去畫。
     pub fn active_slot_mut(&mut self) -> (&mut Document, &mut EditorState) {
         let tab = &mut self.slots[self.active];

@@ -2,6 +2,14 @@
 
 # Changelog
 
+## [0.1.4] - 2026-11-02
+
+### Changed
+- **Tabs now look like workbook tabs**: the active tab has the same color as the editor below it, rounded top corners, joins the editor at its lower edge, and has a thin accent line at its bottom edge (like a workbook sheet tab); the other tabs have no fill, only dimmer text, separated by thin lines, with a faint background appearing on hover. The leftmost tab lines up with the editor's text area (right of the line-number gutter).
+
+### Fixed
+- After switching, adding, opening, or closing a tab, the keyboard focus returns to the editor so you can type right away (clicking a tab used to leave the focus on the tab).
+
 ## [0.1.3] - 2026-11-02
 
 ### Added
@@ -59,6 +67,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.1.4]: https://github.com/codemee/feditor/releases/tag/v0.1.4
 [0.1.3]: https://github.com/codemee/feditor/releases/tag/v0.1.3
 [0.1.2]: https://github.com/codemee/feditor/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codemee/feditor/releases/tag/v0.1.1

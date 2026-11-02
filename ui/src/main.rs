@@ -962,6 +962,8 @@ impl App {
 
     /// 分頁換了：搜尋結果屬於上一個分頁，作廢。
     fn tab_changed(&mut self) {
+        // 換了分頁（切換、新增、開啟、關閉都算）：鍵盤焦點回到編輯區，可以直接打字
+        self.pending_editor_focus = true;
         self.find.invalidate();
         self.find.reveal = false;
         self.save_session();
@@ -1361,7 +1363,11 @@ impl App {
             Action::PaneTab(pane, cmd) => {
                 self.focus_pane(pane);
                 match cmd {
-                    pane_ops::TabCmd::Switch(i) => self.switch_tab(i),
+                    pane_ops::TabCmd::Switch(i) => {
+                        self.switch_tab(i);
+                        // 點的就是目前的分頁時 switch_tab 什麼也不做，也要把鍵盤焦點還給編輯區
+                        self.pending_editor_focus = true;
+                    }
                     pane_ops::TabCmd::Close(i) => self.close_tab(i),
                     pane_ops::TabCmd::Rename(i) => self.start_rename_tab(i),
                 }
@@ -2940,6 +2946,9 @@ impl eframe::App for App {
 
         if let Some(a) = action {
             self.handle(a, &ctx);
+            if self.pending_editor_focus {
+                ctx.request_repaint(); // 下一個畫面就把鍵盤焦點移進編輯區
+            }
         }
 
         // 設定有變更：停下來 0.4 秒後才寫入磁碟（字級拖曳時會連續變動，不要每次都寫）
@@ -3250,6 +3259,20 @@ mod tests {
         assert_eq!(app.tab_drag.as_ref().map(|d| d.label.as_str()), Some("a.txt"));
         app.begin_tab_drag(first, 9);
         assert_eq!(app.tab_drag.as_ref().unwrap().index, 0, "不存在的分頁不能拖");
+    }
+
+    #[test]
+    fn changing_tabs_hands_the_keyboard_focus_back_to_the_editor() {
+        let (mut app, _dir) = app_with_two_files();
+        app.pending_editor_focus = false;
+        app.switch_tab(0);
+        assert!(app.pending_editor_focus, "切換分頁");
+        app.pending_editor_focus = false;
+        app.new_document();
+        assert!(app.pending_editor_focus, "新增分頁");
+        app.pending_editor_focus = false;
+        app.close_tab(app.tabs.active());
+        assert!(app.pending_editor_focus, "關閉分頁");
     }
 
     #[test]
