@@ -135,9 +135,20 @@ pub fn scan(dir: &Path) -> Vec<MacroEntry> {
 
 /// 把原始碼開頭的 `@shortcut` 換成 `shortcut`（`None` 表示拿掉）。
 pub fn set_header_shortcut(source: &str, shortcut: Option<&str>) -> String {
+    set_header_tag(source, "@shortcut", shortcut)
+}
+
+/// 把原始碼開頭的 `@name` 換成 `name`（換行會變成空白）。
+pub fn set_header_name(source: &str, name: &str) -> String {
+    let name = name.replace(['\r', '\n'], " ");
+    set_header_tag(source, "@name", Some(name.trim()))
+}
+
+/// 把檔頭註解裡的 `tag`（例如 `@name`）換成 `value`，沒有值就拿掉；新的一行放在最前面。
+fn set_header_tag(source: &str, tag: &str, value: Option<&str>) -> String {
     let mut out = String::with_capacity(source.len() + 32);
-    if let Some(s) = shortcut {
-        out.push_str(&format!("// @shortcut {s}\n"));
+    if let Some(v) = value {
+        out.push_str(&format!("// {tag} {v}\n"));
     }
     let mut in_header = true;
     for line in source.split_inclusive('\n') {
@@ -146,7 +157,9 @@ pub fn set_header_shortcut(source: &str, shortcut: Option<&str>) -> String {
             if t.is_empty() {
                 // 檔頭裡的空行照留
             } else if let Some(rest) = t.strip_prefix("//") {
-                if rest.trim().starts_with("@shortcut") {
+                let rest = rest.trim();
+                // 只認「標記後面接空白或結尾」，免得 @name 把 @namespace 也吃掉
+                if rest.strip_prefix(tag).is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace)) {
                     continue; // 舊的拿掉
                 }
             } else {
@@ -156,6 +169,28 @@ pub fn set_header_shortcut(source: &str, shortcut: Option<&str>) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// 由顯示名稱做出安全的檔名主體：換掉 Windows／macOS／Linux 不能用的字元與結尾的點、空白，
+/// 太長的截斷，空的或是 Windows 保留字（CON、NUL…）就補上預設名稱。
+pub fn file_stem_for(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| if c.is_control() || "\\/:*?\"<>|".contains(c) { '_' } else { c })
+        .collect();
+    let cleaned: String = cleaned.trim().trim_end_matches(['.', ' ']).chars().take(60).collect();
+    let upper = cleaned.to_ascii_uppercase();
+    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.ends_with(|c: char| c.is_ascii_digit()));
+    if cleaned.is_empty() {
+        "錄製的巨集".to_owned()
+    } else if reserved {
+        format!("{cleaned}_")
+    } else {
+        cleaned
+    }
 }
 
 /// 在 `dir` 底下找一個還沒被用的檔名：`base.js`、`base-2.js`…
@@ -170,12 +205,20 @@ pub fn unique_path(dir: &Path, base: &str) -> PathBuf {
         .expect("檔名一定找得到")
 }
 
-/// 把錄好的巨集存進資料夾（必要時建立），回傳檔案路徑。
-pub fn save_new(dir: &Path, source: &str) -> std::io::Result<PathBuf> {
+/// 把錄好的巨集以 `name` 為名存進資料夾（必要時建立），回傳檔案路徑。
+/// 檔案開頭寫入 `// @name`，所以巨集面板顯示的就是 `name` 原樣（含空白與中文）；檔名則用安全的版本，
+/// 重複時自動加 `-2`、`-3`。
+pub fn save_named(dir: &Path, name: &str, source: &str) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let path = unique_path(dir, "錄製的巨集");
-    std::fs::write(&path, source)?;
+    let path = unique_path(dir, &file_stem_for(name));
+    std::fs::write(&path, set_header_name(source, name))?;
     Ok(path)
+}
+
+/// 重新命名巨集：改寫檔案開頭的 `@name`（檔名不動，快捷鍵等其他標記保留）。
+pub fn rename(path: &Path, new_name: &str) -> std::io::Result<()> {
+    let source = std::fs::read_to_string(path)?;
+    std::fs::write(path, set_header_name(&source, new_name))
 }
 
 #[cfg(test)]
@@ -239,13 +282,47 @@ mod tests {
     }
 
     #[test]
-    fn save_new_makes_unique_files() {
+    fn save_named_writes_the_name_header_and_makes_unique_safe_file_names() {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("macros");
-        let a = save_new(&sub, "1;").unwrap();
-        let b = save_new(&sub, "2;").unwrap();
+        let a = save_named(&sub, "轉換: 大寫/小寫?", "1;").unwrap();
+        let b = save_named(&sub, "轉換: 大寫/小寫?", "2;").unwrap();
         assert_ne!(a, b);
-        assert_eq!(std::fs::read_to_string(&a).unwrap(), "1;");
+        assert_eq!(a.file_name().unwrap().to_string_lossy(), "轉換_ 大寫_小寫_.js");
         assert!(b.file_name().unwrap().to_string_lossy().contains("-2"));
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "// @name 轉換: 大寫/小寫?\n1;");
+        // 面板顯示的是原樣的名稱，不是被清理過的檔名
+        let list = scan(&sub);
+        assert!(list.iter().all(|m| m.name == "轉換: 大寫/小寫?"));
+    }
+
+    #[test]
+    fn rename_rewrites_only_the_name_tag_and_keeps_the_shortcut() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("m.js");
+        std::fs::write(&p, "// @name 舊名\n// @shortcut Ctrl+Alt+K\n// @namespace x\nrun();\n").unwrap();
+        rename(&p, "新名\n稱").unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(text, "// @name 新名 稱\n// @shortcut Ctrl+Alt+K\n// @namespace x\nrun();\n");
+        let list = scan(dir.path());
+        assert_eq!(list[0].name, "新名 稱");
+        assert!(list[0].shortcut.is_some());
+        // 沒有 @name 的巨集（例如以前錄的）也能命名
+        std::fs::write(&p, "run();\n").unwrap();
+        rename(&p, "A").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "// @name A\nrun();\n");
+        assert!(rename(&dir.path().join("missing.js"), "x").is_err());
+    }
+
+    #[test]
+    fn file_stems_are_safe_on_every_platform() {
+        assert_eq!(file_stem_for("  a:b*c  "), "a_b_c");
+        assert_eq!(file_stem_for("結尾是點..."), "結尾是點");
+        assert_eq!(file_stem_for(""), "錄製的巨集");
+        assert_eq!(file_stem_for("   "), "錄製的巨集");
+        assert_eq!(file_stem_for("con"), "con_");
+        assert_eq!(file_stem_for("LPT1"), "LPT1_");
+        assert_eq!(file_stem_for("console"), "console");
+        assert_eq!(file_stem_for(&"長".repeat(100)).chars().count(), 60);
     }
 }

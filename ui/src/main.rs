@@ -1,5 +1,9 @@
 // FEditor UI：以 egui 自繪。編輯區是自繪的（見 editor 模組），不用 egui 的 TextEdit。
 // 操作以工具列按鈕為主，不使用功能表。
+
+// Windows 的 release 版是視窗程式：不要在背後多開一個主控台視窗（debug 版保留，方便看輸出）
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod document;
 mod editor;
 mod find;
@@ -91,11 +95,47 @@ enum Then {
     Reload(&'static Encoding),
     DeleteMacro(usize),
     External,
+    /// 錄好的巨集原始碼，等使用者輸入名稱後存檔。
+    SaveRecording(String),
+    /// 重新命名巨集庫裡的第 i 支巨集（改檔頭的 `@name`）。
+    RenameMacro(usize),
+    /// 重新命名作用中文件的檔案（磁碟上的檔名）。
+    RenameFile,
 }
 
 struct Pending {
     spec: modal::Spec,
     then: Then,
+    /// 有的話，對話框裡會有一個文字框（重新命名、命名巨集）。
+    input: Option<modal::Input>,
+}
+
+impl Pending {
+    fn new(spec: modal::Spec, then: Then) -> Self {
+        Pending { spec, then, input: None }
+    }
+
+    fn with_input(mut self, input: modal::Input) -> Self {
+        self.input = Some(input);
+        self
+    }
+}
+
+/// 觸發快捷鍵時，系統同時送來的那個字元事件（Alt+M 會多一個 "m"）不能讓編輯區當成打字收走。
+/// 只丟掉文字等於這個鍵的字元，回傳丟掉幾個。
+fn drop_key_text(events: &mut Vec<egui::Event>, key: egui::Key) -> usize {
+    let before = events.len();
+    let (symbol, name) = (key.symbol_or_name().to_lowercase(), key.name().to_lowercase());
+    // egui 的減號符號是 Unicode 的「−」，實際打出來的是 ASCII 的 "-"
+    let ascii_minus = key == egui::Key::Minus;
+    events.retain(|e| match e {
+        egui::Event::Text(t) => {
+            let t = t.to_lowercase();
+            t != symbol && t != name && !(ascii_minus && t == "-")
+        }
+        _ => true,
+    });
+    before - events.len()
 }
 
 /// 圖示按鈕之間的間距（像素）。
@@ -113,6 +153,36 @@ fn no_hover_outline(ui: &mut egui::Ui) {
         s.bg_stroke = egui::Stroke::NONE;
         s.expansion = 0.0; // hover 時底色不要比原本的範圍大一圈
     }
+}
+
+/// 檔案拖到視窗上、還沒放開時的提示：整個視窗蓋一層淡色，中間寫「放開以開啟 N 個檔案」。
+fn drop_overlay(ctx: &egui::Context, count: usize) {
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::unique("drop_overlay"),
+    ));
+    let rect = ctx.content_rect();
+    let accent = ctx.global_style().visuals.selection.bg_fill;
+    painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.35));
+    painter.rect_stroke(
+        rect.shrink(8.0),
+        egui::CornerRadius::same(8),
+        egui::Stroke::new(2.0, accent),
+        egui::StrokeKind::Inside,
+    );
+    let text = if count == 1 {
+        "放開以開啟檔案".to_owned()
+    } else {
+        format!("放開以開啟 {count} 個檔案")
+    };
+    let color = ctx.global_style().visuals.strong_text_color();
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(20.0),
+        color,
+    );
 }
 
 /// 下拉清單裡面（選項）的樣式：選項 hover 時不畫外框，並在右邊留出捲軸的位置，
@@ -208,6 +278,7 @@ enum Action {
     RunMacro,
     RerunMacro,
     ClearLog,
+    ToggleOutput,
     Reload(&'static Encoding),
     /// 開啟尋找列；`replace` 為 true 時一併展開取代欄。
     Find { replace: bool },
@@ -237,6 +308,9 @@ enum Action {
     ToggleMacroMenu,
     RunMacroEntry(usize),
     EditMacro(usize),
+    RenameMacro(usize),
+    /// 雙按分頁：重新命名檔案（沒有檔案的文件則是另存新檔）。
+    RenameTab(usize),
     DeleteMacro(usize),
     /// 開始（或取消）等待使用者按下這支巨集的新快捷鍵。
     CaptureShortcut(usize),
@@ -347,6 +421,10 @@ struct App {
     zoom_accum: f32,
     /// 設定面板是否展開。
     settings_open: bool,
+    /// 輸出面板收合時，因為新的錯誤或巨集輸出而暫時展開。只在這次執行有效，不寫進設定。
+    output_peek: bool,
+    /// 剛觸發過的巨集快捷鍵的按鍵：接下來幾個影格裡，等於這個鍵的字元事件要丟掉（見 [`drop_key_text`]）。
+    swallow_text: Option<(egui::Key, u8)>,
     /// 設定按鈕在畫面上的位置（面板要貼在它的下方）。
     settings_anchor: Option<egui::Rect>,
     /// 使用者的巨集清單（來自巨集資料夾）。
@@ -384,6 +462,8 @@ impl App {
             settings_dirty_since: None,
             zoom_accum: 0.0,
             settings_open: false,
+            output_peek: false,
+            swallow_text: None,
             settings_anchor: None,
             macros: Vec::new(),
             macro_open: false,
@@ -402,7 +482,26 @@ impl App {
     }
 
     fn push(&mut self, kind: LogKind, text: impl Into<String>) {
+        // 輸出面板收合時，錯誤與巨集的輸出（console.log）不能讓人錯過：暫時展開
+        if matches!(kind, LogKind::Error | LogKind::Output) {
+            self.output_peek = true;
+        }
         self.log.push((kind, text.into()));
+    }
+
+    /// 輸出面板現在是不是展開的（使用者展開了，或是剛有錯誤／巨集輸出而暫時展開）。
+    fn output_expanded(&self) -> bool {
+        self.settings.show_output || self.output_peek
+    }
+
+    /// 展開／收合輸出面板。暫時展開中按下去就是收合，並一併清掉暫時展開。
+    fn toggle_output(&mut self) {
+        let next = !self.output_expanded();
+        self.output_peek = false;
+        if self.settings.show_output != next {
+            self.settings.show_output = next;
+            self.mark_settings_dirty();
+        }
     }
 
     // ── 設定 ────────────────────────────────────────────────
@@ -571,13 +670,144 @@ impl App {
         .button("儲存", modal::Answer::Yes)
         .button("不儲存", modal::Answer::No)
         .button("取消", modal::Answer::Cancel);
-        self.modal = Some(Pending { spec, then });
+        self.modal = Some(Pending::new(spec, then));
     }
 
-    /// 使用者回答了確認對話框：接著做原本被擋住的事。
-    fn resolve_modal(&mut self, then: Then, answer: modal::Answer, ctx: &egui::Context) {
+    /// 錄製結束：請使用者為巨集命名（預設名稱不與現有的重複）。`text`／`error` 用在輸入有誤、重新詢問時。
+    fn ask_recording_name(&mut self, source: String, text: Option<String>, error: Option<String>) {
+        let text = text.unwrap_or_else(|| self.unused_macro_name());
+        let mut spec = modal::Spec::new("儲存錄好的巨集", "為這支巨集取個名字：")
+            .button("儲存", modal::Answer::Yes)
+            .button("放棄", modal::Answer::No)
+            .no_dismiss(); // Esc 或點到外面不關閉，免得錄好的東西一不小心就丟了
+        spec.error = error;
+        self.modal = Some(Pending::new(spec, Then::SaveRecording(source)).with_input(modal::Input::new(text)));
+    }
+
+    /// 「錄製的巨集」、「錄製的巨集 2」…：第一個還沒被用掉的顯示名稱。
+    fn unused_macro_name(&self) -> String {
+        let taken = |n: &str| self.macros.iter().any(|m| m.name == n);
+        let base = "錄製的巨集";
+        if !taken(base) {
+            return base.to_owned();
+        }
+        (2..).map(|n| format!("{base} {n}")).find(|n| !taken(n)).expect("名稱一定找得到")
+    }
+
+    fn ask_rename_macro(&mut self, i: usize, text: Option<String>, error: Option<String>) {
+        let Some(entry) = self.macros.get(i) else { return };
+        let text = text.unwrap_or_else(|| entry.name.clone());
+        let mut spec = modal::Spec::new("重新命名巨集", format!("「{}」的新名稱：", entry.name))
+            .button("重新命名", modal::Answer::Yes)
+            .button("取消", modal::Answer::Cancel);
+        spec.error = error;
+        self.modal = Some(Pending::new(spec, Then::RenameMacro(i)).with_input(modal::Input::new(text)));
+    }
+
+    /// 雙按分頁：沒有檔案的文件走「另存新檔」，有檔案的就問新檔名（只改檔名，留在同一個資料夾）。
+    fn start_rename_tab(&mut self, i: usize) {
+        if i >= self.tabs.len() {
+            return;
+        }
+        self.switch_tab(i);
+        if self.doc.path.is_none() {
+            if self.save_as() {
+                self.save_session();
+            }
+        } else {
+            self.ask_rename_file(None, None);
+        }
+    }
+
+    fn ask_rename_file(&mut self, text: Option<String>, error: Option<String>) {
+        let old = self.doc.name();
+        let text = text.unwrap_or_else(|| old.clone());
+        // 一開始只選主檔名，改名時副檔名不會被蓋掉
+        let stem = match text.rfind('.') {
+            Some(p) if p > 0 => text[..p].chars().count(),
+            _ => text.chars().count(),
+        };
+        let mut spec = modal::Spec::new("重新命名檔案", format!("「{old}」的新檔名（檔案留在同一個資料夾）："))
+            .button("重新命名", modal::Answer::Yes)
+            .button("取消", modal::Answer::Cancel);
+        spec.error = error;
+        self.modal = Some(Pending::new(spec, Then::RenameFile).with_input(modal::Input::new(text).select(0..stem)));
+    }
+
+    /// 把作用中文件的檔案改名。別的分頁已經開著同名檔案時拒絕，免得兩個分頁指到同一個檔案。
+    fn rename_active_file(&mut self, name: &str) -> Result<(), String> {
+        let old = self.doc.path.clone().ok_or("這份文件還沒有存成檔案")?;
+        document::validate_file_name(name)?;
+        let target = old.with_file_name(name);
+        if target != old {
+            if let Some(other) = self.tabs.find_path(&self.doc, &target) {
+                if other != self.tabs.active() {
+                    return Err(format!("另一個分頁已經開著「{name}」"));
+                }
+            }
+        }
+        let renamed = self.doc.rename_file(name)?;
+        if renamed != old {
+            self.push(LogKind::Info, format!("已將檔案重新命名為 {name}"));
+            self.find.invalidate();
+            self.save_session();
+        }
+        Ok(())
+    }
+
+    /// 錄好的巨集以 `name` 為名存進巨集庫。
+    fn save_recording(&mut self, source: &str, name: &str) {
+        let Some(dir) = macro_lib::macros_dir() else {
+            self.push(LogKind::Error, "找不到設定資料夾，無法儲存錄好的巨集");
+            return;
+        };
+        match macro_lib::save_named(&dir, name, source) {
+            Ok(path) => {
+                self.last_macro = Some(path);
+                self.refresh_macros();
+                self.push(
+                    LogKind::Info,
+                    format!("已儲存錄好的巨集「{name}」；按 F5 重新執行，或到巨集面板重新命名、設快捷鍵、編輯"),
+                );
+            }
+            Err(e) => self.push(LogKind::Error, format!("無法儲存錄好的巨集：{e}")),
+        }
+    }
+
+    /// 使用者回答了確認對話框：接著做原本被擋住的事。`text` 是對話框文字框裡最後的內容。
+    fn resolve_modal(&mut self, then: Then, answer: modal::Answer, text: Option<String>, ctx: &egui::Context) {
         use modal::Answer::{No, Yes};
+        let typed = text.as_deref().map(str::trim).unwrap_or_default().to_owned();
         match then {
+            Then::SaveRecording(source) => match answer {
+                Yes if typed.is_empty() => {
+                    self.ask_recording_name(source, Some(String::new()), Some("名稱不能是空的".to_owned()));
+                }
+                Yes => self.save_recording(&source, &typed),
+                _ => self.push(LogKind::Info, "已放棄錄好的巨集"),
+            },
+            Then::RenameMacro(i) => {
+                if answer == Yes {
+                    if typed.is_empty() {
+                        self.ask_rename_macro(i, Some(String::new()), Some("名稱不能是空的".to_owned()));
+                    } else if let Some(entry) = self.macros.get(i).cloned() {
+                        match macro_lib::rename(&entry.path, &typed) {
+                            Ok(()) => {
+                                self.refresh_macros();
+                                self.push(LogKind::Info, format!("已將巨集「{}」重新命名為「{typed}」", entry.name));
+                            }
+                            Err(e) => self.push(LogKind::Error, format!("無法重新命名巨集：{e}")),
+                        }
+                    }
+                }
+            }
+            Then::RenameFile => {
+                if answer == Yes {
+                    if let Err(e) = self.rename_active_file(&typed) {
+                        self.ask_rename_file(Some(typed), Some(e));
+                    }
+                }
+            }
             Then::CloseTab => match answer {
                 Yes if self.save() => self.close_active_tab(),
                 No => self.close_active_tab(),
@@ -713,7 +943,7 @@ impl App {
             )
             .button("重新載入", modal::Answer::Yes)
             .button("保留我的版本", modal::Answer::No);
-            self.modal = Some(Pending { spec, then: Then::External });
+            self.modal = Some(Pending::new(spec, Then::External));
         } else {
             // 沒有未儲存的修改：直接重新載入，不會詢問
             self.handle_external_change(|_| false);
@@ -796,6 +1026,26 @@ impl App {
             Err(e) => self.push(LogKind::Error, format!("無法開啟 {}：{e}", path.display())),
         }
     }
+    /// 從檔案總管拖進視窗的檔案：每個都用 [`App::open_path`] 開（已開著的切過去，最後一個成為作用中分頁）。
+    /// 資料夾略過並提示；同一個路徑只開一次；有對話框正在等回答時不處理，免得換了分頁。
+    fn open_dropped(&mut self, paths: Vec<PathBuf>) {
+        if self.modal.is_some() {
+            return;
+        }
+        let mut seen: Vec<PathBuf> = Vec::new();
+        for path in paths {
+            if seen.contains(&path) {
+                continue;
+            }
+            seen.push(path.clone());
+            if path.is_dir() {
+                self.push(LogKind::Warn, format!("{} 是資料夾，已略過", path.display()));
+            } else {
+                self.open_path(&path);
+            }
+        }
+    }
+
     /// 回傳是否成功儲存。
     fn save(&mut self) -> bool {
         match self.doc.save() {
@@ -836,7 +1086,7 @@ impl App {
             let spec = modal::Spec::new("重新載入", "重新載入會捨棄尚未儲存的修改，確定嗎？")
                 .button("重新載入", modal::Answer::Yes)
                 .button("取消", modal::Answer::Cancel);
-            self.modal = Some(Pending { spec, then: Then::Reload(encoding) });
+            self.modal = Some(Pending::new(spec, Then::Reload(encoding)));
         } else {
             self.do_reload(encoding);
         }
@@ -929,6 +1179,7 @@ impl App {
                 }
             }
             Action::ClearLog => self.log.clear(),
+            Action::ToggleOutput => self.toggle_output(),
             Action::Reload(enc) => self.reload(enc),
             Action::Find { replace } => self.open_find(ctx, replace),
             Action::FindNext => self.find_step(false),
@@ -984,6 +1235,11 @@ impl App {
                     self.open_path(&path);
                 }
             }
+            Action::RenameMacro(i) => {
+                self.macro_open = false;
+                self.ask_rename_macro(i, None, None);
+            }
+            Action::RenameTab(i) => self.start_rename_tab(i),
             Action::DeleteMacro(i) => self.delete_macro(i),
             Action::CaptureShortcut(i) => {
                 self.capturing_shortcut = if self.capturing_shortcut == Some(i) { None } else { Some(i) };
@@ -1109,7 +1365,7 @@ impl App {
             self.push(LogKind::Info, "沒有錄到任何操作");
             return;
         };
-        let Some(dir) = macro_lib::macros_dir() else {
+        if macro_lib::macros_dir().is_none() {
             // 沒有設定資料夾可存：把原始碼開在新分頁，讓使用者自己決定存哪裡
             let mut doc = Document::new();
             doc.buffer = feditor_core::Buffer::from_text(&source);
@@ -1117,22 +1373,9 @@ impl App {
             self.tab_changed();
             self.push(LogKind::Warn, "找不到設定資料夾，錄好的巨集開在新分頁，請自行另存");
             return;
-        };
-        match macro_lib::save_new(&dir, &source) {
-            Ok(path) => {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                self.last_macro = Some(path);
-                self.refresh_macros();
-                self.push(
-                    LogKind::Info,
-                    format!("已儲存錄好的巨集 {name}；按 F5 重新執行，或到巨集面板重新命名、設快捷鍵、編輯"),
-                );
-            }
-            Err(e) => self.push(LogKind::Error, format!("無法儲存錄好的巨集：{e}")),
         }
+        // 先問名稱再存檔（按「放棄」就不存）
+        self.ask_recording_name(source, None, None);
     }
 
     fn run_macro_entry(&mut self, i: usize) {
@@ -1151,7 +1394,7 @@ impl App {
         )
         .button("刪除", modal::Answer::Yes)
         .button("取消", modal::Answer::Cancel);
-        self.modal = Some(Pending { spec, then: Then::DeleteMacro(i) });
+        self.modal = Some(Pending::new(spec, Then::DeleteMacro(i)));
     }
 
     fn do_delete_macro(&mut self, i: usize) {
@@ -1305,10 +1548,19 @@ impl App {
                     action = Some(Action::RunMacroEntry(i));
                 }
                 ui.add_space(4.0);
-                ui.label(&entry.name);
+                // 名稱雙按也可以重新命名
+                let name = ui
+                    .add(egui::Label::new(&entry.name).sense(egui::Sense::click()))
+                    .on_hover_text("雙按重新命名");
+                if name.double_clicked() {
+                    action = Some(Action::RenameMacro(i));
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icons::small_button(ui, Icon::Clear, "刪除這支巨集", true).clicked() {
                         action = Some(Action::DeleteMacro(i));
+                    }
+                    if icons::small_button(ui, Icon::Rename, "重新命名這支巨集", true).clicked() {
+                        action = Some(Action::RenameMacro(i));
                     }
                     if icons::small_button(ui, Icon::Edit, "編輯原始碼（開在新分頁）", true).clicked() {
                         action = Some(Action::EditMacro(i));
@@ -1750,6 +2002,8 @@ impl App {
                         }
                         if close_resp.clicked() {
                             action = Some(Action::CloseTab(i));
+                        } else if response.double_clicked() {
+                            action = Some(Action::RenameTab(i));
                         } else if response.clicked() {
                             action = Some(Action::SwitchTab(i));
                         }
@@ -1759,7 +2013,7 @@ impl App {
                         if close_resp.hovered() {
                             close_resp.on_hover_text("關閉分頁");
                         } else {
-                            response.on_hover_text(full);
+                            response.on_hover_text(format!("{full}\n雙按重新命名檔案"));
                         }
                     }
                 });
@@ -2072,18 +2326,46 @@ impl App {
         action
     }
 
-    fn output_panel(&self, ui: &mut egui::Ui) -> Option<Action> {
+    /// 輸出面板的標題列：展開／收合鈕、標題、（收合時）最後一則訊息，右邊是清除鈕。
+    fn output_header(&self, ui: &mut egui::Ui, expanded: bool) -> Option<Action> {
         let mut action = None;
-        // 標題列：左邊是標題，右邊是清除按鈕
         ui.horizontal(|ui| {
-            ui.label("輸出");
+            tight_buttons(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let has_log = !self.log.is_empty();
-                if icons::button(ui, Icon::Clear, "清除輸出", has_log).clicked() {
+                if icons::small_button(ui, Icon::Clear, "清除輸出", has_log).clicked() {
                     action = Some(Action::ClearLog);
                 }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let (icon, tip) = if expanded {
+                        (Icon::ChevronDown, "收合輸出")
+                    } else {
+                        (Icon::ChevronUp, "展開輸出")
+                    };
+                    if icons::small_button(ui, icon, tip, true).clicked() {
+                        action = Some(Action::ToggleOutput);
+                    }
+                    ui.label("輸出");
+                    // 收合時還是看得到最後一則訊息（例如「已儲存」），一行放不下就截斷
+                    if !expanded {
+                        if let Some((kind, text)) = self.log.last() {
+                            let color = match kind {
+                                LogKind::Error => ui.visuals().error_fg_color,
+                                LogKind::Warn => ui.visuals().warn_fg_color,
+                                _ => ui.visuals().weak_text_color(),
+                            };
+                            ui.add(egui::Label::new(egui::RichText::new(text).color(color)).truncate())
+                                .on_hover_text(text);
+                        }
+                    }
+                });
             });
         });
+        action
+    }
+
+    fn output_panel(&self, ui: &mut egui::Ui) -> Option<Action> {
+        let action = self.output_header(ui, true);
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
             .auto_shrink([false, false])
@@ -2123,6 +2405,17 @@ impl eframe::App for App {
             if !seen && left > 1 {
                 self.editor.swallow_ime = Some((text, left - 1));
             }
+        }
+
+        // 從檔案總管拖進來的檔案：開起來；拖曳途中在視窗上蓋一層提示
+        let dropped: Vec<PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if !dropped.is_empty() {
+            self.open_dropped(dropped);
+        }
+        let hovering = ctx.input(|i| i.raw.hovered_files.len());
+        if hovering > 0 {
+            drop_overlay(&ctx, hovering);
         }
 
         // 要關閉視窗了：先把還沒寫入的設定存起來，並記住開著的分頁
@@ -2209,7 +2502,14 @@ impl eframe::App for App {
                 None
             }
         });
-        // 使用者替巨集設定的快捷鍵
+        // 使用者替巨集設定的快捷鍵。觸發時，系統同時送來的字元（Alt+M 的 "m"）要丟掉，
+        // 不然巨集跑完之後編輯區還會多出一個字；字元事件有時晚一個影格才到，所以下一個影格也處理。
+        if let Some((key, left)) = self.swallow_text.take() {
+            ctx.input_mut(|i| drop_key_text(&mut i.events, key));
+            if left > 1 {
+                self.swallow_text = Some((key, left - 1));
+            }
+        }
         if action.is_none() {
             let hit = self.macros.iter().position(|m| {
                 m.shortcut
@@ -2217,6 +2517,10 @@ impl eframe::App for App {
                     .is_some_and(|sc| ctx.input_mut(|i| i.consume_shortcut(sc)))
             });
             if let Some(i) = hit {
+                if let Some(sc) = self.macros[i].shortcut {
+                    ctx.input_mut(|ev| drop_key_text(&mut ev.events, sc.logical_key));
+                    self.swallow_text = Some((sc.logical_key, 1));
+                }
                 action = Some(Action::RunMacroEntry(i));
             }
         }
@@ -2252,14 +2556,23 @@ impl eframe::App for App {
                 action = Some(a);
             }
         });
-        egui::Panel::bottom("output")
-            .resizable(true)
-            .default_size(110.0)
-            .show(ui, |ui| {
-                if let Some(a) = self.output_panel(ui) {
+        if self.output_expanded() {
+            egui::Panel::bottom("output")
+                .resizable(true)
+                .default_size(110.0)
+                .show(ui, |ui| {
+                    if let Some(a) = self.output_panel(ui) {
+                        action = Some(a);
+                    }
+                });
+        } else {
+            // 收合：只剩一條標題列。用另一個 id，這樣展開時會回到使用者調整過的高度
+            egui::Panel::bottom("output_bar").show(ui, |ui| {
+                if let Some(a) = self.output_header(ui, false) {
                     action = Some(a);
                 }
             });
+        }
         if self.folder.open {
             egui::Panel::bottom("folder_search")
                 .resizable(true)
@@ -2307,9 +2620,9 @@ impl eframe::App for App {
         if self.macro_open {
             self.show_macro_area(&ctx, &mut action);
         }
-        if let Some(p) = self.modal.take() {
-            match modal::show(&ctx, &p.spec) {
-                Some(answer) => self.resolve_modal(p.then, answer, &ctx),
+        if let Some(mut p) = self.modal.take() {
+            match modal::show(&ctx, &p.spec, p.input.as_mut()) {
+                Some(answer) => self.resolve_modal(p.then, answer, p.input.map(|i| i.text), &ctx),
                 None => self.modal = Some(p),
             }
         }
@@ -2457,6 +2770,189 @@ mod tests {
         assert_eq!(app.tabs.len(), 3);
         app.new_document();
         assert_eq!(app.tabs.len(), 3, "已經在空白文件上就不再多開");
+    }
+
+    #[test]
+    fn dropped_files_open_in_tabs_and_skip_folders_and_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, "aaa").unwrap();
+        std::fs::write(&b, "bbb").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_dropped(vec![
+            a.clone(),
+            dir.path().to_path_buf(), // 資料夾
+            b.clone(),
+            b.clone(), // 同一個檔案重複
+        ]);
+        assert_eq!(app.tabs.len(), 2, "a、b 各一個分頁（空白文件被 a 用掉）");
+        assert_eq!(app.doc.text(), "bbb", "最後一個成為作用中分頁");
+        let warns = app.log.iter().filter(|(kind, _)| *kind == LogKind::Warn).count();
+        assert_eq!(warns, 1, "資料夾提示一次");
+        // 再拖一次已經開著的檔案：切過去，不重複開
+        app.open_dropped(vec![a.clone()]);
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.doc.text(), "aaa");
+    }
+
+    #[test]
+    fn output_panel_toggles_and_peeks_open_for_errors_and_macro_output_only() {
+        let mut app = App::new(None, Settings::default());
+        assert!(!app.output_expanded(), "預設收合");
+        app.push(LogKind::Info, "一般訊息");
+        app.push(LogKind::Warn, "警告");
+        assert!(!app.output_expanded(), "一般訊息與警告不會把面板彈開");
+        app.push(LogKind::Error, "出錯了");
+        assert!(app.output_expanded(), "錯誤讓面板暫時展開");
+        assert!(!app.settings.show_output, "暫時展開不改設定");
+        assert!(app.settings_dirty_since.is_none(), "也不用寫檔");
+        // 暫時展開中按切換 = 收合，而且不留下設定變更
+        app.toggle_output();
+        assert!(!app.output_expanded());
+        assert!(app.settings_dirty_since.is_none());
+        // 使用者自己展開：寫進設定；之後來新訊息不影響
+        app.toggle_output();
+        assert!(app.output_expanded() && app.settings.show_output);
+        assert!(app.settings_dirty_since.is_some());
+        app.push(LogKind::Output, "巨集輸出");
+        app.toggle_output();
+        assert!(!app.output_expanded() && !app.settings.show_output, "再按一次收合，連暫時展開也一併清掉");
+        app.push(LogKind::Output, "console.log");
+        assert!(app.output_expanded(), "巨集輸出也會暫時展開");
+    }
+
+    #[test]
+    fn shortcut_character_is_dropped_but_other_text_is_kept() {
+        let mut ev = vec![
+            egui::Event::Text("m".into()),
+            egui::Event::Text("x".into()),
+            egui::Event::Text("M".into()),
+            egui::Event::Text("ab".into()),
+        ];
+        assert_eq!(drop_key_text(&mut ev, egui::Key::M), 2, "大小寫都要丟");
+        assert_eq!(ev.len(), 2);
+        let mut ev = vec![egui::Event::Text("1".into()), egui::Event::Text("-".into())];
+        assert_eq!(drop_key_text(&mut ev, egui::Key::Num1), 1);
+        assert_eq!(drop_key_text(&mut ev, egui::Key::Minus), 1);
+        assert!(ev.is_empty());
+        let mut ev = vec![egui::Event::Text("f6".into())];
+        assert_eq!(drop_key_text(&mut ev, egui::Key::F6), 1, "名稱也比對");
+    }
+
+    #[test]
+    fn recording_asks_for_a_name_and_empty_names_are_refused_without_saving() {
+        let mut app = App::new(None, Settings::default());
+        app.macros.clear(); // App::new 會讀這台機器真實的巨集資料夾，測試不能受它影響
+        app.ask_recording_name("editor.type('x');".into(), None, None);
+        let p = app.modal.as_ref().expect("要先問名稱");
+        assert!(p.input.is_some(), "有文字框");
+        assert_eq!(p.input.as_ref().unwrap().text, "錄製的巨集", "預設名稱");
+        assert_eq!(p.spec.dismiss, None, "Esc 不能關掉，免得錄好的東西不小心丟掉");
+        let ctx = egui::Context::default();
+        let Pending { then, .. } = app.modal.take().unwrap();
+        // 空白名稱：不存檔，換一個帶錯誤訊息的新對話框，來源碼還在
+        app.resolve_modal(then, modal::Answer::Yes, Some("   ".into()), &ctx);
+        let p = app.modal.as_ref().expect("重新詢問");
+        assert!(p.spec.error.as_deref().unwrap().contains("空"));
+        assert!(matches!(&p.then, Then::SaveRecording(s) if s == "editor.type('x');"));
+        // 放棄：沒有對話框，也不存檔
+        let Pending { then, .. } = app.modal.take().unwrap();
+        app.resolve_modal(then, modal::Answer::No, None, &ctx);
+        assert!(app.modal.is_none());
+        assert!(app.log.iter().any(|(_, t)| t.contains("放棄")));
+    }
+
+    #[test]
+    fn default_recording_name_skips_names_already_in_use() {
+        let mut app = App::new(None, Settings::default());
+        let entry = |name: &str| macro_lib::MacroEntry {
+            path: PathBuf::from(format!("{name}.js")),
+            name: name.to_owned(),
+            shortcut: None,
+        };
+        app.macros.clear(); // 不受這台機器真實的巨集資料夾影響
+        assert_eq!(app.unused_macro_name(), "錄製的巨集");
+        app.macros = vec![entry("錄製的巨集"), entry("錄製的巨集 2")];
+        assert_eq!(app.unused_macro_name(), "錄製的巨集 3");
+    }
+
+    #[test]
+    fn renaming_a_macro_rewrites_its_name_and_empty_names_ask_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.js");
+        std::fs::write(&path, "// @shortcut F6\nrun();\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.macros = vec![macro_lib::MacroEntry { path: path.clone(), name: "m".into(), shortcut: None }];
+        let ctx = egui::Context::default();
+        app.resolve_modal(Then::RenameMacro(0), modal::Answer::Yes, Some("  ".into()), &ctx);
+        assert!(app.modal.as_ref().unwrap().spec.error.is_some(), "空名稱要重新詢問");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "// @shortcut F6\nrun();\n", "沒有動檔案");
+        app.modal = None;
+        app.resolve_modal(Then::RenameMacro(0), modal::Answer::Yes, Some(" 新名稱 ".into()), &ctx);
+        assert!(app.modal.is_none());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "// @name 新名稱\n// @shortcut F6\nrun();\n"
+        );
+        // 取消：什麼都不做
+        app.resolve_modal(Then::RenameMacro(0), modal::Answer::Cancel, Some("別的".into()), &ctx);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("新名稱"));
+    }
+
+    #[test]
+    fn renaming_a_tab_file_renames_it_on_disk_and_refuses_bad_or_taken_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, "aaa").unwrap();
+        std::fs::write(&b, "bbb").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&a);
+        app.open_path(&b); // 作用中是 b
+        let ctx = egui::Context::default();
+        // 詢問時：預設是原檔名，只選主檔名
+        app.ask_rename_file(None, None);
+        let p = app.modal.as_ref().unwrap();
+        assert_eq!(p.input.as_ref().unwrap().text, "b.txt");
+        app.modal = None;
+        // 別的分頁已經開著 a.txt：拒絕並重新詢問，帶著使用者打的字
+        app.resolve_modal(Then::RenameFile, modal::Answer::Yes, Some("a.txt".into()), &ctx);
+        let p = app.modal.as_ref().expect("重新詢問");
+        assert!(p.spec.error.as_deref().unwrap().contains("a.txt"));
+        assert_eq!(p.input.as_ref().unwrap().text, "a.txt");
+        assert!(b.exists());
+        app.modal = None;
+        // 不合法的檔名
+        app.resolve_modal(Then::RenameFile, modal::Answer::Yes, Some("x/y.txt".into()), &ctx);
+        assert!(app.modal.as_ref().unwrap().spec.error.is_some());
+        app.modal = None;
+        // 成功
+        app.resolve_modal(Then::RenameFile, modal::Answer::Yes, Some("c.md".into()), &ctx);
+        assert!(app.modal.is_none());
+        let c = dir.path().join("c.md");
+        assert!(c.exists() && !b.exists());
+        assert_eq!(app.doc.path.as_deref(), Some(c.as_path()));
+        assert_eq!(app.doc.text(), "bbb");
+        assert_eq!(app.tabs.len(), 2);
+        // 取消：不動
+        app.resolve_modal(Then::RenameFile, modal::Answer::Cancel, Some("zzz.txt".into()), &ctx);
+        assert!(c.exists());
+    }
+
+    #[test]
+    fn dropped_files_are_ignored_while_a_dialog_is_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        std::fs::write(&a, "aaa").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.modal = Some(Pending::new(
+            modal::Spec::new("t", "m").button("好", modal::Answer::Yes),
+            Then::External,
+        ));
+        app.open_dropped(vec![a]);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.doc.text(), "", "對話框還沒回答，不開檔");
     }
 
     #[test]

@@ -44,6 +44,30 @@ fn fingerprint(buf: &Buffer) -> (usize, u64) {
     (buf.len_bytes(), h.finish())
 }
 
+/// 檢查新檔名能不能用（只是名稱，不含路徑）：不能空白、不能含路徑分隔字元與 Windows 不允許的符號、
+/// 不能是 `.`／`..`、不能以點或空白結尾（Windows 會悄悄去掉）、不能是 Windows 的保留裝置名。
+pub fn validate_file_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("檔名不能是空的".to_owned());
+    }
+    if let Some(bad) = name.chars().find(|c| c.is_control() || "\\/:*?\"<>|".contains(*c)) {
+        let shown = if bad.is_control() { "控制字元".to_owned() } else { format!("「{bad}」") };
+        return Err(format!("檔名不能含有 {shown}"));
+    }
+    if name == "." || name == ".." || name.ends_with('.') || name.ends_with(' ') {
+        return Err("檔名不能是「.」或「..」，也不能以點或空白結尾".to_owned());
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        return Err(format!("「{stem}」是系統保留的名稱，不能當檔名"));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum SaveDocError {
     /// 尚未指定路徑，應改走「另存新檔」。
@@ -229,6 +253,25 @@ impl Document {
         }
     }
 
+    /// 把磁碟上的檔案改名（同一個資料夾內），並更新這份文件的路徑。內容與未儲存狀態都不受影響。
+    /// 只改大小寫（Windows、macOS 的檔案系統視為同一個檔案）也允許。回傳新路徑。
+    pub fn rename_file(&mut self, new_name: &str) -> Result<PathBuf, String> {
+        validate_file_name(new_name)?;
+        let old = self.path.clone().ok_or("這份文件還沒有存成檔案")?;
+        let new = old.with_file_name(new_name);
+        if new == old {
+            return Ok(new);
+        }
+        let case_only = old.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase());
+        if new.exists() && !case_only {
+            return Err(format!("這個資料夾裡已經有「{new_name}」"));
+        }
+        std::fs::rename(&old, &new).map_err(|e| format!("無法重新命名：{e}"))?;
+        self.disk_mtime = mtime_of(&new);
+        self.path = Some(new.clone());
+        Ok(new)
+    }
+
     pub fn set_bom(&mut self, bom: bool) {
         if self.format.bom != bom {
             self.format.bom = bom;
@@ -346,6 +389,50 @@ mod tests {
         assert_eq!(doc.text(), "你好，世界");
         assert!(!doc.dirty);
         assert_eq!(doc.lang, crate::syntax::LangChoice::Plain, "重新載入要保留語言選擇");
+    }
+
+    #[test]
+    fn file_names_are_validated() {
+        for ok in ["a.txt", "報告 2026.md", ".gitignore", "no-extension", "console.log", "コン.txt"] {
+            assert!(validate_file_name(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "   ", "a/b", "a\\b", "a:b", "a*", "q?", "\"x\"", "<a>", "a|b", ".", "..", "x.", "x ", "con", "CON.txt", "lpt1", "a\nb"] {
+            assert!(validate_file_name(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn rename_file_moves_the_file_keeps_content_and_dirty_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(&dir, "old.txt", b"hello");
+        std::fs::write(dir.path().join("taken.txt"), "x").unwrap();
+        let (mut doc, _) = Document::open(&p).unwrap();
+        doc.buffer.insert(0, "x");
+        doc.sync();
+        assert!(doc.dirty);
+        // 已經有同名檔案：不覆蓋
+        assert!(doc.rename_file("taken.txt").unwrap_err().contains("已經有"));
+        assert!(p.exists());
+        // 檔名不合法
+        assert!(doc.rename_file("a/b.txt").is_err());
+        // 成功：檔案搬過去，路徑更新，內容與未儲存狀態不變
+        let new = doc.rename_file("new name.txt").unwrap();
+        assert_eq!(new, dir.path().join("new name.txt"));
+        assert!(!p.exists() && new.exists());
+        assert_eq!(doc.path.as_deref(), Some(new.as_path()));
+        assert!(doc.dirty);
+        assert_eq!(doc.text(), "xhello");
+        // 之後存檔寫到新的位置，也不會被當成「被外部修改」
+        doc.save().unwrap();
+        assert!(!doc.changed_on_disk());
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "xhello");
+        // 改成一樣的名字：什麼都不做
+        assert_eq!(doc.rename_file("new name.txt").unwrap(), new);
+        // 只改大小寫
+        let upper = doc.rename_file("NEW NAME.txt").unwrap();
+        assert!(upper.exists());
+        // 沒有路徑的文件不能改名
+        assert!(Document::new().rename_file("a.txt").is_err());
     }
 
     #[test]

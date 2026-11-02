@@ -134,6 +134,8 @@ pub struct Settings {
     /// 編輯區字級（點）。
     pub font_size: f32,
     pub view: ViewOptions,
+    /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
+    pub show_output: bool,
 }
 
 impl Default for Settings {
@@ -143,6 +145,7 @@ impl Default for Settings {
             font_family: None,
             font_size: DEFAULT_FONT_SIZE,
             view: ViewOptions::default(),
+            show_output: false,
         }
     }
 }
@@ -178,6 +181,11 @@ impl Settings {
                         }
                     }
                 }
+                "show_output" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.show_output = on;
+                    }
+                }
                 key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap" | "syntax") => {
                     let Some(on) = parse_bool(value) else { continue };
                     match key {
@@ -205,6 +213,7 @@ impl Settings {
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
             v.show_whitespace, v.show_line_numbers, v.highlight_line, v.word_wrap, v.syntax
         ));
+        text.push_str(&format!("show_output = {}\n", self.show_output));
         text
     }
 
@@ -451,5 +460,15 @@ mod tests {
         assert!(!parsed.view.show_whitespace, "不認得的值忽略");
         assert!(!parsed.view.show_line_numbers);
         assert!(Settings::default().view.show_line_numbers);
+    }
+
+    #[test]
+    fn output_panel_is_collapsed_by_default_and_round_trips() {
+        assert!(!Settings::default().show_output);
+        let mut st = Settings::default();
+        st.show_output = true;
+        assert_eq!(Settings::parse(&st.to_text()), st);
+        assert!(Settings::parse("show_output = on\n").show_output);
+        assert!(!Settings::parse("show_output = maybe\n").show_output, "不認得的值忽略");
     }
 }
