@@ -517,7 +517,7 @@ impl EditorView<'_> {
         let spec = TextSpec {
             font_id: font_id.clone(),
             color: text_color,
-            kind_colors: crate::theme::syntax_colors(ui.visuals().dark_mode),
+            kind_colors: crate::theme::syntax_colors(ui.ctx(), ui.visuals().dark_mode),
             syntax: language.map(|lang| SyntaxCtx {
                 lang,
                 cache: syntax_cache.clone(),

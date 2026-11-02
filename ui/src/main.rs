@@ -14,6 +14,7 @@ mod language;
 mod macro_lib;
 mod macros;
 mod modal;
+mod scheme;
 mod session;
 mod settings;
 mod syntax;
@@ -101,6 +102,8 @@ enum Then {
     RenameMacro(usize),
     /// 重新命名作用中文件的檔案（磁碟上的檔名）。
     RenameFile,
+    /// 把正在編輯的配色另存成自訂配色。
+    SaveSchemeAs,
 }
 
 struct Pending {
@@ -294,6 +297,11 @@ enum Action {
     Redo,
     /// 切換配色（跟隨系統、淺色、深色），並記到設定檔。
     SetTheme(ThemeChoice),
+    /// 選用配色：（是不是深色主題, 配色名稱）。
+    SetScheme(bool, String),
+    /// 編輯目前主題正在用的配色。
+    EditScheme,
+    OpenThemesDir,
     /// 設定編輯區的字級（點）。設定面板的字級欄與快捷鍵都走這一條，所以兩邊永遠同步。
     SetFontSize(f32),
     /// 設定編輯區的字型家族；`None` 表示作業系統預設的等寬字型。
@@ -425,6 +433,10 @@ struct App {
     output_peek: bool,
     /// 剛觸發過的巨集快捷鍵的按鍵：接下來幾個影格裡，等於這個鍵的字元事件要丟掉（見 [`drop_key_text`]）。
     swallow_text: Option<(egui::Key, u8)>,
+    /// 所有可選的配色（內建加上 `themes` 資料夾裡的自訂配色）。
+    schemes: Vec<scheme::Scheme>,
+    /// 正在編輯的配色：工作副本，改動立刻預覽，按「儲存」才寫成檔案。
+    scheme_edit: Option<scheme::Scheme>,
     /// 設定按鈕在畫面上的位置（面板要貼在它的下方）。
     settings_anchor: Option<egui::Rect>,
     /// 使用者的巨集清單（來自巨集資料夾）。
@@ -464,6 +476,8 @@ impl App {
             settings_open: false,
             output_peek: false,
             swallow_text: None,
+            schemes: scheme::builtins(),
+            scheme_edit: None,
             settings_anchor: None,
             macros: Vec::new(),
             macro_open: false,
@@ -475,6 +489,7 @@ impl App {
             was_focused: true,
         };
         app.refresh_macros();
+        app.refresh_schemes();
         if let Some(path) = initial {
             app.open_path(&path);
         }
@@ -798,6 +813,19 @@ impl App {
                             }
                             Err(e) => self.push(LogKind::Error, format!("無法重新命名巨集：{e}")),
                         }
+                    }
+                }
+            }
+            Then::SaveSchemeAs => {
+                if answer == Yes {
+                    let result = match scheme::themes_dir() {
+                        Some(dir) => self.save_scheme_as(&dir, &typed),
+                        None => Err("找不到設定資料夾，無法儲存配色".to_owned()),
+                    };
+                    if let Err(e) = result {
+                        self.ask_scheme_name(Some(typed), Some(e));
+                    } else {
+                        self.apply_schemes(ctx);
                     }
                 }
             }
@@ -1203,6 +1231,14 @@ impl App {
                 ctx.set_theme(choice);
                 self.mark_settings_dirty();
             }
+            Action::SetScheme(dark, name) => {
+                self.settings.set_scheme_name(dark, &name);
+                self.scheme_edit = None; // 換了配色，編輯到一半的就放掉
+                self.apply_schemes(ctx);
+                self.mark_settings_dirty();
+            }
+            Action::EditScheme => self.start_scheme_edit(ctx),
+            Action::OpenThemesDir => self.open_folder(scheme::themes_dir()),
             Action::SetFontSize(size) => {
                 let size = clamp_font_size(size);
                 if size != self.settings.font_size {
@@ -1337,10 +1373,188 @@ impl App {
                 self.settings_anchor = Some(more.rect);
                 if more.clicked() {
                     self.settings_open = !self.settings_open;
+                    if self.settings_open {
+                        // 使用者可能剛在 themes 資料夾放了新的配色檔
+                        self.refresh_schemes();
+                        self.apply_schemes(ui.ctx());
+                    }
                 }
             });
         });
         action
+    }
+
+    // ── 配色 ────────────────────────────────────────────────
+
+    /// 重新讀取 `themes` 資料夾裡的自訂配色（開設定面板時、儲存後都會呼叫）。壞掉的檔案略過並提示。
+    fn refresh_schemes(&mut self) {
+        self.load_schemes(scheme::themes_dir());
+    }
+
+    fn load_schemes(&mut self, dir: Option<PathBuf>) {
+        let (custom, messages) = dir.map(|d| scheme::load_custom(&d)).unwrap_or_default();
+        self.schemes = scheme::combined(&custom);
+        for m in messages {
+            self.push(LogKind::Warn, m);
+        }
+    }
+
+    /// 把目前選的配色套到 egui：淺色、深色各用自己選的；正在編輯的配色蓋過它所屬主題的選擇。
+    fn apply_schemes(&self, ctx: &egui::Context) {
+        let mut light = scheme::pick(&self.schemes, false, self.settings.scheme_name(false)).clone();
+        let mut dark = scheme::pick(&self.schemes, true, self.settings.scheme_name(true)).clone();
+        if let Some(edit) = &self.scheme_edit {
+            if edit.dark {
+                dark = edit.clone();
+            } else {
+                light = edit.clone();
+            }
+        }
+        theme::apply(ctx, &light, &dark);
+    }
+
+    /// 開始編輯目前主題（深色或淺色）正在用的配色。
+    fn start_scheme_edit(&mut self, ctx: &egui::Context) {
+        let dark = ctx.global_style().visuals.dark_mode;
+        let current = scheme::pick(&self.schemes, dark, self.settings.scheme_name(dark)).clone();
+        self.scheme_edit = Some(current);
+        self.settings_open = false;
+    }
+
+    /// 編輯中的配色在清單裡原本的樣子（「還原」用）。
+    fn original_scheme(&self, edit: &scheme::Scheme) -> scheme::Scheme {
+        scheme::pick(&self.schemes, edit.dark, &edit.name).clone()
+    }
+
+    /// 儲存正在編輯的自訂配色（寫回原檔）。
+    fn save_scheme_edit(&mut self) {
+        let Some(edit) = self.scheme_edit.clone() else { return };
+        let Some(dir) = scheme::themes_dir() else {
+            self.push(LogKind::Error, "找不到設定資料夾，無法儲存配色");
+            return;
+        };
+        match scheme::save_custom(&dir, &edit) {
+            Ok(_) => {
+                self.refresh_schemes();
+                self.push(LogKind::Info, format!("已儲存配色「{}」", edit.name));
+            }
+            Err(e) => self.push(LogKind::Error, format!("無法儲存配色：{e}")),
+        }
+    }
+
+    fn ask_scheme_name(&mut self, text: Option<String>, error: Option<String>) {
+        let Some(edit) = &self.scheme_edit else { return };
+        let text = text.unwrap_or_else(|| format!("{} 自訂", edit.name));
+        let mode = if edit.dark { "深色" } else { "淺色" };
+        let mut spec = modal::Spec::new("另存為自訂配色", format!("為這套{mode}配色取個名字："))
+            .button("儲存", modal::Answer::Yes)
+            .button("取消", modal::Answer::Cancel);
+        spec.error = error;
+        self.modal = Some(Pending::new(spec, Then::SaveSchemeAs).with_input(modal::Input::new(text)));
+    }
+
+    /// 把正在編輯的配色以 `name` 另存成自訂配色檔（存在 `dir`），並設為這個主題使用的配色。
+    /// 不能與內建配色同名（那樣會分不清），也不會覆蓋另一個自訂配色。
+    fn save_scheme_as(&mut self, dir: &std::path::Path, name: &str) -> Result<(), String> {
+        let edit = self.scheme_edit.clone().ok_or("沒有正在編輯的配色")?;
+        if name.trim().is_empty() {
+            return Err("名稱不能是空的".to_owned());
+        }
+        if scheme::builtins().iter().any(|s| s.dark == edit.dark && s.name == name) {
+            return Err(format!("「{name}」是內建配色的名稱，請換一個"));
+        }
+        let mut new = edit.clone();
+        new.name = name.to_owned();
+        new.builtin = false;
+        // 與正在編輯的是同一套自訂配色就寫回原檔；否則一律另開新檔，絕不覆蓋別的配色
+        let same_as_edit = !edit.builtin && edit.name == name;
+        if !same_as_edit {
+            new.path = None;
+            let taken = self.schemes.iter().any(|s| s.dark == edit.dark && !s.builtin && s.name == name);
+            if taken {
+                return Err(format!("已經有名為「{name}」的自訂配色"));
+            }
+        }
+        scheme::save_custom(dir, &new).map_err(|e| format!("無法儲存配色：{e}"))?;
+        self.load_schemes(Some(dir.to_path_buf()));
+        self.settings.set_scheme_name(edit.dark, name);
+        self.mark_settings_dirty();
+        self.scheme_edit = None;
+        self.push(LogKind::Info, format!("已儲存自訂配色「{name}」，並設為{}主題的配色", if edit.dark { "深色" } else { "淺色" }));
+        Ok(())
+    }
+
+    /// 配色編輯視窗：每種顏色一個色塊，改了立刻預覽。
+    fn scheme_editor(&mut self, ctx: &egui::Context) {
+        use scheme::{Group, Role};
+        let Some(mut edit) = self.scheme_edit.take() else { return };
+        let mut open = true;
+        let (mut changed, mut save, mut save_as, mut revert) = (false, false, false, false);
+        let mode = if edit.dark { "深色" } else { "淺色" };
+        // 預設開在右側：左邊的編輯區才看得到改色的預覽
+        let right = ctx.content_rect().right();
+        egui::Window::new(format!("自訂{mode}配色：{}", edit.name))
+            .id(egui::Id::unique("scheme_editor"))
+            .default_pos(egui::pos2((right - 380.0).max(8.0), 70.0))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                no_hover_outline(ui);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "這是目前{mode}主題用的配色。改動會立刻預覽，按「儲存」或「另存為」才會留下來。\n要編輯另一種主題的配色，請先在設定面板切換外觀。"
+                    ))
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    for group in Group::ALL {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(group.label()).strong());
+                        egui::Grid::new(("scheme_group", group.label())).num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                            for role in Role::ALL.into_iter().filter(|r| r.group() == group) {
+                                ui.label(role.label());
+                                let c = edit.get(role);
+                                let mut rgb = [c.r(), c.g(), c.b()];
+                                if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                    edit.set(role, egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                                    changed = true;
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    }
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    // 內建配色不能直接覆寫，只能另存；自訂配色可以存回原檔
+                    if ui.add_enabled(!edit.builtin, egui::Button::new("儲存")).on_disabled_hover_text("內建配色不能覆寫，請用「另存為」").clicked() {
+                        save = true;
+                    }
+                    if ui.button("另存為…").clicked() {
+                        save_as = true;
+                    }
+                    if ui.button("還原").on_hover_text("放棄這次的修改").clicked() {
+                        revert = true;
+                    }
+                });
+            });
+        if revert {
+            edit = self.original_scheme(&edit);
+            changed = true;
+        }
+        self.scheme_edit = open.then_some(edit);
+        if changed || !open {
+            self.apply_schemes(ctx); // 視窗關掉：scheme_edit 已清空，會回到清單裡選的配色
+        }
+        if save {
+            self.save_scheme_edit();
+        }
+        if save_as {
+            self.ask_scheme_name(None, None);
+        }
     }
 
     // ── 巨集庫與錄製 ────────────────────────────────────────
@@ -1409,7 +1623,12 @@ impl App {
     }
 
     fn open_macro_dir(&mut self) {
-        let Some(dir) = macro_lib::macros_dir() else {
+        self.open_folder(macro_lib::macros_dir());
+    }
+
+    /// 用系統的檔案管理員開啟資料夾（不存在就先建立）。
+    fn open_folder(&mut self, dir: Option<PathBuf>) {
+        let Some(dir) = dir else {
             self.push(LogKind::Warn, "找不到設定資料夾");
             return;
         };
@@ -1806,10 +2025,32 @@ impl App {
         }
     }
 
-    /// 設定面板：配色、字型、字級。
+    /// 某個主題（深色或淺色）可以選的配色清單。
+    fn scheme_combo(&self, ui: &mut egui::Ui, dark: bool) -> Option<Action> {
+        let mut action = None;
+        let current = scheme::pick(&self.schemes, dark, self.settings.scheme_name(dark)).name.clone();
+        egui::ComboBox::from_id_salt(if dark { "scheme_dark" } else { "scheme_light" })
+            .icon(icons::combo_chevron)
+            .width(190.0)
+            .selected_text(current.as_str())
+            .show_ui(ui, |ui| {
+                flat_list(ui, |ui| {
+                    for s in scheme::names_for(&self.schemes, dark) {
+                        let label = if s.builtin { s.name.clone() } else { format!("{}（自訂）", s.name) };
+                        if ui.selectable_label(s.name == current, label).clicked() {
+                            action = Some(Action::SetScheme(dark, s.name.clone()));
+                        }
+                    }
+                })
+            });
+        action
+    }
+
+    /// 設定面板：外觀、配色、字型、字級。
     fn settings_panel(&self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
         ui.set_min_width(340.0);
+        no_hover_outline(ui);
         // 掃描結果複製一份出來，避免整個繪製過程一直握著鎖
         let scan = self.font_scan.lock().ok().and_then(|guard| {
             guard
@@ -1821,13 +2062,13 @@ impl App {
             .num_columns(2)
             .spacing([14.0, 10.0])
             .show(ui, |ui| {
-                // 配色：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
-                ui.label("配色");
+                // 外觀：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
+                ui.label("外觀");
                 ui.horizontal(|ui| {
                     let current = self.settings.theme;
                     let next = current.next();
                     let tip = format!(
-                        "配色：{}（點擊切換為「{}」）",
+                        "外觀：{}（點擊切換為「{}」）",
                         theme_label(current),
                         theme_label(next)
                     );
@@ -1835,6 +2076,34 @@ impl App {
                         action = Some(Action::SetTheme(next));
                     }
                     ui.label(theme_label(current));
+                });
+                ui.end_row();
+
+                // 配色：淺色、深色各選一套，互不影響
+                for dark in [false, true] {
+                    ui.label(if dark { "深色配色" } else { "淺色配色" });
+                    if let Some(a) = self.scheme_combo(ui, dark) {
+                        action = Some(a);
+                    }
+                    ui.end_row();
+                }
+                ui.label("");
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+                    if ui
+                        .button("編輯目前配色…")
+                        .on_hover_text("改目前主題（深色或淺色）正在用的配色，可以另存成自訂配色")
+                        .clicked()
+                    {
+                        action = Some(Action::EditScheme);
+                    }
+                    if ui
+                        .button("配色資料夾")
+                        .on_hover_text("自訂配色檔（*.conf）放在這裡；開啟設定面板時會重新讀取")
+                        .clicked()
+                    {
+                        action = Some(Action::OpenThemesDir);
+                    }
                 });
                 ui.end_row();
 
@@ -2620,6 +2889,7 @@ impl eframe::App for App {
         if self.macro_open {
             self.show_macro_area(&ctx, &mut action);
         }
+        self.scheme_editor(&ctx);
         if let Some(mut p) = self.modal.take() {
             match modal::show(&ctx, &p.spec, p.input.as_mut()) {
                 Some(answer) => self.resolve_modal(p.then, answer, p.input.map(|i| i.text), &ctx),
@@ -2940,6 +3210,108 @@ mod tests {
         assert!(c.exists());
     }
 
+    /// 測試用：App 的配色清單只用內建的，不受這台機器 themes 資料夾裡的檔案影響。
+    fn app_with_builtin_schemes() -> App {
+        let mut app = App::new(None, Settings::default());
+        app.schemes = scheme::builtins();
+        app
+    }
+
+    #[test]
+    fn light_and_dark_use_their_own_scheme_and_unknown_names_fall_back() {
+        use scheme::Role;
+        let ctx = egui::Context::default();
+        let mut app = app_with_builtin_schemes();
+        app.settings.set_scheme_name(true, "Nord");
+        app.settings.set_scheme_name(false, "GitHub Light");
+        app.apply_schemes(&ctx);
+        let by_name = |n: &str| scheme::builtins().into_iter().find(|s| s.name == n).unwrap();
+        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, by_name("Nord").get(Role::EditorBg));
+        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, by_name("GitHub Light").get(Role::PanelBg));
+        // 只改深色：淺色不動
+        let light_before = ctx.style_of(egui::Theme::Light).visuals.panel_fill;
+        app.handle(Action::SetScheme(true, "Dracula".into()), &ctx);
+        assert_eq!(app.settings.scheme_name(true), "Dracula");
+        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, by_name("Dracula").get(Role::EditorBg));
+        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, light_before);
+        assert!(app.settings_dirty_since.is_some(), "選擇要寫進設定");
+        // 設定檔裡的名稱不存在（例如自訂配色檔被刪了）：退回預設，不會壞掉
+        app.settings.set_scheme_name(false, "已經被刪掉的配色");
+        app.apply_schemes(&ctx);
+        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, by_name(scheme::DEFAULT_LIGHT).get(Role::PanelBg));
+    }
+
+    #[test]
+    fn editing_a_scheme_previews_live_and_closing_restores_the_chosen_one() {
+        use scheme::Role;
+        let ctx = egui::Context::default();
+        let mut app = app_with_builtin_schemes();
+        app.settings.set_scheme_name(true, "Dracula");
+        let mut edit = scheme::pick(&app.schemes, true, "Dracula").clone();
+        edit.set(Role::EditorBg, egui::Color32::from_rgb(9, 8, 7));
+        app.scheme_edit = Some(edit);
+        app.apply_schemes(&ctx);
+        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, egui::Color32::from_rgb(9, 8, 7), "編輯中的顏色立刻預覽");
+        // 沒按儲存就放掉：回到清單裡選的那一套
+        app.scheme_edit = None;
+        app.apply_schemes(&ctx);
+        let dracula = scheme::builtins().into_iter().find(|s| s.name == "Dracula").unwrap();
+        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, dracula.get(Role::EditorBg));
+        // 編輯中的是深色配色，淺色那一邊不受影響
+        let light = ctx.style_of(egui::Theme::Light).visuals.panel_fill;
+        let mut edit = dracula.clone();
+        edit.set(Role::PanelBg, egui::Color32::from_rgb(1, 1, 1));
+        app.scheme_edit = Some(edit);
+        app.apply_schemes(&ctx);
+        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, light);
+    }
+
+    #[test]
+    fn saving_a_scheme_as_a_custom_one_validates_the_name_and_selects_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_builtin_schemes();
+        // 沒有正在編輯的配色
+        assert!(app.save_scheme_as(dir.path(), "X").is_err());
+        let mut edit = scheme::pick(&app.schemes, true, "Dracula").clone();
+        edit.set(scheme::Role::SynKeyword, egui::Color32::from_rgb(1, 2, 3));
+        app.scheme_edit = Some(edit);
+        // 空的、與內建同名：拒絕，編輯中的還在
+        assert!(app.save_scheme_as(dir.path(), "  ").unwrap_err().contains("空"));
+        assert!(app.save_scheme_as(dir.path(), "Nord").unwrap_err().contains("內建"));
+        assert!(app.scheme_edit.is_some());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "拒絕時不寫檔");
+        // 成功：寫出檔案、設為深色主題的配色、結束編輯
+        app.save_scheme_as(dir.path(), "我的 Dracula").unwrap();
+        assert!(app.scheme_edit.is_none());
+        assert_eq!(app.settings.scheme_name(true), "我的 Dracula");
+        assert_eq!(app.settings.scheme_name(false), "", "淺色不受影響");
+        let (custom, messages) = scheme::load_custom(dir.path());
+        assert!(messages.is_empty());
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].name, "我的 Dracula");
+        assert!(custom[0].dark);
+    }
+
+    #[test]
+    fn save_as_never_overwrites_another_custom_scheme() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_builtin_schemes();
+        let mut mine = scheme::default_for(true);
+        mine.name = "甲".into();
+        mine.builtin = false;
+        let path = scheme::save_custom(dir.path(), &mine).unwrap();
+        mine.path = Some(path.clone());
+        app.schemes = scheme::combined(&[mine.clone()]);
+        // 正在編輯別的配色，想另存成「甲」：已經有了，拒絕
+        app.scheme_edit = Some(scheme::pick(&app.schemes, true, "Dracula").clone());
+        assert!(app.save_scheme_as(dir.path(), "甲").unwrap_err().contains("已經有"));
+        // 正在編輯「甲」本身再存成「甲」：寫回原檔
+        app.scheme_edit = Some(mine.clone());
+        let before = std::fs::read_dir(dir.path()).unwrap().count();
+        app.save_scheme_as(dir.path(), "甲").unwrap();
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), before, "沒有多出新檔案");
+    }
+
     #[test]
     fn dropped_files_are_ignored_while_a_dialog_is_waiting() {
         let dir = tempfile::tempdir().unwrap();
@@ -3061,7 +3433,6 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx, settings.font_family.as_deref());
-            theme::apply(&cc.egui_ctx); // 深色配色採用 EVA 色票
             cc.egui_ctx.set_theme(settings.theme);
             // 關掉 egui 內建的「Ctrl ＋／－ 縮放整個介面」：我們的 Ctrl ＋／－ 是調整編輯區字級
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -3075,6 +3446,7 @@ fn main() -> eframe::Result {
             for m in syntax_msgs {
                 app.push(LogKind::Warn, m);
             }
+            app.apply_schemes(&cc.egui_ctx); // 淺色、深色各套上自己選的配色
             // 不帶檔名啟動：把上次開著的檔案開回來。之後才開始記錄，免得還原到一半就覆蓋掉
             if restore {
                 app.restore_session();

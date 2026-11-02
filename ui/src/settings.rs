@@ -136,6 +136,10 @@ pub struct Settings {
     pub view: ViewOptions,
     /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
     pub show_output: bool,
+    /// 淺色主題用的配色名稱；空字串表示該主題的預設配色。
+    pub light_scheme: String,
+    /// 深色主題用的配色名稱；空字串表示該主題的預設配色。
+    pub dark_scheme: String,
 }
 
 impl Default for Settings {
@@ -146,7 +150,21 @@ impl Default for Settings {
             font_size: DEFAULT_FONT_SIZE,
             view: ViewOptions::default(),
             show_output: false,
+            light_scheme: String::new(),
+            dark_scheme: String::new(),
         }
+    }
+}
+
+impl Settings {
+    /// 這個主題目前選的配色名稱（空字串表示預設）。
+    pub fn scheme_name(&self, dark: bool) -> &str {
+        if dark { &self.dark_scheme } else { &self.light_scheme }
+    }
+
+    pub fn set_scheme_name(&mut self, dark: bool, name: &str) {
+        let slot = if dark { &mut self.dark_scheme } else { &mut self.light_scheme };
+        *slot = name.to_owned();
     }
 }
 
@@ -181,6 +199,8 @@ impl Settings {
                         }
                     }
                 }
+                "light_scheme" => settings.light_scheme = value.trim_matches('"').trim().to_owned(),
+                "dark_scheme" => settings.dark_scheme = value.trim_matches('"').trim().to_owned(),
                 "show_output" => {
                     if let Some(on) = parse_bool(value) {
                         settings.show_output = on;
@@ -214,6 +234,12 @@ impl Settings {
             v.show_whitespace, v.show_line_numbers, v.highlight_line, v.word_wrap, v.syntax
         ));
         text.push_str(&format!("show_output = {}\n", self.show_output));
+        // 名稱是單行文字；有換行的話會破壞設定檔，所以換成空白（正常情況不會有）
+        for (key, name) in [("light_scheme", &self.light_scheme), ("dark_scheme", &self.dark_scheme)] {
+            if !name.is_empty() {
+                text.push_str(&format!("{key} = {}\n", name.replace(['\r', '\n'], " ")));
+            }
+        }
         text
     }
 
@@ -460,6 +486,23 @@ mod tests {
         assert!(!parsed.view.show_whitespace, "不認得的值忽略");
         assert!(!parsed.view.show_line_numbers);
         assert!(Settings::default().view.show_line_numbers);
+    }
+
+    #[test]
+    fn color_scheme_names_are_chosen_per_theme_and_round_trip() {
+        let s = Settings::default();
+        assert_eq!((s.scheme_name(true), s.scheme_name(false)), ("", ""), "預設是空字串＝該主題的預設配色");
+        assert!(!s.to_text().contains("_scheme"), "預設值不寫進檔案");
+        let mut s = Settings::default();
+        s.set_scheme_name(true, "Dracula");
+        s.set_scheme_name(false, "我的 淺色 配色");
+        assert_eq!(Settings::parse(&s.to_text()), s, "名稱含空白與中文也要讀得回來");
+        assert_eq!(s.scheme_name(true), "Dracula");
+        assert_eq!(s.scheme_name(false), "我的 淺色 配色");
+        // 只設一邊，另一邊維持預設
+        let parsed = Settings::parse("dark_scheme = Nord\n");
+        assert_eq!(parsed.scheme_name(true), "Nord");
+        assert_eq!(parsed.scheme_name(false), "");
     }
 
     #[test]

@@ -24,7 +24,7 @@ Operations are **toolbar buttons**; there are no menus. Buttons show icons only;
 | New / Open / Save / Save As | Ctrl+N / O / S / Shift+S | Basic file operations; unsaved changes prompt before closing or switching documents |
 | Find & Replace | Ctrl+F (replace: Ctrl+H), F3 / Shift+F3 | Opens the find bar with regular expression, case-sensitive, and whole-word options |
 | Find in Files | Ctrl+Shift+F | Search all text files under a folder; clicking a result opens it and selects the match (see below) |
-| Settings (⋯, far right) | | Color scheme, font (monospace fonts only), font size, display options (line numbers, current line, whitespace, syntax coloring, word wrap) |
+| Settings (⋯, far right) | | Appearance (follow system / light / dark), a separate color scheme for light and for dark, font (monospace fonts only), font size, display options (line numbers, current line, whitespace, syntax coloring, word wrap) |
 | Font size | Ctrl +/−, Ctrl+wheel, Ctrl+0 | Adjusts the editor font size; synced with the settings panel |
 | Macro panel / Rerun | F5 (rerun) | The panel lists your macros: run, set a shortcut, edit, delete; all changes are rolled back if a macro fails |
 | Record Macro | | Start/stop recording: keys and typing are recorded into a macro that can be replayed |
@@ -46,10 +46,28 @@ Above the status bar is the **output panel**, which holds file-opening messages,
 
 ### Appearance
 
-The "⋯" button at the far right of the toolbar opens **Settings**, with three items: color scheme, font, and font size.
+The "⋯" button at the far right of the toolbar opens **Settings**: appearance and color schemes, font, and font size.
 
-- **Color scheme**: a single three-state button; its icon changes with the current state (◐ follow system, ☀ light, ☾ dark) and each click advances to the next one (follow system → light → dark → follow system).
-  The dark scheme uses the *Neon Genesis Evangelion* palette: a purple-tinted near-black background, Unit-01 purple for selection and hover, neon green as the accent (cursor, hyperlinks, selected icons), NERV orange for warnings and search-result highlights, and alert red for errors. Contrast between text and every background is covered by tests (at least 4.5:1 for body text). The light scheme is the default.
+- **Appearance**: a single three-state button; its icon changes with the current state (◐ follow system, ☀ light, ☾ dark) and each click advances to the next one (follow system → light → dark → follow system).
+- **Color scheme**: **light and dark each get their own scheme**, independent of each other (for example GitHub Light for light and Dracula for dark); the one for the current appearance is used, also when following the system. Your choice is remembered. Built-in schemes:
+  - Dark: EVA (the default, the *Neon Genesis Evangelion* palette: purple-tinted near-black, Unit-01 purple, neon green, NERV orange), Dracula, Monokai, Solarized Dark, One Dark, Nord, Gruvbox Dark, Tokyo Night, Catppuccin Mocha / Macchiato / Frappé.
+  - Light: Default Light (the original look), Solarized Light, GitHub Light, One Light, Gruvbox Light, VS Code Light+, Catppuccin Latte.
+  - The built-in schemes are adapted from these well-known palettes, with the contrast between text and every background checked (at least 4.5:1 for body text), so they are not necessarily identical to the originals.
+- **Custom schemes**: "Edit current scheme…" in the settings panel opens an editor for the scheme selected for the **appearance currently in use** (dark or light; switch the appearance first to edit the other one). Every color (background, text, buttons and lines, accents and status, syntax coloring; 25 in all) has a swatch, changes preview immediately, and "Revert" discards them. Built-in schemes cannot be overwritten: use "Save as…" to give it a name and store it as a custom scheme (it is also selected for that appearance); a custom scheme can be saved in place.
+  Custom schemes live in the `themes` folder inside the settings folder (Windows `%APPDATA%\feditor\themes\`; the "Scheme folder" button in the settings panel opens it), one `*.conf` file per scheme, and **they are re-read whenever the settings panel opens**, so you can also write one in a text editor or drop in one from someone else. The format is `key = value` (whole lines starting with `#` are comments, and a color may be followed by `  # note`):
+
+  | Key | Meaning |
+  |---|---|
+  | `name` | Scheme name (required). A custom scheme overrides a built-in one with the same name |
+  | `mode` | `dark` or `light`: which list the scheme appears in (default `dark`) |
+  | `base` | Optional: colors you leave out are inherited from this existing scheme (built-in or another custom one); without `base` the default scheme of that mode fills the gaps |
+  | `editor_bg`, `panel_bg`, `popup_bg`, `faint_bg`, `code_bg` | Backgrounds: editor, panels, popups, faint (striping), code |
+  | `text`, `text_strong`, `text_weak` | Normal, strong, and secondary text |
+  | `button`, `button_hover`, `button_active`, `selection`, `line`, `line_hover` | Buttons (normal, hovered, pressed), selection, lines (normal, hovered) |
+  | `accent`, `cursor`, `link`, `warning`, `error` | Accent, caret, hyperlinks, warnings (also search-result highlights), errors |
+  | `syn_comment`, `syn_string`, `syn_number`, `syn_keyword`, `syn_type`, `syn_function` | Syntax coloring: comments, strings, numbers, keywords, types, functions |
+
+  Write colors as `#RRGGBB` (or `#RGB`). Broken files (missing `name`, unknown keys, bad colors, an unknown `base`) are skipped and the reason is shown in the output panel. See `examples/themes/midnight.conf`. If the scheme named in the settings no longer exists (for example the file was deleted), the default scheme of that mode is used.
 - **Font**: lists **monospace fonts only**. A font counts as monospace when `i`, `m`, `W`, `.`, etc. all have the same advance width; the monospace flag inside font files is not used because it is often wrong. The default is the **operating system's default monospace font** (queried from the OS, not hard-coded; Consolas on Windows).
   Some old fonts (MingLiU, MS Gothic, Lucida Console, ...) have embedded *color bitmap* Latin glyphs, which egui does not tint with the text color and therefore draws invisibly, so such fonts are left out of the list; if the settings file names one, the editor falls back to the system default and the panel shows the font that is actually in effect.
   Building the list means opening every font file, so it is scanned in the background; until it finishes the panel shows "Finding monospace fonts on the system…". Chinese glyphs come from Microsoft JhengHei. Fonts differ in ascent/descent proportions, which makes egui draw Latin letters and Chinese characters on different baselines by default, so at startup and whenever the font changes the gap is measured with egui's real layout and compensated; tests verify that every font in the list puts both on the same baseline.
