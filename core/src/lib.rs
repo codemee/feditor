@@ -5,6 +5,7 @@
 
 pub mod fileio;
 pub mod grep;
+pub mod i18n;
 pub mod motion;
 pub mod search;
 

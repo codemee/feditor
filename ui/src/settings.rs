@@ -5,6 +5,8 @@
 
 use eframe::egui;
 use feditor_core::fileio::{self, FileFormat, LineEnding};
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use std::path::{Path, PathBuf};
 
 /// 配色偏好。
@@ -140,6 +142,10 @@ pub struct Settings {
     pub light_scheme: String,
     /// 深色主題用的配色名稱；空字串表示該主題的預設配色。
     pub dark_scheme: String,
+    /// 狀態列的欄號裡，全形字（中日韓文字等）算幾欄：1（一個字一欄）或 2（和畫面寬度一致）。
+    pub wide_cols: u8,
+    /// 介面語言：跟隨系統、中文、英文。
+    pub language: feditor_core::i18n::LangChoice,
 }
 
 impl Default for Settings {
@@ -152,6 +158,8 @@ impl Default for Settings {
             show_output: false,
             light_scheme: String::new(),
             dark_scheme: String::new(),
+            wide_cols: 1,
+            language: Default::default(),
         }
     }
 }
@@ -201,6 +209,16 @@ impl Settings {
                 }
                 "light_scheme" => settings.light_scheme = value.trim_matches('"').trim().to_owned(),
                 "dark_scheme" => settings.dark_scheme = value.trim_matches('"').trim().to_owned(),
+                "language" => {
+                    if let Some(l) = feditor_core::i18n::LangChoice::parse(value) {
+                        settings.language = l;
+                    }
+                }
+                "wide_cols" => match value {
+                    "1" => settings.wide_cols = 1,
+                    "2" => settings.wide_cols = 2,
+                    _ => {}
+                },
                 "show_output" => {
                     if let Some(on) = parse_bool(value) {
                         settings.show_output = on;
@@ -234,6 +252,8 @@ impl Settings {
             v.show_whitespace, v.show_line_numbers, v.highlight_line, v.word_wrap, v.syntax
         ));
         text.push_str(&format!("show_output = {}\n", self.show_output));
+        text.push_str(&format!("wide_cols = {}\n", self.wide_cols));
+        text.push_str(&format!("language = {}\n", self.language.key()));
         // 名稱是單行文字；有換行的話會破壞設定檔，所以換成空白（正常情況不會有）
         for (key, name) in [("light_scheme", &self.light_scheme), ("dark_scheme", &self.dark_scheme)] {
             if !name.is_empty() {
@@ -253,7 +273,7 @@ impl Settings {
     /// 寫到指定路徑（會建立不存在的資料夾）。
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("無法建立 {}：{e}", dir.display()))?;
+            std::fs::create_dir_all(dir).map_err(|e| tf!("無法建立 {}：{}", dir.display(), e))?;
         }
         let format = FileFormat {
             line_ending: LineEnding::Lf,
@@ -274,7 +294,7 @@ impl Settings {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let path = Self::default_path().ok_or("找不到使用者設定目錄，設定不會被保存")?;
+        let path = Self::default_path().ok_or(t("找不到使用者設定目錄，設定不會被保存"))?;
         self.save_to(&path)
     }
 }
@@ -486,6 +506,28 @@ mod tests {
         assert!(!parsed.view.show_whitespace, "不認得的值忽略");
         assert!(!parsed.view.show_line_numbers);
         assert!(Settings::default().view.show_line_numbers);
+    }
+
+    #[test]
+    fn language_setting_round_trips_and_defaults_to_system() {
+        use feditor_core::i18n::LangChoice;
+        assert_eq!(Settings::default().language, LangChoice::System);
+        for l in LangChoice::ALL {
+            let mut s = Settings::default();
+            s.language = l;
+            assert_eq!(Settings::parse(&s.to_text()).language, l);
+        }
+        assert_eq!(Settings::parse("language = klingon\n").language, LangChoice::System);
+    }
+
+    #[test]
+    fn wide_cols_setting_round_trips_and_rejects_other_values() {
+        assert_eq!(Settings::default().wide_cols, 1);
+        let mut s = Settings::default();
+        s.wide_cols = 2;
+        assert_eq!(Settings::parse(&s.to_text()).wide_cols, 2);
+        assert_eq!(Settings::parse("wide_cols = 3\n").wide_cols, 1, "只接受 1 或 2");
+        assert_eq!(Settings::parse("wide_cols = abc\n").wide_cols, 1);
     }
 
     #[test]

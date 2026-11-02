@@ -2,6 +2,19 @@
 
 # Changelog
 
+## Unreleased
+
+### Added
+- **Interface language**: the settings panel offers "Follow system", "中文" (Chinese), and "English", and the change applies immediately. With "Follow system", a Chinese system gets Chinese and everything else gets English.
+- The status bar shows the caret position as "行 X，欄 Y" (line X, column Y, starting at 1). In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns, chosen under "欄號" (column number) in the settings panel (default 1).
+
+### Changed
+- The settings panel is split into four groups, "Interface", "Color schemes", "Editor", and "Status bar", with separators between them; every row has the same height and spacing.
+
+### Fixed
+- Chinese text in the interface (dropdowns, labels, buttons) sat lower than the Latin text next to it: the baseline gap between the interface font and the Chinese font is now measured and the Chinese text is lifted to match.
+- In the settings panel, the text labels of the "Appearance" and "Show" rows were not vertically aligned with the icon buttons next to them.
+
 ## [0.1.2] - 2026-11-02
 
 ### Added

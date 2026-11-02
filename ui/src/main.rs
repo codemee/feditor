@@ -23,6 +23,8 @@ mod theme;
 
 use document::{Document, SaveDocError};
 use eframe::egui;
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use egui::text::CCursor;
 use egui::text_selection::CCursorRange;
 use encoding_rs::Encoding;
@@ -83,9 +85,9 @@ fn theme_icon(choice: ThemeChoice) -> Icon {
 
 fn theme_label(choice: ThemeChoice) -> &'static str {
     match choice {
-        ThemeChoice::System => "跟隨系統",
-        ThemeChoice::Light => "淺色",
-        ThemeChoice::Dark => "深色",
+        ThemeChoice::System => t("跟隨系統"),
+        ThemeChoice::Light => t("淺色"),
+        ThemeChoice::Dark => t("深色"),
     }
 }
 
@@ -149,6 +151,47 @@ fn tight_buttons(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.x = BUTTON_GAP;
 }
 
+/// 設定面板的一個群組：兩欄的表單。所有群組的標籤欄一樣寬，控制項才會左緣對齊。
+fn settings_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .min_col_width(96.0)
+        .spacing([14.0, 4.0])
+        .show(ui, add_rows);
+}
+
+/// 設定面板群組的標題。
+fn group_title(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .strong()
+            .color(ui.visuals().weak_text_color()),
+    );
+    ui.add_space(2.0);
+}
+
+/// 兩個群組之間的分隔。
+fn group_gap(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(2.0);
+}
+
+/// 表單的一列：左邊文字標籤，右邊控制項。每一列的高度一律和圖示按鈕一樣高，
+/// 標籤與控制項都垂直置中，列與列的間距才會一致（不會因為有沒有按鈕而忽大忽小）。
+fn form_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    let height = icons::BUTTON_HEIGHT;
+    ui.horizontal(|ui| {
+        ui.set_min_height(height);
+        ui.label(label);
+    });
+    ui.horizontal(|ui| {
+        ui.set_min_height(height);
+        add(ui);
+    });
+    ui.end_row();
+}
+
 /// 這一區的元件 hover／按下／展開時不畫外框，只保留底色。
 fn no_hover_outline(ui: &mut egui::Ui) {
     let w = &mut ui.visuals_mut().widgets;
@@ -174,9 +217,9 @@ fn drop_overlay(ctx: &egui::Context, count: usize) {
         egui::StrokeKind::Inside,
     );
     let text = if count == 1 {
-        "放開以開啟檔案".to_owned()
+        t("放開以開啟檔案").to_owned()
     } else {
-        format!("放開以開啟 {count} 個檔案")
+        tf!("放開以開啟 {count} 個檔案", count = count)
     };
     let color = ctx.global_style().visuals.strong_text_color();
     painter.text(
@@ -233,22 +276,22 @@ fn install_fonts(ctx: &egui::Context, family: Option<&str>) {
 /// 規則表達式按鈕的 tooltip：基本語法速查，加上完整說明的連結。
 fn regex_help(ui: &mut egui::Ui) {
     ui.set_max_width(400.0);
-    ui.strong("規則表達式（Rust regex 語法）");
+    ui.strong(t("規則表達式（Rust regex 語法）"));
     ui.add_space(2.0);
     egui::Grid::new("regex_help")
         .num_columns(2)
         .spacing([14.0, 2.0])
         .show(ui, |ui| {
             for (syntax, meaning) in [
-                (".", "任意字元（不含換行）"),
-                ("\\d  \\w  \\s", "數字、字母數字底線、空白"),
-                ("^  $", "行首、行尾（以「行」為單位）"),
-                ("[abc]  [^abc]", "其中之一、排除這些"),
-                ("*  +  ?", "重複 0 次以上、1 次以上、0 或 1 次"),
-                ("{2,5}", "重複 2 到 5 次（後面加 ? 為非貪婪）"),
-                ("(…)  |", "群組（取代時用 $1）、或"),
-                ("\\.  \\(", "跳脫特殊字元"),
-                ("(?i)", "不分大小寫"),
+                (".", t("任意字元（不含換行）")),
+                ("\\d  \\w  \\s", t("數字、字母數字底線、空白")),
+                ("^  $", t("行首、行尾（以「行」為單位）")),
+                ("[abc]  [^abc]", t("其中之一、排除這些")),
+                ("*  +  ?", t("重複 0 次以上、1 次以上、0 或 1 次")),
+                ("{2,5}", t("重複 2 到 5 次（後面加 ? 為非貪婪）")),
+                ("(…)  |", t("群組（取代時用 $1）、或")),
+                ("\\.  \\(", t("跳脫特殊字元")),
+                ("(?i)", t("不分大小寫")),
             ] {
                 ui.label(egui::RichText::new(syntax).monospace());
                 ui.label(meaning);
@@ -256,10 +299,10 @@ fn regex_help(ui: &mut egui::Ui) {
             }
         });
     ui.add_space(4.0);
-    ui.label("取代字串：$1 代入群組，\\n 換行，\\t 跳位，$$ 為字面的 $");
+    ui.label(t("取代字串：$1 代入群組，\\n 換行，\\t 跳位，$$ 為字面的 $"));
     ui.add_space(4.0);
     ui.hyperlink_to(
-        "完整語法說明（docs.rs/regex）",
+        t("完整語法說明（docs.rs/regex）"),
         "https://docs.rs/regex/latest/regex/#syntax",
     );
 }
@@ -308,6 +351,10 @@ enum Action {
     SetFontFamily(Option<String>),
     /// 編輯區的顯示選項（空白字元、行號、目前行、自動換行）。
     SetView(settings::ViewOptions),
+    /// 狀態列欄號裡，全形字（中日韓文字等）算 1 欄還是 2 欄。
+    SetWideCols(u8),
+    /// 介面語言：跟隨系統、中文、英文。
+    SetLanguage(feditor_core::i18n::LangChoice),
     SwitchTab(usize),
     CloseTab(usize),
     NextTab,
@@ -547,7 +594,7 @@ impl App {
     fn flush_settings(&mut self) {
         if self.settings_dirty_since.take().is_some() {
             if let Err(e) = self.settings.save() {
-                self.push(LogKind::Warn, format!("無法儲存設定：{e}"));
+                self.push(LogKind::Warn, tf!("無法儲存設定：{e}", e = e));
             }
         }
     }
@@ -662,13 +709,13 @@ impl App {
     fn replace_all(&mut self) {
         let App { doc, find, .. } = self;
         match find.replace_all(&mut doc.buffer) {
-            Ok(0) => self.push(LogKind::Info, "沒有可取代的內容"),
+            Ok(0) => self.push(LogKind::Info, t("沒有可取代的內容")),
             Ok(n) => {
                 self.doc.sync();
                 // 整份文字都換過了，原本的選取範圍已經沒有意義：收成游標
                 let head = self.editor.sel.head;
                 self.editor.set_caret(&mut self.doc.buffer, head, false);
-                self.push(LogKind::Info, format!("已取代 {n} 筆"));
+                self.push(LogKind::Info, tf!("已取代 {n} 筆", n = n));
             }
             // 搜尋字串是空的或規則有誤：交給搜尋流程去顯示錯誤
             Err(_) => self.find_changed(),
@@ -679,21 +726,21 @@ impl App {
     /// 對作用中的文件顯示「要儲存嗎？」對話框；答案由 [`App::resolve_modal`] 處理。
     fn ask_save(&mut self, then: Then, before: &str) {
         let spec = modal::Spec::new(
-            "尚未儲存",
-            format!("「{}」有尚未儲存的修改。要在{}之前儲存嗎？", self.doc.name(), before),
+            t("尚未儲存"),
+            tf!("「{}」有尚未儲存的修改。要在{}之前儲存嗎？", self.doc.name(), before),
         )
-        .button("儲存", modal::Answer::Yes)
-        .button("不儲存", modal::Answer::No)
-        .button("取消", modal::Answer::Cancel);
+        .button(t("儲存"), modal::Answer::Yes)
+        .button(t("不儲存"), modal::Answer::No)
+        .button(t("取消"), modal::Answer::Cancel);
         self.modal = Some(Pending::new(spec, then));
     }
 
     /// 錄製結束：請使用者為巨集命名（預設名稱不與現有的重複）。`text`／`error` 用在輸入有誤、重新詢問時。
     fn ask_recording_name(&mut self, source: String, text: Option<String>, error: Option<String>) {
         let text = text.unwrap_or_else(|| self.unused_macro_name());
-        let mut spec = modal::Spec::new("儲存錄好的巨集", "為這支巨集取個名字：")
-            .button("儲存", modal::Answer::Yes)
-            .button("放棄", modal::Answer::No)
+        let mut spec = modal::Spec::new(t("儲存錄好的巨集"), t("為這支巨集取個名字："))
+            .button(t("儲存"), modal::Answer::Yes)
+            .button(t("放棄"), modal::Answer::No)
             .no_dismiss(); // Esc 或點到外面不關閉，免得錄好的東西一不小心就丟了
         spec.error = error;
         self.modal = Some(Pending::new(spec, Then::SaveRecording(source)).with_input(modal::Input::new(text)));
@@ -702,7 +749,7 @@ impl App {
     /// 「錄製的巨集」、「錄製的巨集 2」…：第一個還沒被用掉的顯示名稱。
     fn unused_macro_name(&self) -> String {
         let taken = |n: &str| self.macros.iter().any(|m| m.name == n);
-        let base = "錄製的巨集";
+        let base = t("錄製的巨集");
         if !taken(base) {
             return base.to_owned();
         }
@@ -712,9 +759,9 @@ impl App {
     fn ask_rename_macro(&mut self, i: usize, text: Option<String>, error: Option<String>) {
         let Some(entry) = self.macros.get(i) else { return };
         let text = text.unwrap_or_else(|| entry.name.clone());
-        let mut spec = modal::Spec::new("重新命名巨集", format!("「{}」的新名稱：", entry.name))
-            .button("重新命名", modal::Answer::Yes)
-            .button("取消", modal::Answer::Cancel);
+        let mut spec = modal::Spec::new(t("重新命名巨集"), tf!("「{}」的新名稱：", entry.name))
+            .button(t("重新命名"), modal::Answer::Yes)
+            .button(t("取消"), modal::Answer::Cancel);
         spec.error = error;
         self.modal = Some(Pending::new(spec, Then::RenameMacro(i)).with_input(modal::Input::new(text)));
     }
@@ -742,28 +789,28 @@ impl App {
             Some(p) if p > 0 => text[..p].chars().count(),
             _ => text.chars().count(),
         };
-        let mut spec = modal::Spec::new("重新命名檔案", format!("「{old}」的新檔名（檔案留在同一個資料夾）："))
-            .button("重新命名", modal::Answer::Yes)
-            .button("取消", modal::Answer::Cancel);
+        let mut spec = modal::Spec::new(t("重新命名檔案"), tf!("「{old}」的新檔名（檔案留在同一個資料夾）：", old = old))
+            .button(t("重新命名"), modal::Answer::Yes)
+            .button(t("取消"), modal::Answer::Cancel);
         spec.error = error;
         self.modal = Some(Pending::new(spec, Then::RenameFile).with_input(modal::Input::new(text).select(0..stem)));
     }
 
     /// 把作用中文件的檔案改名。別的分頁已經開著同名檔案時拒絕，免得兩個分頁指到同一個檔案。
     fn rename_active_file(&mut self, name: &str) -> Result<(), String> {
-        let old = self.doc.path.clone().ok_or("這份文件還沒有存成檔案")?;
+        let old = self.doc.path.clone().ok_or(t("這份文件還沒有存成檔案"))?;
         document::validate_file_name(name)?;
         let target = old.with_file_name(name);
         if target != old {
             if let Some(other) = self.tabs.find_path(&self.doc, &target) {
                 if other != self.tabs.active() {
-                    return Err(format!("另一個分頁已經開著「{name}」"));
+                    return Err(tf!("另一個分頁已經開著「{name}」", name = name));
                 }
             }
         }
         let renamed = self.doc.rename_file(name)?;
         if renamed != old {
-            self.push(LogKind::Info, format!("已將檔案重新命名為 {name}"));
+            self.push(LogKind::Info, tf!("已將檔案重新命名為 {name}", name = name));
             self.find.invalidate();
             self.save_session();
         }
@@ -773,7 +820,7 @@ impl App {
     /// 錄好的巨集以 `name` 為名存進巨集庫。
     fn save_recording(&mut self, source: &str, name: &str) {
         let Some(dir) = macro_lib::macros_dir() else {
-            self.push(LogKind::Error, "找不到設定資料夾，無法儲存錄好的巨集");
+            self.push(LogKind::Error, t("找不到設定資料夾，無法儲存錄好的巨集"));
             return;
         };
         match macro_lib::save_named(&dir, name, source) {
@@ -782,10 +829,10 @@ impl App {
                 self.refresh_macros();
                 self.push(
                     LogKind::Info,
-                    format!("已儲存錄好的巨集「{name}」；按 F5 重新執行，或到巨集面板重新命名、設快捷鍵、編輯"),
+                    tf!("已儲存錄好的巨集「{name}」；按 F5 重新執行，或到巨集面板重新命名、設快捷鍵、編輯", name = name),
                 );
             }
-            Err(e) => self.push(LogKind::Error, format!("無法儲存錄好的巨集：{e}")),
+            Err(e) => self.push(LogKind::Error, tf!("無法儲存錄好的巨集：{e}", e = e)),
         }
     }
 
@@ -796,22 +843,22 @@ impl App {
         match then {
             Then::SaveRecording(source) => match answer {
                 Yes if typed.is_empty() => {
-                    self.ask_recording_name(source, Some(String::new()), Some("名稱不能是空的".to_owned()));
+                    self.ask_recording_name(source, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
                 }
                 Yes => self.save_recording(&source, &typed),
-                _ => self.push(LogKind::Info, "已放棄錄好的巨集"),
+                _ => self.push(LogKind::Info, t("已放棄錄好的巨集")),
             },
             Then::RenameMacro(i) => {
                 if answer == Yes {
                     if typed.is_empty() {
-                        self.ask_rename_macro(i, Some(String::new()), Some("名稱不能是空的".to_owned()));
+                        self.ask_rename_macro(i, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
                     } else if let Some(entry) = self.macros.get(i).cloned() {
                         match macro_lib::rename(&entry.path, &typed) {
                             Ok(()) => {
                                 self.refresh_macros();
-                                self.push(LogKind::Info, format!("已將巨集「{}」重新命名為「{typed}」", entry.name));
+                                self.push(LogKind::Info, tf!("已將巨集「{}」重新命名為「{}」", entry.name, typed));
                             }
-                            Err(e) => self.push(LogKind::Error, format!("無法重新命名巨集：{e}")),
+                            Err(e) => self.push(LogKind::Error, tf!("無法重新命名巨集：{e}", e = e)),
                         }
                     }
                 }
@@ -820,7 +867,7 @@ impl App {
                 if answer == Yes {
                     let result = match scheme::themes_dir() {
                         Some(dir) => self.save_scheme_as(&dir, &typed),
-                        None => Err("找不到設定資料夾，無法儲存配色".to_owned()),
+                        None => Err(t("找不到設定資料夾，無法儲存配色").to_owned()),
                     };
                     if let Err(e) = result {
                         self.ask_scheme_name(Some(typed), Some(e));
@@ -874,7 +921,7 @@ impl App {
         match next {
             Some(i) => {
                 self.switch_tab(i);
-                self.ask_save(Then::CloseWindow, "關閉");
+                self.ask_save(Then::CloseWindow, t("關閉"));
             }
             None => {
                 self.close_skipped.clear();
@@ -935,7 +982,7 @@ impl App {
         if self.doc.dirty && !ask(&name) {
             // 使用者要保留自己的版本：記下磁碟版本，不要每秒都再問一次
             self.doc.accept_disk_version();
-            self.push(LogKind::Warn, format!("{name} 已被其他程式修改，目前保留編輯器裡的版本"));
+            self.push(LogKind::Warn, tf!("{name} 已被其他程式修改，目前保留編輯器裡的版本", name = name));
             return;
         }
         let sel = self.editor.sel;
@@ -945,14 +992,14 @@ impl App {
                 self.editor.sel = sel;
                 self.editor.extra.clear();
                 self.editor.clamp(&self.doc.buffer);
-                self.push(LogKind::Info, format!("{name} 已被其他程式修改，已自動重新載入"));
+                self.push(LogKind::Info, tf!("{name} 已被其他程式修改，已自動重新載入", name = name));
                 for w in warnings {
                     self.push(LogKind::Warn, w);
                 }
             }
             Err(e) => {
                 self.doc.accept_disk_version();
-                self.push(LogKind::Error, format!("無法重新載入 {name}：{e}"));
+                self.push(LogKind::Error, tf!("無法重新載入 {name}：{e}", name = name, e = e));
             }
         }
     }
@@ -963,14 +1010,14 @@ impl App {
         }
         if self.doc.dirty && self.doc.changed_on_disk() {
             let spec = modal::Spec::new(
-                "檔案已被修改",
-                format!(
+                t("檔案已被修改"),
+                tf!(
                     "「{}」已被其他程式修改，而且你在編輯器裡也有尚未儲存的修改。要重新載入嗎？（會捨棄你的修改）",
                     self.doc.name()
                 ),
             )
-            .button("重新載入", modal::Answer::Yes)
-            .button("保留我的版本", modal::Answer::No);
+            .button(t("重新載入"), modal::Answer::Yes)
+            .button(t("保留我的版本"), modal::Answer::No);
             self.modal = Some(Pending::new(spec, Then::External));
         } else {
             // 沒有未儲存的修改：直接重新載入，不會詢問
@@ -1001,7 +1048,7 @@ impl App {
         }
         self.switch_tab(i);
         if self.doc.dirty {
-            self.ask_save(Then::CloseTab, "關閉分頁");
+            self.ask_save(Then::CloseTab, t("關閉分頁"));
         } else {
             self.close_active_tab();
         }
@@ -1014,7 +1061,7 @@ impl App {
     }
 
     fn open(&mut self) {
-        if let Some(paths) = rfd::FileDialog::new().set_title("開啟檔案").pick_files() {
+        if let Some(paths) = rfd::FileDialog::new().set_title(t("開啟檔案")).pick_files() {
             for path in paths {
                 self.open_path(&path);
             }
@@ -1025,7 +1072,7 @@ impl App {
     fn open_path(&mut self, path: &std::path::Path) {
         if let Some(i) = self.tabs.find_path(&self.doc, path) {
             self.switch_tab(i);
-            self.push(LogKind::Info, format!("{} 已經開啟，切換到該分頁", self.doc.name()));
+            self.push(LogKind::Info, tf!("{} 已經開啟，切換到該分頁", self.doc.name()));
             return;
         }
         match Document::open(path) {
@@ -1039,7 +1086,7 @@ impl App {
                 }
                 self.push(
                     LogKind::Info,
-                    format!(
+                    tf!(
                         "已開啟 {}（{}，{}）",
                         self.doc.name(),
                         self.doc.format.encoding_label(),
@@ -1051,7 +1098,7 @@ impl App {
                 }
                 self.save_session();
             }
-            Err(e) => self.push(LogKind::Error, format!("無法開啟 {}：{e}", path.display())),
+            Err(e) => self.push(LogKind::Error, tf!("無法開啟 {}：{}", path.display(), e)),
         }
     }
     /// 從檔案總管拖進視窗的檔案：每個都用 [`App::open_path`] 開（已開著的切過去，最後一個成為作用中分頁）。
@@ -1067,7 +1114,7 @@ impl App {
             }
             seen.push(path.clone());
             if path.is_dir() {
-                self.push(LogKind::Warn, format!("{} 是資料夾，已略過", path.display()));
+                self.push(LogKind::Warn, tf!("{} 是資料夾，已略過", path.display()));
             } else {
                 self.open_path(&path);
             }
@@ -1078,12 +1125,12 @@ impl App {
     fn save(&mut self) -> bool {
         match self.doc.save() {
             Ok(()) => {
-                self.push(LogKind::Info, format!("已儲存 {}", self.doc.name()));
+                self.push(LogKind::Info, tf!("已儲存 {}", self.doc.name()));
                 true
             }
             Err(SaveDocError::NoPath) => self.save_as(),
             Err(e) => {
-                self.push(LogKind::Error, format!("儲存失敗：{e}"));
+                self.push(LogKind::Error, tf!("儲存失敗：{e}", e = e));
                 false
             }
         }
@@ -1091,7 +1138,7 @@ impl App {
 
     fn save_as(&mut self) -> bool {
         let Some(path) = rfd::FileDialog::new()
-            .set_title("另存新檔")
+            .set_title(t("另存新檔"))
             .set_file_name(self.doc.name())
             .save_file()
         else {
@@ -1099,11 +1146,11 @@ impl App {
         };
         match self.doc.save_as(path) {
             Ok(()) => {
-                self.push(LogKind::Info, format!("已儲存 {}", self.doc.name()));
+                self.push(LogKind::Info, tf!("已儲存 {}", self.doc.name()));
                 true
             }
             Err(e) => {
-                self.push(LogKind::Error, format!("儲存失敗：{e}"));
+                self.push(LogKind::Error, tf!("儲存失敗：{e}", e = e));
                 false
             }
         }
@@ -1111,9 +1158,9 @@ impl App {
 
     fn reload(&mut self, encoding: &'static Encoding) {
         if self.doc.dirty {
-            let spec = modal::Spec::new("重新載入", "重新載入會捨棄尚未儲存的修改，確定嗎？")
-                .button("重新載入", modal::Answer::Yes)
-                .button("取消", modal::Answer::Cancel);
+            let spec = modal::Spec::new(t("重新載入"), t("重新載入會捨棄尚未儲存的修改，確定嗎？"))
+                .button(t("重新載入"), modal::Answer::Yes)
+                .button(t("取消"), modal::Answer::Cancel);
             self.modal = Some(Pending::new(spec, Then::Reload(encoding)));
         } else {
             self.do_reload(encoding);
@@ -1126,13 +1173,13 @@ impl App {
                 self.text_replaced();
                 self.push(
                     LogKind::Info,
-                    format!("已以 {} 重新載入", self.doc.format.encoding_label()),
+                    tf!("已以 {} 重新載入", self.doc.format.encoding_label()),
                 );
                 for w in warnings {
                     self.push(LogKind::Warn, w);
                 }
             }
-            Err(e) => self.push(LogKind::Error, format!("重新載入失敗：{e}")),
+            Err(e) => self.push(LogKind::Error, tf!("重新載入失敗：{e}", e = e)),
         }
     }
 
@@ -1140,7 +1187,7 @@ impl App {
 
     fn pick_and_run_macro(&mut self) {
         let picked = rfd::FileDialog::new()
-            .set_title("選擇要執行的 JavaScript 巨集")
+            .set_title(t("選擇要執行的 JavaScript 巨集"))
             .add_filter("JavaScript", &["js"])
             .pick_file();
         if let Some(path) = picked {
@@ -1158,12 +1205,12 @@ impl App {
         let source = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
-                self.push(LogKind::Error, format!("無法讀取 {name}：{e}"));
+                self.push(LogKind::Error, tf!("無法讀取 {name}：{e}", name = name, e = e));
                 return;
             }
         };
 
-        self.push(LogKind::Info, format!("執行 {name}"));
+        self.push(LogKind::Info, tf!("執行 {name}", name = name));
         let path_text = self.doc.path.as_ref().map(|p| p.display().to_string());
         let report =
             macros::run_js_macro_in(&source, &mut self.doc.buffer, &mut self.editor, path_text, true);
@@ -1176,14 +1223,14 @@ impl App {
                 if self.doc.sync() {
                     self.find.invalidate();
                 }
-                self.push(LogKind::Info, "完成");
+                self.push(LogKind::Info, t("完成"));
             }
             Some(e) => {
                 self.push(LogKind::Error, e);
                 if report.rolled_back {
                     // 修改已經全部退回，文字與執行前相同，不算有未儲存的修改
                     self.doc.mark_synced();
-                    self.push(LogKind::Info, "巨集失敗，已還原所有修改");
+                    self.push(LogKind::Info, t("巨集失敗，已還原所有修改"));
                 }
             }
         }
@@ -1292,6 +1339,20 @@ impl App {
                     self.mark_settings_dirty();
                 }
             }
+            Action::SetLanguage(choice) => {
+                if choice != self.settings.language {
+                    self.settings.language = choice;
+                    feditor_core::i18n::apply(choice);
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetWideCols(n) => {
+                let n = n.clamp(1, 2);
+                if n != self.settings.wide_cols {
+                    self.settings.wide_cols = n;
+                    self.mark_settings_dirty();
+                }
+            }
             Action::SetFontFamily(family) => {
                 if family != self.settings.font_family {
                     self.settings.font_family = family;
@@ -1309,22 +1370,22 @@ impl App {
         ui.horizontal(|ui| {
             tight_buttons(ui);
             // 所有按鈕只顯示圖示，文字說明放在 tooltip
-            if icons::button(ui, Icon::New, "新增空白文件 (Ctrl+N)", true).clicked() {
+            if icons::button(ui, Icon::New, t("新增空白文件 (Ctrl+N)"), true).clicked() {
                 action = Some(Action::New);
             }
-            if icons::button(ui, Icon::Open, "開啟檔案 (Ctrl+O)", true).clicked() {
+            if icons::button(ui, Icon::Open, t("開啟檔案 (Ctrl+O)"), true).clicked() {
                 action = Some(Action::Open);
             }
-            if icons::button(ui, Icon::Save, "儲存 (Ctrl+S)", true).clicked() {
+            if icons::button(ui, Icon::Save, t("儲存 (Ctrl+S)"), true).clicked() {
                 action = Some(Action::Save);
             }
-            if icons::button(ui, Icon::SaveAs, "另存新檔 (Ctrl+Shift+S)", true).clicked() {
+            if icons::button(ui, Icon::SaveAs, t("另存新檔 (Ctrl+Shift+S)"), true).clicked() {
                 action = Some(Action::SaveAs);
             }
 
             group_separator(ui);
 
-            let find_tip = "尋找與取代 (Ctrl+F，取代 Ctrl+H)";
+            let find_tip = t("尋找與取代 (Ctrl+F，取代 Ctrl+H)");
             if icons::toggle(ui, Icon::Search, find_tip, self.find.open).clicked() {
                 action = Some(if self.find.open {
                     Action::CloseFind
@@ -1333,27 +1394,27 @@ impl App {
                 });
             }
 
-            let grep_tip = "在資料夾的所有檔案中尋找 (Ctrl+Shift+F)";
+            let grep_tip = t("在資料夾的所有檔案中尋找 (Ctrl+Shift+F)");
             if icons::toggle(ui, Icon::FindInFiles, grep_tip, self.folder.open).clicked() {
                 action = Some(Action::ToggleFolderSearch);
             }
 
             group_separator(ui);
 
-            let run = icons::toggle(ui, Icon::Run, "巨集：執行、設快捷鍵、編輯", self.macro_open);
+            let run = icons::toggle(ui, Icon::Run, t("巨集：執行、設快捷鍵、編輯"), self.macro_open);
             self.macro_anchor = Some(run.rect);
             if run.clicked() {
                 action = Some(Action::ToggleMacroMenu);
             }
             let can_rerun = self.last_macro.is_some();
-            if icons::button(ui, Icon::Rerun, "重新執行上一個巨集 (F5)", can_rerun).clicked() {
+            if icons::button(ui, Icon::Rerun, t("重新執行上一個巨集 (F5)"), can_rerun).clicked() {
                 action = Some(Action::RerunMacro);
             }
             let recording = self.editor.is_recording();
             let (icon, tip) = if recording {
-                (Icon::Stop, "停止錄製，並把錄下的操作存成巨集")
+                (Icon::Stop, t("停止錄製，並把錄下的操作存成巨集"))
             } else {
-                (Icon::Record, "錄製巨集：記下之後的按鍵與輸入，可重複播放（滑鼠操作不會錄）")
+                (Icon::Record, t("錄製巨集：記下之後的按鍵與輸入，可重複播放（滑鼠操作不會錄）"))
             };
             if icons::toggle(ui, icon, tip, recording).clicked() {
                 action = Some(Action::ToggleRecord);
@@ -1366,7 +1427,7 @@ impl App {
                 let more = icons::toggle(
                     ui,
                     Icon::More,
-                    "設定（配色、字型、字級）",
+                    t("設定（配色、字型、字級）"),
                     self.settings_open,
                 );
                 group_separator(ui);
@@ -1430,25 +1491,25 @@ impl App {
     fn save_scheme_edit(&mut self) {
         let Some(edit) = self.scheme_edit.clone() else { return };
         let Some(dir) = scheme::themes_dir() else {
-            self.push(LogKind::Error, "找不到設定資料夾，無法儲存配色");
+            self.push(LogKind::Error, t("找不到設定資料夾，無法儲存配色"));
             return;
         };
         match scheme::save_custom(&dir, &edit) {
             Ok(_) => {
                 self.refresh_schemes();
-                self.push(LogKind::Info, format!("已儲存配色「{}」", edit.name));
+                self.push(LogKind::Info, tf!("已儲存配色「{}」", edit.name));
             }
-            Err(e) => self.push(LogKind::Error, format!("無法儲存配色：{e}")),
+            Err(e) => self.push(LogKind::Error, tf!("無法儲存配色：{e}", e = e)),
         }
     }
 
     fn ask_scheme_name(&mut self, text: Option<String>, error: Option<String>) {
         let Some(edit) = &self.scheme_edit else { return };
-        let text = text.unwrap_or_else(|| format!("{} 自訂", edit.name));
-        let mode = if edit.dark { "深色" } else { "淺色" };
-        let mut spec = modal::Spec::new("另存為自訂配色", format!("為這套{mode}配色取個名字："))
-            .button("儲存", modal::Answer::Yes)
-            .button("取消", modal::Answer::Cancel);
+        let text = text.unwrap_or_else(|| tf!("{} 自訂", edit.name));
+        let mode = if edit.dark { t("深色") } else { t("淺色") };
+        let mut spec = modal::Spec::new(t("另存為自訂配色"), tf!("為這套{mode}配色取個名字：", mode = mode))
+            .button(t("儲存"), modal::Answer::Yes)
+            .button(t("取消"), modal::Answer::Cancel);
         spec.error = error;
         self.modal = Some(Pending::new(spec, Then::SaveSchemeAs).with_input(modal::Input::new(text)));
     }
@@ -1456,12 +1517,12 @@ impl App {
     /// 把正在編輯的配色以 `name` 另存成自訂配色檔（存在 `dir`），並設為這個主題使用的配色。
     /// 不能與內建配色同名（那樣會分不清），也不會覆蓋另一個自訂配色。
     fn save_scheme_as(&mut self, dir: &std::path::Path, name: &str) -> Result<(), String> {
-        let edit = self.scheme_edit.clone().ok_or("沒有正在編輯的配色")?;
+        let edit = self.scheme_edit.clone().ok_or(t("沒有正在編輯的配色"))?;
         if name.trim().is_empty() {
-            return Err("名稱不能是空的".to_owned());
+            return Err(t("名稱不能是空的").to_owned());
         }
         if scheme::builtins().iter().any(|s| s.dark == edit.dark && s.name == name) {
-            return Err(format!("「{name}」是內建配色的名稱，請換一個"));
+            return Err(tf!("「{name}」是內建配色的名稱，請換一個", name = name));
         }
         let mut new = edit.clone();
         new.name = name.to_owned();
@@ -1472,15 +1533,15 @@ impl App {
             new.path = None;
             let taken = self.schemes.iter().any(|s| s.dark == edit.dark && !s.builtin && s.name == name);
             if taken {
-                return Err(format!("已經有名為「{name}」的自訂配色"));
+                return Err(tf!("已經有名為「{name}」的自訂配色", name = name));
             }
         }
-        scheme::save_custom(dir, &new).map_err(|e| format!("無法儲存配色：{e}"))?;
+        scheme::save_custom(dir, &new).map_err(|e| tf!("無法儲存配色：{e}", e = e))?;
         self.load_schemes(Some(dir.to_path_buf()));
         self.settings.set_scheme_name(edit.dark, name);
         self.mark_settings_dirty();
         self.scheme_edit = None;
-        self.push(LogKind::Info, format!("已儲存自訂配色「{name}」，並設為{}主題的配色", if edit.dark { "深色" } else { "淺色" }));
+        self.push(LogKind::Info, tf!("已儲存自訂配色「{}」，並設為{}主題的配色", name, if edit.dark { t("深色") } else { t("淺色") }));
         Ok(())
     }
 
@@ -1490,10 +1551,10 @@ impl App {
         let Some(mut edit) = self.scheme_edit.take() else { return };
         let mut open = true;
         let (mut changed, mut save, mut save_as, mut revert) = (false, false, false, false);
-        let mode = if edit.dark { "深色" } else { "淺色" };
+        let mode = if edit.dark { t("深色") } else { t("淺色") };
         // 預設開在右側：左邊的編輯區才看得到改色的預覽
         let right = ctx.content_rect().right();
-        egui::Window::new(format!("自訂{mode}配色：{}", edit.name))
+        egui::Window::new(tf!("自訂{}配色：{}", mode, scheme::display_name(&edit.name)))
             .id(egui::Id::unique("scheme_editor"))
             .default_pos(egui::pos2((right - 380.0).max(8.0), 70.0))
             .open(&mut open)
@@ -1502,8 +1563,9 @@ impl App {
             .show(ctx, |ui| {
                 no_hover_outline(ui);
                 ui.label(
-                    egui::RichText::new(format!(
-                        "這是目前{mode}主題用的配色。改動會立刻預覽，按「儲存」或「另存為」才會留下來。\n要編輯另一種主題的配色，請先在設定面板切換外觀。"
+                    egui::RichText::new(tf!(
+                        "這是目前{mode}主題用的配色。改動會立刻預覽，按「儲存」或「另存為」才會留下來。\n要編輯另一種主題的配色，請先在設定面板切換外觀。",
+                        mode = mode
                     ))
                     .small()
                     .color(ui.visuals().weak_text_color()),
@@ -1530,13 +1592,13 @@ impl App {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     // 內建配色不能直接覆寫，只能另存；自訂配色可以存回原檔
-                    if ui.add_enabled(!edit.builtin, egui::Button::new("儲存")).on_disabled_hover_text("內建配色不能覆寫，請用「另存為」").clicked() {
+                    if ui.add_enabled(!edit.builtin, egui::Button::new(t("儲存"))).on_disabled_hover_text(t("內建配色不能覆寫，請用「另存為」")).clicked() {
                         save = true;
                     }
-                    if ui.button("另存為…").clicked() {
+                    if ui.button(t("另存為…")).clicked() {
                         save_as = true;
                     }
-                    if ui.button("還原").on_hover_text("放棄這次的修改").clicked() {
+                    if ui.button(t("還原")).on_hover_text(t("放棄這次的修改")).clicked() {
                         revert = true;
                     }
                 });
@@ -1571,12 +1633,12 @@ impl App {
             self.editor.start_recording();
             self.push(
                 LogKind::Info,
-                "開始錄製巨集：之後的按鍵與輸入都會記下來（滑鼠操作不會）。再按一次錄製鈕結束",
+                t("開始錄製巨集：之後的按鍵與輸入都會記下來（滑鼠操作不會）。再按一次錄製鈕結束"),
             );
             return;
         }
         let Some(source) = self.editor.stop_recording() else {
-            self.push(LogKind::Info, "沒有錄到任何操作");
+            self.push(LogKind::Info, t("沒有錄到任何操作"));
             return;
         };
         if macro_lib::macros_dir().is_none() {
@@ -1585,7 +1647,7 @@ impl App {
             doc.buffer = feditor_core::Buffer::from_text(&source);
             self.tabs.push(&mut self.doc, &mut self.editor, doc);
             self.tab_changed();
-            self.push(LogKind::Warn, "找不到設定資料夾，錄好的巨集開在新分頁，請自行另存");
+            self.push(LogKind::Warn, t("找不到設定資料夾，錄好的巨集開在新分頁，請自行另存"));
             return;
         }
         // 先問名稱再存檔（按「放棄」就不存）
@@ -1603,11 +1665,11 @@ impl App {
             return;
         };
         let spec = modal::Spec::new(
-            "刪除巨集",
-            format!("確定要刪除巨集「{}」嗎？檔案會被刪除。", entry.name),
+            t("刪除巨集"),
+            tf!("確定要刪除巨集「{}」嗎？檔案會被刪除。", entry.name),
         )
-        .button("刪除", modal::Answer::Yes)
-        .button("取消", modal::Answer::Cancel);
+        .button(t("刪除"), modal::Answer::Yes)
+        .button(t("取消"), modal::Answer::Cancel);
         self.modal = Some(Pending::new(spec, Then::DeleteMacro(i)));
     }
 
@@ -1616,8 +1678,8 @@ impl App {
             return;
         };
         match std::fs::remove_file(&entry.path) {
-            Ok(()) => self.push(LogKind::Info, format!("已刪除巨集 {}", entry.name)),
-            Err(e) => self.push(LogKind::Error, format!("無法刪除 {}：{e}", entry.path.display())),
+            Ok(()) => self.push(LogKind::Info, tf!("已刪除巨集 {}", entry.name)),
+            Err(e) => self.push(LogKind::Error, tf!("無法刪除 {}：{}", entry.path.display(), e)),
         }
         self.refresh_macros();
     }
@@ -1629,11 +1691,11 @@ impl App {
     /// 用系統的檔案管理員開啟資料夾（不存在就先建立）。
     fn open_folder(&mut self, dir: Option<PathBuf>) {
         let Some(dir) = dir else {
-            self.push(LogKind::Warn, "找不到設定資料夾");
+            self.push(LogKind::Warn, t("找不到設定資料夾"));
             return;
         };
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.push(LogKind::Error, format!("無法建立 {}：{e}", dir.display()));
+            self.push(LogKind::Error, tf!("無法建立 {}：{}", dir.display(), e));
             return;
         }
         let opener = if cfg!(windows) {
@@ -1644,7 +1706,7 @@ impl App {
             "xdg-open"
         };
         if let Err(e) = std::process::Command::new(opener).arg(&dir).spawn() {
-            self.push(LogKind::Error, format!("無法開啟 {}：{e}", dir.display()));
+            self.push(LogKind::Error, tf!("無法開啟 {}：{}", dir.display(), e));
         }
     }
 
@@ -1668,7 +1730,7 @@ impl App {
             if Self::builtin_shortcuts().iter().any(same) {
                 self.push(
                     LogKind::Warn,
-                    format!("{} 是內建快捷鍵，請換一個", macro_lib::format_shortcut(&sc)),
+                    tf!("{} 是內建快捷鍵，請換一個", macro_lib::format_shortcut(&sc)),
                 );
                 return;
             }
@@ -1680,7 +1742,7 @@ impl App {
             {
                 self.push(
                     LogKind::Warn,
-                    format!(
+                    tf!(
                         "{} 已經是巨集「{}」的快捷鍵，請換一個",
                         macro_lib::format_shortcut(&sc),
                         other.1.name
@@ -1696,12 +1758,12 @@ impl App {
         match result {
             Ok(()) => {
                 let msg = match &text {
-                    Some(t) => format!("巨集「{}」的快捷鍵設為 {t}", entry.name),
-                    None => format!("已清除巨集「{}」的快捷鍵", entry.name),
+                    Some(t) => tf!("巨集「{}」的快捷鍵設為 {}", entry.name, t),
+                    None => tf!("已清除巨集「{}」的快捷鍵", entry.name),
                 };
                 self.push(LogKind::Info, msg);
             }
-            Err(e) => self.push(LogKind::Error, format!("無法更新 {}：{e}", entry.path.display())),
+            Err(e) => self.push(LogKind::Error, tf!("無法更新 {}：{}", entry.path.display(), e)),
         }
         self.refresh_macros();
     }
@@ -1742,7 +1804,7 @@ impl App {
                 } else {
                     self.push(
                         LogKind::Warn,
-                        "快捷鍵要有 Ctrl 或 Alt（功能鍵 F1–F12 除外），單獨的字母鍵是打字用的",
+                        t("快捷鍵要有 Ctrl 或 Alt（功能鍵 F1–F12 除外），單獨的字母鍵是打字用的"),
                     );
                 }
             }
@@ -1756,41 +1818,41 @@ impl App {
         no_hover_outline(ui);
         if self.macros.is_empty() {
             ui.label(
-                egui::RichText::new("還沒有巨集。按工具列的錄製鈕錄一個，或把 .js 檔放進巨集資料夾。")
+                egui::RichText::new(t("還沒有巨集。按工具列的錄製鈕錄一個，或把 .js 檔放進巨集資料夾。"))
                     .color(ui.visuals().weak_text_color()),
             );
         }
         for (i, entry) in self.macros.iter().enumerate() {
             ui.horizontal(|ui| {
                 tight_buttons(ui);
-                if icons::small_button(ui, Icon::Run, "執行這支巨集", true).clicked() {
+                if icons::small_button(ui, Icon::Run, t("執行這支巨集"), true).clicked() {
                     action = Some(Action::RunMacroEntry(i));
                 }
                 ui.add_space(4.0);
                 // 名稱雙按也可以重新命名
                 let name = ui
                     .add(egui::Label::new(&entry.name).sense(egui::Sense::click()))
-                    .on_hover_text("雙按重新命名");
+                    .on_hover_text(t("雙按重新命名"));
                 if name.double_clicked() {
                     action = Some(Action::RenameMacro(i));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icons::small_button(ui, Icon::Clear, "刪除這支巨集", true).clicked() {
+                    if icons::small_button(ui, Icon::Clear, t("刪除這支巨集"), true).clicked() {
                         action = Some(Action::DeleteMacro(i));
                     }
-                    if icons::small_button(ui, Icon::Rename, "重新命名這支巨集", true).clicked() {
+                    if icons::small_button(ui, Icon::Rename, t("重新命名這支巨集"), true).clicked() {
                         action = Some(Action::RenameMacro(i));
                     }
-                    if icons::small_button(ui, Icon::Edit, "編輯原始碼（開在新分頁）", true).clicked() {
+                    if icons::small_button(ui, Icon::Edit, t("編輯原始碼（開在新分頁）"), true).clicked() {
                         action = Some(Action::EditMacro(i));
                     }
                     let capturing = self.capturing_shortcut == Some(i);
-                    let tip = "設定快捷鍵：點一下再按下組合鍵（Esc 取消、Delete 清除）";
+                    let tip = t("設定快捷鍵：點一下再按下組合鍵（Esc 取消、Delete 清除）");
                     if icons::small_toggle(ui, Icon::Keyboard, tip, capturing, true).clicked() {
                         action = Some(Action::CaptureShortcut(i));
                     }
                     let label = if capturing {
-                        "請按下快捷鍵…".to_owned()
+                        t("請按下快捷鍵…").to_owned()
                     } else {
                         entry
                             .shortcut
@@ -1804,10 +1866,10 @@ impl App {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("從檔案執行…").clicked() {
+            if ui.button(t("從檔案執行…")).clicked() {
                 action = Some(Action::RunMacro);
             }
-            if ui.button("開啟巨集資料夾").clicked() {
+            if ui.button(t("開啟巨集資料夾")).clicked() {
                 action = Some(Action::OpenMacroDir);
             }
         });
@@ -1898,7 +1960,7 @@ impl App {
     }
 
     fn pick_search_folder(&mut self) {
-        let mut dialog = rfd::FileDialog::new().set_title("選擇要搜尋的資料夾");
+        let mut dialog = rfd::FileDialog::new().set_title(t("選擇要搜尋的資料夾"));
         let current = std::path::PathBuf::from(self.folder.dir.trim());
         if current.is_dir() {
             dialog = dialog.set_directory(current);
@@ -1914,11 +1976,11 @@ impl App {
         let running = self.folder.is_running();
         ui.horizontal(|ui| {
             tight_buttons(ui);
-            ui.label("在檔案中尋找");
+            ui.label(t("在檔案中尋找"));
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.folder.query)
                     .id(folder_query_id())
-                    .hint_text("搜尋文字")
+                    .hint_text(t("搜尋文字"))
                     .desired_width(240.0),
             );
             if std::mem::take(&mut self.folder.focus_query) {
@@ -1928,32 +1990,32 @@ impl App {
             if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 action = Some(Action::ToggleFolderSearch);
             }
-            option_toggle(ui, Icon::CaseSensitive, "區分大小寫", &mut self.folder.case_sensitive);
-            option_toggle(ui, Icon::WholeWord, "完整單字", &mut self.folder.whole_word);
-            option_toggle(ui, Icon::Regex, "規則表達式", &mut self.folder.regex);
+            option_toggle(ui, Icon::CaseSensitive, t("區分大小寫"), &mut self.folder.case_sensitive);
+            option_toggle(ui, Icon::WholeWord, t("完整單字"), &mut self.folder.whole_word);
+            option_toggle(ui, Icon::Regex, t("規則表達式"), &mut self.folder.regex);
             if running {
-                if icons::button(ui, Icon::Stop, "停止搜尋", true).clicked() {
+                if icons::button(ui, Icon::Stop, t("停止搜尋"), true).clicked() {
                     action = Some(Action::StopFolderSearch);
                 }
-            } else if icons::button(ui, Icon::Search, "開始搜尋 (Enter)", true).clicked() || enter {
+            } else if icons::button(ui, Icon::Search, t("開始搜尋 (Enter)"), true).clicked() || enter {
                 action = Some(Action::RunFolderSearch);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::small_button(ui, Icon::Close, "關閉 (Esc)", true).clicked() {
+                if icons::small_button(ui, Icon::Close, t("關閉 (Esc)"), true).clicked() {
                     action = Some(Action::ToggleFolderSearch);
                 }
             });
         });
         ui.horizontal(|ui| {
-            ui.label("資料夾");
+            ui.label(t("資料夾"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.folder.dir)
                     .desired_width(ui.available_width() - 330.0),
             );
-            if icons::small_button(ui, Icon::Open, "選擇資料夾…", true).clicked() {
+            if icons::small_button(ui, Icon::Open, t("選擇資料夾…"), true).clicked() {
                 action = Some(Action::PickSearchFolder);
             }
-            ui.label("檔名");
+            ui.label(t("檔名"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.folder.filter)
                     .hint_text("*.rs;*.toml")
@@ -2032,11 +2094,12 @@ impl App {
         egui::ComboBox::from_id_salt(if dark { "scheme_dark" } else { "scheme_light" })
             .icon(icons::combo_chevron)
             .width(190.0)
-            .selected_text(current.as_str())
+            .selected_text(scheme::display_name(&current))
             .show_ui(ui, |ui| {
                 flat_list(ui, |ui| {
                     for s in scheme::names_for(&self.schemes, dark) {
-                        let label = if s.builtin { s.name.clone() } else { format!("{}（自訂）", s.name) };
+                        let shown = scheme::display_name(&s.name);
+                        let label = if s.builtin { shown } else { tf!("{}（自訂）", shown) };
                         if ui.selectable_label(s.name == current, label).clicked() {
                             action = Some(Action::SetScheme(dark, s.name.clone()));
                         }
@@ -2058,101 +2121,120 @@ impl App {
                 .map(|s| (s.families.clone(), s.default_name.clone()))
         });
 
-        egui::Grid::new("settings_grid")
-            .num_columns(2)
-            .spacing([14.0, 10.0])
-            .show(ui, |ui| {
-                // 外觀：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
-                ui.label("外觀");
-                ui.horizontal(|ui| {
-                    let current = self.settings.theme;
-                    let next = current.next();
-                    let tip = format!(
-                        "外觀：{}（點擊切換為「{}」）",
-                        theme_label(current),
-                        theme_label(next)
-                    );
-                    if icons::button(ui, theme_icon(current), &tip, true).clicked() {
-                        action = Some(Action::SetTheme(next));
-                    }
-                    ui.label(theme_label(current));
-                });
-                ui.end_row();
+        // ── 介面 ──
+        group_title(ui, t("介面"));
+        settings_grid(ui, "settings_ui", |ui| {
+            // 介面語言：選項用各自的語言寫（中文、English），在看不懂的介面裡也找得到
+            form_row(ui, t("介面語言"), |ui| {
+                let language = self.settings.language;
+                egui::ComboBox::from_id_salt("ui_language")
+                    .icon(icons::combo_chevron)
+                    .width(190.0)
+                    .selected_text(language.label())
+                    .show_ui(ui, |ui| flat_list(ui, |ui| {
+                        for choice in feditor_core::i18n::LangChoice::ALL {
+                            if ui.selectable_label(language == choice, choice.label()).clicked() {
+                                action = Some(Action::SetLanguage(choice));
+                            }
+                        }
+                    }))
+                    .response
+                    .on_hover_text(t("介面顯示的語言。跟隨系統：中文系統用中文，其他一律用英文"));
+            });
 
-                // 配色：淺色、深色各選一套，互不影響
-                for dark in [false, true] {
-                    ui.label(if dark { "深色配色" } else { "淺色配色" });
+            // 外觀：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
+            form_row(ui, t("外觀"), |ui| {
+                let current = self.settings.theme;
+                let next = current.next();
+                let tip = tf!(
+                    "外觀：{}（點擊切換為「{}」）",
+                    theme_label(current),
+                    theme_label(next)
+                );
+                if icons::button(ui, theme_icon(current), &tip, true).clicked() {
+                    action = Some(Action::SetTheme(next));
+                }
+                ui.label(theme_label(current));
+            });
+        });
+        group_gap(ui);
+
+        // ── 配色：淺色、深色各選一套，互不影響 ──
+        group_title(ui, t("配色"));
+        settings_grid(ui, "settings_schemes", |ui| {
+            for dark in [false, true] {
+                form_row(ui, if dark { t("深色配色") } else { t("淺色配色") }, |ui| {
                     if let Some(a) = self.scheme_combo(ui, dark) {
                         action = Some(a);
                     }
-                    ui.end_row();
-                }
-                ui.label("");
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-                    if ui
-                        .button("編輯目前配色…")
-                        .on_hover_text("改目前主題（深色或淺色）正在用的配色，可以另存成自訂配色")
-                        .clicked()
-                    {
-                        action = Some(Action::EditScheme);
-                    }
-                    if ui
-                        .button("配色資料夾")
-                        .on_hover_text("自訂配色檔（*.conf）放在這裡；開啟設定面板時會重新讀取")
-                        .clicked()
-                    {
-                        action = Some(Action::OpenThemesDir);
-                    }
                 });
-                ui.end_row();
-
-                // 字型：只列等寬字型
-                ui.label("字型");
-                match &scan {
-                    None => {
-                        ui.label(
-                            egui::RichText::new("正在找出系統上的等寬字型…")
-                                .color(ui.visuals().weak_text_color()),
-                        );
-                        ui.ctx().request_repaint_after(Duration::from_millis(150));
-                    }
-                    Some((families, default_name)) => {
-                        let default_label = match default_name {
-                            Some(name) => format!("系統預設（{name}）"),
-                            None => "系統預設".to_owned(),
-                        };
-                        // 面板要顯示「實際生效」的字型：設定檔裡的字型若不在清單裡（沒安裝了，
-                        // 或是畫不出拉丁字母的老字型），編輯區實際用的是系統預設，這裡也要顯示預設。
-                        let current = self
-                            .settings
-                            .font_family
-                            .as_deref()
-                            .filter(|name| families.iter().any(|f| f == name));
-                        let shown = current.map_or_else(|| default_label.clone(), str::to_owned);
-                        egui::ComboBox::from_id_salt("font_family")
-                            .icon(icons::combo_chevron)
-                            .width(250.0)
-                            .height(320.0)
-                            .selected_text(shown)
-                            .show_ui(ui, |ui| flat_list(ui, |ui| {
-                                if ui.selectable_label(current.is_none(), &default_label).clicked()
-                                {
-                                    action = Some(Action::SetFontFamily(None));
-                                }
-                                for name in families {
-                                    let selected = current == Some(name.as_str());
-                                    if ui.selectable_label(selected, name).clicked() {
-                                        action = Some(Action::SetFontFamily(Some(name.clone())));
-                                    }
-                                }
-                            }));
-                    }
+            }
+            form_row(ui, "", |ui| {
+                ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+                if ui
+                    .button(t("編輯目前配色…"))
+                    .on_hover_text(t("改目前主題（深色或淺色）正在用的配色，可以另存成自訂配色"))
+                    .clicked()
+                {
+                    action = Some(Action::EditScheme);
                 }
-                ui.end_row();
+                if ui
+                    .button(t("配色資料夾"))
+                    .on_hover_text(t("自訂配色檔（*.conf）放在這裡；開啟設定面板時會重新讀取"))
+                    .clicked()
+                {
+                    action = Some(Action::OpenThemesDir);
+                }
+            });
+        });
+        group_gap(ui);
 
-                // 字級：與快捷鍵共用同一個設定值，所以兩邊永遠同步
-                ui.label("字級");
+        // ── 編輯區 ──
+        group_title(ui, t("編輯區"));
+        settings_grid(ui, "settings_editor", |ui| {
+            // 字型：只列等寬字型
+            form_row(ui, t("字型"), |ui| match &scan {
+                None => {
+                    ui.label(
+                        egui::RichText::new(t("正在找出系統上的等寬字型…"))
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.ctx().request_repaint_after(Duration::from_millis(150));
+                }
+                Some((families, default_name)) => {
+                    let default_label = match default_name {
+                        Some(name) => tf!("系統預設（{name}）", name = name),
+                        None => t("系統預設").to_owned(),
+                    };
+                    // 面板要顯示「實際生效」的字型：設定檔裡的字型若不在清單裡（沒安裝了，
+                    // 或是畫不出拉丁字母的老字型），編輯區實際用的是系統預設，這裡也要顯示預設。
+                    let current = self
+                        .settings
+                        .font_family
+                        .as_deref()
+                        .filter(|name| families.iter().any(|f| f == name));
+                    let shown = current.map_or_else(|| default_label.clone(), str::to_owned);
+                    egui::ComboBox::from_id_salt("font_family")
+                        .icon(icons::combo_chevron)
+                        .width(250.0)
+                        .height(320.0)
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| flat_list(ui, |ui| {
+                            if ui.selectable_label(current.is_none(), &default_label).clicked() {
+                                action = Some(Action::SetFontFamily(None));
+                            }
+                            for name in families {
+                                let selected = current == Some(name.as_str());
+                                if ui.selectable_label(selected, name).clicked() {
+                                    action = Some(Action::SetFontFamily(Some(name.clone())));
+                                }
+                            }
+                        }));
+                }
+            });
+
+            // 字級：與快捷鍵共用同一個設定值，所以兩邊永遠同步
+            form_row(ui, t("字級"), |ui| {
                 let mut size = self.settings.font_size;
                 let response = ui.add(
                     egui::DragValue::new(&mut size)
@@ -2164,49 +2246,70 @@ impl App {
                 if response.changed() {
                     action = Some(Action::SetFontSize(size));
                 }
-                ui.end_row();
-
-                // 顯示：四個開關，圖示加 tooltip
-                ui.label("顯示");
-                ui.horizontal(|ui| {
-                    tight_buttons(ui);
-                    let v = self.settings.view;
-                    let mut next = v;
-                    if icons::toggle(ui, Icon::LineNumbers, "顯示行號", v.show_line_numbers).clicked() {
-                        next.show_line_numbers = !v.show_line_numbers;
-                    }
-                    if icons::toggle(ui, Icon::CurrentLine, "標示目前這一行", v.highlight_line).clicked() {
-                        next.highlight_line = !v.highlight_line;
-                    }
-                    if icons::toggle(ui, Icon::Whitespace, "顯示空白、Tab 與換行符號", v.show_whitespace).clicked() {
-                        next.show_whitespace = !v.show_whitespace;
-                    }
-                    if icons::toggle(ui, Icon::Syntax, "語法上色（依副檔名）", v.syntax).clicked() {
-                        next.syntax = !v.syntax;
-                    }
-                    let too_big = self.doc.buffer.line_count() > editor::wrap::MAX_LINES;
-                    let tip = if too_big {
-                        format!("自動換行（超過 {} 行的檔案不支援）", editor::wrap::MAX_LINES)
-                    } else {
-                        "自動換行".to_owned()
-                    };
-                    let on = v.word_wrap && !too_big;
-                    if icons::toggle(ui, Icon::WordWrap, &tip, on).clicked() && !too_big {
-                        next.word_wrap = !v.word_wrap;
-                    }
-                    if next != v {
-                        action = Some(Action::SetView(next));
-                    }
-                });
-                ui.end_row();
             });
 
-        ui.add_space(6.0);
+            // 顯示：開關按鈕，圖示加 tooltip
+            form_row(ui, t("顯示"), |ui| {
+                tight_buttons(ui);
+                let v = self.settings.view;
+                let mut next = v;
+                if icons::toggle(ui, Icon::LineNumbers, t("顯示行號"), v.show_line_numbers).clicked() {
+                    next.show_line_numbers = !v.show_line_numbers;
+                }
+                if icons::toggle(ui, Icon::CurrentLine, t("標示目前這一行"), v.highlight_line).clicked() {
+                    next.highlight_line = !v.highlight_line;
+                }
+                if icons::toggle(ui, Icon::Whitespace, t("顯示空白、Tab 與換行符號"), v.show_whitespace).clicked() {
+                    next.show_whitespace = !v.show_whitespace;
+                }
+                if icons::toggle(ui, Icon::Syntax, t("語法上色（依副檔名）"), v.syntax).clicked() {
+                    next.syntax = !v.syntax;
+                }
+                let too_big = self.doc.buffer.line_count() > editor::wrap::MAX_LINES;
+                let tip = if too_big {
+                    tf!("自動換行（超過 {} 行的檔案不支援）", editor::wrap::MAX_LINES)
+                } else {
+                    t("自動換行").to_owned()
+                };
+                let on = v.word_wrap && !too_big;
+                if icons::toggle(ui, Icon::WordWrap, &tip, on).clicked() && !too_big {
+                    next.word_wrap = !v.word_wrap;
+                }
+                if next != v {
+                    action = Some(Action::SetView(next));
+                }
+            });
+        });
+        ui.add_space(2.0);
         ui.label(
-            egui::RichText::new("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設")
+            egui::RichText::new(t("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設"))
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
+        group_gap(ui);
+
+        // ── 狀態列 ──
+        group_title(ui, t("狀態列"));
+        settings_grid(ui, "settings_status", |ui| {
+            // 欄號：狀態列的欄位置，全形字算 1 欄還是 2 欄
+            form_row(ui, t("欄號"), |ui| {
+                let wide = self.settings.wide_cols;
+                let wide_label = |n: u8| if n == 2 { t("全形字算 2 欄") } else { t("全形字算 1 欄") };
+                egui::ComboBox::from_id_salt("wide_cols")
+                    .icon(icons::combo_chevron)
+                    .width(250.0)
+                    .selected_text(wide_label(wide))
+                    .show_ui(ui, |ui| flat_list(ui, |ui| {
+                        for n in [1u8, 2] {
+                            if ui.selectable_label(wide == n, wide_label(n)).clicked() {
+                                action = Some(Action::SetWideCols(n));
+                            }
+                        }
+                    }))
+                    .response
+                    .on_hover_text(t("狀態列「行、欄」的欄號算法：1 是一個字一欄（多數編輯器），2 是和畫面寬度一致"));
+            });
+        });
         action
     }
 
@@ -2280,9 +2383,9 @@ impl App {
                             action = Some(Action::CloseTab(i));
                         }
                         if close_resp.hovered() {
-                            close_resp.on_hover_text("關閉分頁");
+                            close_resp.on_hover_text(t("關閉分頁"));
                         } else {
-                            response.on_hover_text(format!("{full}\n雙按重新命名檔案"));
+                            response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
                         }
                     }
                 });
@@ -2307,7 +2410,7 @@ impl App {
             } else {
                 Icon::ChevronRight
             };
-            if icons::small_button(ui, chevron, "顯示或隱藏取代 (Ctrl+H)", true).clicked() {
+            if icons::small_button(ui, chevron, t("顯示或隱藏取代 (Ctrl+H)"), true).clicked() {
                 self.find.show_replace = !self.find.show_replace;
             }
 
@@ -2328,7 +2431,7 @@ impl App {
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.find.query)
                     .id(find_input_id())
-                    .hint_text("尋找")
+                    .hint_text(t("尋找"))
                     .desired_width(220.0),
             );
             if input.changed() {
@@ -2358,18 +2461,18 @@ impl App {
             changed |= option_toggle(
                 ui,
                 Icon::CaseSensitive,
-                "區分大小寫",
+                t("區分大小寫"),
                 &mut self.find.opts.case_sensitive,
             );
             changed |= option_toggle(
                 ui,
                 Icon::WholeWord,
-                "完整單字（前後不可緊鄰字母、數字或底線）",
+                t("完整單字（前後不可緊鄰字母、數字或底線）"),
                 &mut self.find.opts.whole_word,
             );
             // 規則表達式：tooltip 是基本語法速查加完整說明的連結（滑鼠移到 tooltip 上也不會消失）
             let regex_on = self.find.opts.regex;
-            if icons::small_toggle_rich(ui, Icon::Regex, "規則表達式", regex_on, regex_help)
+            if icons::small_toggle_rich(ui, Icon::Regex, t("規則表達式"), regex_on, regex_help)
                 .clicked()
             {
                 self.find.opts.regex = !regex_on;
@@ -2379,12 +2482,12 @@ impl App {
                 action = Some(Action::FindChanged);
             }
 
-            if icons::small_button(ui, Icon::ChevronUp, "上一筆 (Shift+Enter 或 Shift+F3)", !query_empty)
+            if icons::small_button(ui, Icon::ChevronUp, t("上一筆 (Shift+Enter 或 Shift+F3)"), !query_empty)
                 .clicked()
             {
                 action = Some(Action::FindPrev);
             }
-            if icons::small_button(ui, Icon::ChevronDown, "下一筆 (Enter 或 F3)", !query_empty)
+            if icons::small_button(ui, Icon::ChevronDown, t("下一筆 (Enter 或 F3)"), !query_empty)
                 .clicked()
             {
                 action = Some(Action::FindNext);
@@ -2394,11 +2497,11 @@ impl App {
             match self.find.summary() {
                 Summary::Idle => {}
                 Summary::Error(msg) => {
-                    ui.label(egui::RichText::new("規則有誤").color(ui.visuals().error_fg_color))
+                    ui.label(egui::RichText::new(t("規則有誤")).color(ui.visuals().error_fg_color))
                         .on_hover_text(msg);
                 }
                 Summary::NoMatch => {
-                    ui.label(egui::RichText::new("找不到").color(ui.visuals().error_fg_color));
+                    ui.label(egui::RichText::new(t("找不到")).color(ui.visuals().error_fg_color));
                 }
                 Summary::Count {
                     index,
@@ -2408,21 +2511,21 @@ impl App {
                     let plus = if capped { "+" } else { "" };
                     let text = match index {
                         Some(i) => format!("{}/{total}{plus}", i + 1),
-                        None => format!("{total}{plus} 筆"),
+                        None => tf!("{total}{plus} 筆", total = total, plus = plus),
                     };
                     ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
                 }
                 Summary::TooLarge => {
                     ui.label(egui::RichText::new("—").color(ui.visuals().weak_text_color()))
-                        .on_hover_text("檔案很大，不統計筆數");
+                        .on_hover_text(t("檔案很大，不統計筆數"));
                 }
             }
             if self.find.wrapped {
-                ui.label(egui::RichText::new("已繞回").color(ui.visuals().weak_text_color()));
+                ui.label(egui::RichText::new(t("已繞回")).color(ui.visuals().weak_text_color()));
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::small_button(ui, Icon::Close, "關閉 (Esc)", true).clicked() {
+                if icons::small_button(ui, Icon::Close, t("關閉 (Esc)"), true).clicked() {
                     action = Some(Action::CloseFind);
                 }
             });
@@ -2436,13 +2539,13 @@ impl App {
                 let input = ui.add(
                     egui::TextEdit::singleline(&mut self.find.replacement)
                         .id(replace_input_id())
-                        .hint_text("取代為")
+                        .hint_text(t("取代為"))
                         .desired_width(220.0),
                 );
                 let input = if self.find.opts.regex {
-                    input.on_hover_text(
+                    input.on_hover_text(t(
                         "規則表達式模式：可用 $1、${名稱} 代入群組，\\n、\\t 代表換行與跳位，字面的 $ 請寫成 $$",
-                    )
+                    ))
                 } else {
                     input
                 };
@@ -2460,17 +2563,31 @@ impl App {
                         action = Some(Action::CloseFind);
                     }
                 }
-                if icons::small_button(ui, Icon::ReplaceOne, "取代這一筆 (Enter)", !query_empty)
+                if icons::small_button(ui, Icon::ReplaceOne, t("取代這一筆 (Enter)"), !query_empty)
                     .clicked()
                 {
                     action = Some(Action::ReplaceOne);
                 }
-                if icons::small_button(ui, Icon::ReplaceAll, "全部取代", !query_empty).clicked() {
+                if icons::small_button(ui, Icon::ReplaceAll, t("全部取代"), !query_empty).clicked() {
                     action = Some(Action::ReplaceAll);
                 }
             });
         }
         action
+    }
+
+    /// 狀態列的游標位置文字，例如「行 12，欄 5」；欄的算法依設定的 `wide_cols`。
+    fn caret_position_text(&self) -> String {
+        let buffer = &self.doc.buffer;
+        let caret = self.editor.sel.head.min(buffer.len_chars());
+        let line = buffer.line_of_char(caret);
+        let col = feditor_core::motion::caret_column(
+            buffer.rope(),
+            buffer.line_start(line),
+            caret,
+            usize::from(self.settings.wide_cols),
+        );
+        tf!("行 {}，欄 {}", line + 1, col)
     }
 
     /// 狀態列：左邊是檔案狀態，右邊是這個檔案的格式設定（語言、編碼與 BOM、換行、重新載入）。
@@ -2484,7 +2601,7 @@ impl App {
                 .path
                 .as_ref()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "未命名".to_owned());
+                .unwrap_or_else(|| t("未命名").to_owned());
             // 整列由右往左排：先放右側的格式控制項，最後讓路徑吃掉剩下的空間，放不下時截斷。
             // 這樣路徑很長時，也不會和右邊的控制項重疊。（未儲存的標示在標題列，這裡不重複。）
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2495,12 +2612,12 @@ impl App {
                 let reload = icons::small_button(
                     ui,
                     Icon::Reload,
-                    "以指定編碼重新讀取目前的檔案（自動偵測錯誤時使用）",
+                    t("以指定編碼重新讀取目前的檔案（自動偵測錯誤時使用）"),
                     can_reload,
                 );
                 egui::Popup::menu(&reload).show(|ui| {
                     no_hover_outline(ui);
-                    ui.label("重新載入為：");
+                    ui.label(t("重新載入為："));
                     for enc in common_encodings() {
                         if ui.button(enc.name()).clicked() {
                             action = Some(Action::Reload(enc));
@@ -2524,7 +2641,7 @@ impl App {
                         }
                     }))
                     .response
-                    .on_hover_text("換行格式（存檔時使用）");
+                    .on_hover_text(t("換行格式（存檔時使用）"));
 
                 // 編碼與 BOM 合在同一個清單：UTF-8、UTF-16 的「帶 BOM」各自是獨立的一項
                 let mut chosen = None;
@@ -2548,7 +2665,7 @@ impl App {
                         }
                     }))
                     .response
-                    .on_hover_text("編碼與 BOM（存檔時使用）。無法表示的字元會讓存檔失敗，不會被替換");
+                    .on_hover_text(t("編碼與 BOM（存檔時使用）。無法表示的字元會讓存檔失敗，不會被替換"));
                 if let Some((enc, bom)) = chosen {
                     self.doc.set_encoding(enc);
                     self.doc.set_bom(bom);
@@ -2557,19 +2674,19 @@ impl App {
                 // 語言（語法上色）：「自動」依副檔名，沒有檔名時看內容猜
                 let current = self.doc.lang;
                 let resolved = syntax::resolve(current, self.doc.path.as_deref(), &self.doc.buffer);
-                let shown = resolved.map_or("純文字", |l| l.name);
+                let shown = resolved.map_or(t("純文字"), |l| l.name);
                 let langs = syntax::all_languages();
-                let lang_width = combo_width(ui, langs.iter().map(|l| l.name).chain(["純文字", "自動"]));
+                let lang_width = combo_width(ui, langs.iter().map(|l| l.name).chain([t("純文字"), t("自動")]));
                 let mut picked = None;
                 egui::ComboBox::from_id_salt("language")
                     .icon(icons::combo_chevron)
                     .width(lang_width)
                     .selected_text(shown)
                     .show_ui(ui, |ui| flat_list(ui, |ui| {
-                        if ui.selectable_label(current == syntax::LangChoice::Auto, "自動").clicked() {
+                        if ui.selectable_label(current == syntax::LangChoice::Auto, t("自動")).clicked() {
                             picked = Some(syntax::LangChoice::Auto);
                         }
-                        if ui.selectable_label(current == syntax::LangChoice::Plain, "純文字").clicked() {
+                        if ui.selectable_label(current == syntax::LangChoice::Plain, t("純文字")).clicked() {
                             picked = Some(syntax::LangChoice::Plain);
                         }
                         for l in &langs {
@@ -2580,10 +2697,14 @@ impl App {
                         }
                     }))
                     .response
-                    .on_hover_text("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定");
+                    .on_hover_text(t("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定"));
                 if let Some(choice) = picked {
                     self.doc.lang = choice;
                 }
+
+                // 游標位置（畫面上在語言的左邊）：行、欄都從 1 起算
+                ui.label(self.caret_position_text())
+                    .on_hover_text(t("游標位置（行、欄）。全形字（中日韓文字等）算 1 欄或 2 欄，可在設定面板的「欄號」調整"));
 
                 // 左側：路徑（剩下的空間全給它，放不下就截斷，完整路徑看 tooltip）
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -2602,19 +2723,19 @@ impl App {
             tight_buttons(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let has_log = !self.log.is_empty();
-                if icons::small_button(ui, Icon::Clear, "清除輸出", has_log).clicked() {
+                if icons::small_button(ui, Icon::Clear, t("清除輸出"), has_log).clicked() {
                     action = Some(Action::ClearLog);
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     let (icon, tip) = if expanded {
-                        (Icon::ChevronDown, "收合輸出")
+                        (Icon::ChevronDown, t("收合輸出"))
                     } else {
-                        (Icon::ChevronUp, "展開輸出")
+                        (Icon::ChevronUp, t("展開輸出"))
                     };
                     if icons::small_button(ui, icon, tip, true).clicked() {
                         action = Some(Action::ToggleOutput);
                     }
-                    ui.label("輸出");
+                    ui.label(t("輸出"));
                     // 收合時還是看得到最後一則訊息（例如「已儲存」），一行放不下就截斷
                     if !expanded {
                         if let Some((kind, text)) = self.log.last() {
@@ -3008,6 +3129,19 @@ mod tests {
         assert!(app.doc.dirty);
         app.editor.undo(&mut app.doc.buffer);
         assert_eq!(app.doc.text(), "abc");
+    }
+
+    #[test]
+    fn status_bar_shows_line_and_column_with_configurable_cjk_width() {
+        let mut app = app_with("first\n中文ab");
+        assert_eq!(app.caret_position_text(), "行 1，欄 1");
+        // 第 2 行，游標在「文」之後
+        app.editor.set_caret(&mut app.doc.buffer, 8, false);
+        assert_eq!(app.caret_position_text(), "行 2，欄 3", "預設全形字算 1 欄");
+        app.settings.wide_cols = 2;
+        assert_eq!(app.caret_position_text(), "行 2，欄 5", "全形字算 2 欄");
+        app.editor.set_caret(&mut app.doc.buffer, 5, false);
+        assert_eq!(app.caret_position_text(), "行 1，欄 6", "行尾");
     }
 
     #[test]
@@ -3421,6 +3555,7 @@ fn main() -> eframe::Result {
     }
 
     let settings = Settings::load();
+    feditor_core::i18n::apply(settings.language); // 之後產生的所有介面字串都用這個語言
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
         .expect("內建圖示 assets/icon.png 損毀");
     let options = eframe::NativeOptions {

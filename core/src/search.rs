@@ -3,6 +3,7 @@
 //! 所有位置都是 `&str` 的**位元組**偏移（落在字元邊界上），呼叫端自行轉成字元索引。
 //! 底層使用 `regex` crate：保證線性時間，不會被惡意或寫壞的規則卡死。
 
+use crate::i18n::t;
 use regex::{Regex, RegexBuilder};
 use std::borrow::Cow;
 use std::fmt;
@@ -28,8 +29,8 @@ pub enum SearchError {
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SearchError::Empty => f.write_str("搜尋字串是空的"),
-            SearchError::InvalidRegex(msg) => write!(f, "規則表達式錯誤：{msg}"),
+            SearchError::Empty => f.write_str(t("搜尋字串是空的")),
+            SearchError::InvalidRegex(msg) => f.write_str(&crate::tf!("規則表達式錯誤：{msg}", msg = msg)),
         }
     }
 }

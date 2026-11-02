@@ -10,6 +10,8 @@
 //! 與畫面無關，方便單元測試。
 
 use feditor_core::Buffer;
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use std::ops::Range;
 use std::path::Path;
 
@@ -313,7 +315,7 @@ fn parse_flag(key: &str, value: &str) -> Result<bool, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "on" | "1" => Ok(true),
         "false" | "no" | "off" | "0" => Ok(false),
-        _ => Err(format!("{key} 要寫 true 或 false，不是「{value}」")),
+        _ => Err(tf!("{key} 要寫 true 或 false，不是「{value}」", key = key, value = value)),
     }
 }
 
@@ -349,7 +351,7 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
-            return Err(format!("第 {} 行：需要「鍵 = 值」", n + 1));
+            return Err(tf!("第 {} 行：需要「鍵 = 值」", n + 1));
         };
         let (key, value) = (key.trim(), value.trim());
         match key {
@@ -363,7 +365,7 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
                 let parts = split_list(value);
                 match parts.as_slice() {
                     [a, b] => lang.block = Some((leak_str(a.clone()), leak_str(b.clone()))),
-                    _ => return Err(format!("第 {} 行：block_comment 要寫「開頭, 結尾」兩項", n + 1)),
+                    _ => return Err(tf!("第 {} 行：block_comment 要寫「開頭, 結尾」兩項", n + 1)),
                 }
             }
             "quotes" => {
@@ -372,7 +374,7 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
             "keywords" => keywords.extend(split_list(value)),
             "interpolation" => match split_list(value).as_slice() {
                 [a, b] => interp_marks = Some((leak_str(a.clone()), leak_str(b.clone()))),
-                _ => return Err(format!("第 {} 行：interpolation 要寫「開頭, 結尾」兩項，例如 ${{, }}", n + 1)),
+                _ => return Err(tf!("第 {} 行：interpolation 要寫「開頭, 結尾」兩項，例如 {}", n + 1, "${, }")),
             },
             "interpolation_in" => {
                 interp_in = Some(split_list(value));
@@ -386,14 +388,14 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
                 "markup" => lang.mode = Mode::Markup,
                 "markdown" => lang.mode = Mode::Markdown,
                 "config" => lang.config = true,
-                _ => return Err(format!("第 {} 行：mode 只能是 code、markup、markdown、config", n + 1)),
+                _ => return Err(tf!("第 {} 行：mode 只能是 code、markup、markdown、config", n + 1)),
             },
-            _ => return Err(format!("第 {} 行：不認得的設定「{key}」", n + 1)),
+            _ => return Err(tf!("第 {} 行：不認得的設定「{}」", n + 1, key)),
         }
     }
-    let name = name.filter(|n| !n.is_empty()).ok_or("缺少 name")?;
+    let name = name.filter(|n| !n.is_empty()).ok_or(t("缺少 name"))?;
     if exts.is_empty() {
-        return Err("缺少 extensions".to_owned());
+        return Err(t("缺少 extensions").to_owned());
     }
     if let Some((open, close)) = interp_marks {
         let places = interp_in.unwrap_or_else(|| vec!["backtick".into(), "double".into()]);
@@ -403,12 +405,12 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
                 "backtick" => ip.backtick = true,
                 "double" => ip.double = true,
                 "fstring" => ip.fstring = true,
-                other => return Err(format!("interpolation_in 只能是 backtick、double、fstring，不是「{other}」")),
+                other => return Err(tf!("interpolation_in 只能是 backtick、double、fstring，不是「{other}」", other = other)),
             }
         }
         lang.interp = Some(ip);
     } else if interp_in.is_some() {
-        return Err("有 interpolation_in 但缺少 interpolation".to_owned());
+        return Err(t("有 interpolation_in 但缺少 interpolation").to_owned());
     }
     lang.name = leak_str(name);
     lang.line_comments = leak_strs(line_comments);
@@ -436,12 +438,12 @@ pub fn load_user_languages(dir: Option<&Path>) -> Vec<String> {
         for path in files {
             let label = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let Ok(bytes) = std::fs::read(&path) else {
-                messages.push(format!("無法讀取語言檔 {label}"));
+                messages.push(tf!("無法讀取語言檔 {label}", label = label));
                 continue;
             };
             match parse_language(&String::from_utf8_lossy(&bytes)) {
                 Ok((exts, lang)) => found.push((exts, Box::leak(Box::new(lang)))),
-                Err(e) => messages.push(format!("語言檔 {label} 有誤，已略過：{e}")),
+                Err(e) => messages.push(tf!("語言檔 {label} 有誤，已略過：{e}", label = label, e = e)),
             }
         }
     }

@@ -2,6 +2,7 @@
 //!
 //! 緩衝區內的文字一律使用 `\n` 換行；原檔的換行格式記錄在 [`FileFormat`]，存檔時還原。
 
+use crate::i18n::t;
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use std::fmt;
@@ -212,11 +213,13 @@ pub struct UnmappableChar {
 
 impl fmt::Display for UnmappableChar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "字元「{}」(U+{:04X}) 無法以目標編碼表示（第 {} 行，第 {} 欄）",
-            self.ch, self.ch as u32, self.line, self.column
-        )
+        f.write_str(&crate::tf!(
+            "字元「{}」(U+{}) 無法以目標編碼表示（第 {} 行，第 {} 欄）",
+            self.ch,
+            format!("{:04X}", self.ch as u32),
+            self.line,
+            self.column
+        ))
     }
 }
 
@@ -332,7 +335,7 @@ pub fn write_file(path: &Path, text: &str, format: &FileFormat) -> Result<(), Sa
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
     let name = path
         .file_name()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "路徑沒有檔名"))?;
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, t("路徑沒有檔名")))?;
     let mut tmp_name = std::ffi::OsString::from(".");
     tmp_name.push(name);
     tmp_name.push(".feditor-tmp");

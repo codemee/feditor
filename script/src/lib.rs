@@ -4,6 +4,7 @@
 //! 核心與 UI 不需要改動。
 
 use feditor_core::Buffer;
+use feditor_core::tf;
 use std::ops::Range;
 
 /// 尋找的選項（給 [`EditorApi::find`]）。
@@ -71,7 +72,7 @@ pub trait EditorApi {
     /// 執行編輯器指令（與按鍵相同，例如 `"selectAll"`、`"moveLineDown"`），重複 `count` 次。
     /// 不認得的指令名稱回傳錯誤。
     fn run_command(&mut self, name: &str, _count: usize) -> Result<(), String> {
-        Err(format!("不支援指令：{name}"))
+        Err(tf!("不支援指令：{name}", name = name))
     }
 
     /// 像使用者打字一樣輸入文字：取代選取、游標移到文字之後。

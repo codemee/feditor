@@ -10,6 +10,7 @@
 //! 沒有 `@name` 就用檔名。與畫面無關，方便單元測試。
 
 use eframe::egui::{Key, KeyboardShortcut, Modifiers};
+use feditor_core::i18n::t;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -185,7 +186,7 @@ pub fn file_stem_for(name: &str) -> String {
             && (upper.starts_with("COM") || upper.starts_with("LPT"))
             && upper.ends_with(|c: char| c.is_ascii_digit()));
     if cleaned.is_empty() {
-        "錄製的巨集".to_owned()
+        t("錄製的巨集").to_owned()
     } else if reserved {
         format!("{cleaned}_")
     } else {

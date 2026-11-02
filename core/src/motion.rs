@@ -166,6 +166,25 @@ pub fn char_width(c: char) -> usize {
     c.width().unwrap_or(0)
 }
 
+/// 狀態列顯示的欄號（從 1 起算）：游標 `caret` 之前，這一行（從 `line_start` 起）有幾個字元，加 1。
+/// 全形字（中日韓文字、全形標點等）算 `wide_cols` 欄（1 或 2），其餘字元算 1 欄；組合用的字元不佔欄；
+/// Tab 算 1 欄（這是「字元位置」，不是畫面上對齊後的欄位）。
+pub fn caret_column(rope: &Rope, line_start: usize, caret: usize, wide_cols: usize) -> usize {
+    let end = caret.min(rope.len_chars());
+    let start = line_start.min(end);
+    let wide_cols = wide_cols.clamp(1, 2);
+    1 + rope
+        .slice(start..end)
+        .chars()
+        .map(|c| match char_width(c) {
+            _ if c == '\t' => 1,
+            0 => 0,
+            2 => wide_cols,
+            _ => 1,
+        })
+        .sum::<usize>()
+}
+
 fn advance(col: usize, c: char) -> usize {
     if c == '\t' {
         (col / TAB_WIDTH + 1) * TAB_WIDTH
@@ -459,6 +478,47 @@ mod tests {
         assert_eq!(word_at(&rope("a\nb"), 1), 1..2, "換行單獨一個");
         assert_eq!(word_at(&rope(""), 0), 0..0);
         assert_eq!(word_at(&rope("世界你好"), 2), 0..4);
+    }
+
+    #[test]
+    fn caret_column_counts_wide_chars_by_setting() {
+        let r = rope("ab\na你好b\tc");
+        // 第 1 行行首與行中
+        assert_eq!(caret_column(&r, 0, 0, 1), 1);
+        assert_eq!(caret_column(&r, 0, 2, 2), 3);
+        // 第 2 行（從字元 3 起）：a 你 好 b Tab c
+        assert_eq!(caret_column(&r, 3, 3, 1), 1);
+        assert_eq!(caret_column(&r, 3, 5, 1), 3, "全形字算 1 欄");
+        assert_eq!(caret_column(&r, 3, 5, 2), 4, "全形字算 2 欄");
+        assert_eq!(caret_column(&r, 3, 6, 2), 6, "a(1)+你好(4)，再加 1");
+        assert_eq!(caret_column(&r, 3, 7, 2), 7, "a(1)+你好(4)+b(1)，再加 1");
+        assert_eq!(caret_column(&r, 3, 8, 2), 8, "Tab 算 1 欄");
+        // 組合字元不佔欄、參數超出範圍時不會當掉
+        assert_eq!(caret_column(&rope("e\u{301}x"), 0, 2, 1), 2);
+        assert_eq!(caret_column(&r, 3, 999, 2), 1 + 1 + 4 + 1 + 1 + 1);
+        assert_eq!(caret_column(&r, 3, 5, 9), 4, "寬度只接受 1 或 2");
+    }
+
+    #[test]
+    fn caret_column_handles_japanese_korean_and_symbols() {
+        let col = |s: &str, wide: usize| caret_column(&rope(s), 0, s.chars().count(), wide);
+        // 平假名、片假名、漢字、全形標點與全形英數：全形字
+        assert_eq!(col("あア日。「Ａ", 1), 7);
+        assert_eq!(col("あア日。「Ａ", 2), 13);
+        // 半形片假名：寬度 1，兩種模式都一樣
+        assert_eq!(col("ｱｲｳ", 1), 4);
+        assert_eq!(col("ｱｲｳ", 2), 4);
+        // 韓文
+        assert_eq!(col("한글", 2), 5);
+        // 分開存放的濁點（U+3099）不佔欄：「か」＋濁點只算一個字
+        assert_eq!(col("か\u{3099}", 1), 2);
+        assert_eq!(col("か\u{3099}", 2), 3);
+        // 寬度不明確的符號當半形，兩種模式都算 1 欄
+        assert_eq!(col("※○●★←", 1), 6);
+        assert_eq!(col("※○●★←", 2), 6);
+        // 日文與英數混排
+        assert_eq!(col("abcこんにちは", 2), 14);
+        assert_eq!(col("abcこんにちは", 1), 9);
     }
 
     #[test]

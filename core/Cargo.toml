@@ -8,6 +8,7 @@ chardetng = "1.0.0"
 encoding_rs = "0.8.44"
 regex = "1.13.1"
 ropey = "1.6.1"
+sys-locale = "0.3"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.3"
 

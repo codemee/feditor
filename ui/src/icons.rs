@@ -66,11 +66,14 @@ enum Size {
     Small,
 }
 
+/// 一般按鈕的外框高度；表單列裡要讓文字標籤和按鈕垂直置中時用。
+pub const BUTTON_HEIGHT: f32 = 30.0;
+
 impl Size {
     /// （按鈕外框, 圖示本體）邏輯像素。
     fn px(self) -> (f32, f32) {
         match self {
-            Size::Normal => (30.0, 18.0),
+            Size::Normal => (BUTTON_HEIGHT, 18.0),
             Size::Small => (22.0, 14.0),
         }
     }

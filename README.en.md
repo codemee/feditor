@@ -24,7 +24,7 @@ Operations are **toolbar buttons**; there are no menus. Buttons show icons only;
 | New / Open / Save / Save As | Ctrl+N / O / S / Shift+S | Basic file operations; unsaved changes prompt before closing or switching documents |
 | Find & Replace | Ctrl+F (replace: Ctrl+H), F3 / Shift+F3 | Opens the find bar with regular expression, case-sensitive, and whole-word options |
 | Find in Files | Ctrl+Shift+F | Search all text files under a folder; clicking a result opens it and selects the match (see below) |
-| Settings (⋯, far right) | | Appearance (follow system / light / dark), a separate color scheme for light and for dark, font (monospace fonts only), font size, display options (line numbers, current line, whitespace, syntax coloring, word wrap) |
+| Settings (⋯, far right) | | Interface language (follow system / 中文 / English), appearance (follow system / light / dark), a separate color scheme for light and for dark, font (monospace fonts only), font size, display options (line numbers, current line, whitespace, syntax coloring, word wrap) |
 | Font size | Ctrl +/−, Ctrl+wheel, Ctrl+0 | Adjusts the editor font size; synced with the settings panel |
 | Macro panel / Rerun | F5 (rerun) | The panel lists your macros: run, set a shortcut, edit, delete; all changes are rolled back if a macro fails |
 | Record Macro | | Start/stop recording: keys and typing are recorded into a macro that can be replayed |
@@ -32,6 +32,7 @@ Operations are **toolbar buttons**; there are no menus. Buttons show icons only;
 | Clear Output (top right of the output pane) | | Clear macro output and messages |
 | Language, Encoding (with BOM), Line ending (right side of the status bar) | | Shows and changes the save format. In the encoding list, "with BOM" for UTF-8 and UTF-16 is its own entry: UTF-8, UTF-8 BOM, Big5, GBK, Shift_JIS, EUC-KR, UTF-16LE BOM, UTF-16LE, UTF-16BE BOM, UTF-16BE |
 | Reload (right side of the status bar) | | Re-read the current file with a specific encoding when auto-detection is wrong |
+| Caret position, shown as "行 X，欄 Y" (line X, column Y; right side of the status bar, left of the language) | | Both start at 1. In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns; choose in the settings panel under "欄號" (column number) (default 1; a Tab counts as 1) |
 
 The left side of the status bar shows the file path and whether it is unsaved; the right side holds the format settings of this file. Together they make up the file status. You can also open a file from the command line, `feditor <path>`, or drag files from the file manager into the window (several at once, one tab each; a file that is already open is switched to; folders are skipped).
 
@@ -46,7 +47,9 @@ Above the status bar is the **output panel**, which holds file-opening messages,
 
 ### Appearance
 
-The "⋯" button at the far right of the toolbar opens **Settings**: appearance and color schemes, font, and font size.
+The "⋯" button at the far right of the toolbar opens **Settings**: interface language, appearance and color schemes, font, and font size.
+
+The **interface language** is "Follow system", "中文" (Chinese), or "English", and changing it takes effect immediately without a restart. "Follow system" decides by the operating system's language: Chinese on a Chinese system, English otherwise. It is stored as `language` (`system` / `zh` / `en`) in the settings file. What is translated is the interface text, tooltips, and messages; documents such as the README, and the comment inside recorded macro files, are not affected.
 
 - **Appearance**: a single three-state button; its icon changes with the current state (◐ follow system, ☀ light, ☾ dark) and each click advances to the next one (follow system → light → dark → follow system).
 - **Color scheme**: **light and dark each get their own scheme**, independent of each other (for example GitHub Light for light and Dracula for dark); the one for the current appearance is used, also when following the system. Your choice is remembered. Built-in schemes:

@@ -1,6 +1,8 @@
 //! 跨檔搜尋的狀態與背景執行緒（見 `core/src/grep.rs`）。與畫面無關，方便單元測試。
 
 use eframe::egui;
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use feditor_core::grep::{self, GrepOptions, Hit, Summary};
 use feditor_core::search::{SearchError, SearchOptions};
 use std::path::PathBuf;
@@ -62,11 +64,11 @@ impl FolderSearch {
         self.hits.clear();
         self.root = PathBuf::from(self.dir.trim());
         if self.query.is_empty() {
-            self.status = "請輸入要搜尋的文字".to_owned();
+            self.status = t("請輸入要搜尋的文字").to_owned();
             return;
         }
         if !self.root.exists() {
-            self.status = format!("找不到資料夾：{}", self.root.display());
+            self.status = tf!("找不到資料夾：{}", self.root.display());
             return;
         }
         let (tx, rx) = channel();
@@ -86,7 +88,7 @@ impl FolderSearch {
             ctx.request_repaint();
         });
         self.running = Some(Running { rx, cancel });
-        self.status = "搜尋中…".to_owned();
+        self.status = t("搜尋中…").to_owned();
     }
 
     /// 取消進行中的搜尋。
@@ -131,7 +133,7 @@ impl FolderSearch {
             }
             None => {
                 if changed {
-                    self.status = format!("搜尋中… 已找到 {} 筆", self.hits.len());
+                    self.status = tf!("搜尋中… 已找到 {} 筆", self.hits.len());
                 }
                 changed
             }
@@ -149,16 +151,16 @@ impl FolderSearch {
 }
 
 fn describe(s: &Summary) -> String {
-    let base = format!(
+    let base = tf!(
         "{} 筆，分布在 {} 個檔案（共搜尋 {} 個檔案）",
         s.hits, s.files_with_hits, s.files_searched
     );
     if s.cancelled {
-        format!("已取消：{base}")
+        tf!("已取消：{base}", base = base)
     } else if s.truncated {
-        format!("{base}；結果太多，只列出前 {} 筆，請縮小範圍", s.hits)
+        tf!("{}；結果太多，只列出前 {} 筆，請縮小範圍", base, s.hits)
     } else if s.hits == 0 {
-        format!("沒有找到（共搜尋 {} 個檔案）", s.files_searched)
+        tf!("沒有找到（共搜尋 {} 個檔案）", s.files_searched)
     } else {
         base
     }

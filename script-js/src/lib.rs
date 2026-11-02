@@ -28,6 +28,8 @@
 //!
 //! 每次 [`run`](ScriptEngine::run) 都使用全新的 context，巨集之間不會共用全域變數。
 
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use feditor_script::{EditorApi, FindOptions, ScriptEngine, ScriptError};
 use rquickjs::convert::Coerced;
 use rquickjs::function::{Opt, Rest};
@@ -87,7 +89,7 @@ fn with_editor<R>(
     f: impl FnOnce(&mut dyn EditorApi) -> R,
 ) -> rquickjs::Result<R> {
     let Some(ptr) = host.get() else {
-        return Err(Exception::throw_type(ctx, "editor 目前無法使用"));
+        return Err(Exception::throw_type(ctx, t("editor 目前無法使用")));
     };
     // SAFETY: 指標來自 `run` 持有的 `&mut dyn EditorApi`，`run` 在 eval 期間不會再使用該參考，
     // 且 `ClearOnDrop` 保證 `run` 返回前指標已清除；這裡的 `&mut` 只在 `f` 內存活，不會重疊。
@@ -101,7 +103,7 @@ fn to_index(ctx: &Ctx<'_>, name: &str, v: f64) -> rquickjs::Result<usize> {
     } else {
         Err(Exception::throw_range(
             ctx,
-            &format!("{name} 必須是非負整數，收到 {v}"),
+            &tf!("{name} 必須是非負整數，收到 {v}", name = name, v = v),
         ))
     }
 }

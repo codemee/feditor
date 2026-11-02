@@ -1,6 +1,8 @@
 //! 文件狀態與開／存檔規則：與 egui 無關，方便單元測試。
 
 use feditor_core::Buffer;
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use feditor_core::fileio::{self, FileFormat, LineEnding, SaveError};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -48,14 +50,14 @@ fn fingerprint(buf: &Buffer) -> (usize, u64) {
 /// 不能是 `.`／`..`、不能以點或空白結尾（Windows 會悄悄去掉）、不能是 Windows 的保留裝置名。
 pub fn validate_file_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("檔名不能是空的".to_owned());
+        return Err(t("檔名不能是空的").to_owned());
     }
     if let Some(bad) = name.chars().find(|c| c.is_control() || "\\/:*?\"<>|".contains(*c)) {
-        let shown = if bad.is_control() { "控制字元".to_owned() } else { format!("「{bad}」") };
-        return Err(format!("檔名不能含有 {shown}"));
+        let shown = if bad.is_control() { t("控制字元").to_owned() } else { tf!("「{bad}」", bad = bad) };
+        return Err(tf!("檔名不能含有 {shown}", shown = shown));
     }
     if name == "." || name == ".." || name.ends_with('.') || name.ends_with(' ') {
-        return Err("檔名不能是「.」或「..」，也不能以點或空白結尾".to_owned());
+        return Err(t("檔名不能是「.」或「..」，也不能以點或空白結尾").to_owned());
     }
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
@@ -63,7 +65,7 @@ pub fn validate_file_name(name: &str) -> Result<(), String> {
             && (stem.starts_with("COM") || stem.starts_with("LPT"))
             && stem.ends_with(|c: char| c.is_ascii_digit()));
     if reserved {
-        return Err(format!("「{stem}」是系統保留的名稱，不能當檔名"));
+        return Err(tf!("「{stem}」是系統保留的名稱，不能當檔名", stem = stem));
     }
     Ok(())
 }
@@ -80,9 +82,9 @@ pub enum SaveDocError {
 impl fmt::Display for SaveDocError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SaveDocError::NoPath => f.write_str("尚未指定檔案路徑"),
+            SaveDocError::NoPath => f.write_str(t("尚未指定檔案路徑")),
             SaveDocError::WouldLoseData => f.write_str(
-                "檔案載入時有無法解碼的位元組，覆寫原檔會造成資料損失。請另存新檔，或改用其他編碼重新載入",
+                t("檔案載入時有無法解碼的位元組，覆寫原檔會造成資料損失。請另存新檔，或改用其他編碼重新載入"),
             ),
             SaveDocError::Save(e) => e.fmt(f),
         }
@@ -154,7 +156,7 @@ impl Document {
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "未命名".to_owned())
+            .unwrap_or_else(|| t("未命名").to_owned())
     }
 
     /// 開啟檔案，回傳文件與需要告知使用者的警告。
@@ -169,7 +171,7 @@ impl Document {
         encoding: &'static encoding_rs::Encoding,
     ) -> std::io::Result<Vec<String>> {
         let path = self.path.clone().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "文件尚未儲存，沒有可重新載入的檔案")
+            std::io::Error::new(std::io::ErrorKind::NotFound, t("文件尚未儲存，沒有可重新載入的檔案"))
         })?;
         let bytes = std::fs::read(&path)?;
         let (doc, warnings) = Self::from_decoded(&path, fileio::decode_with(&bytes, encoding));
@@ -182,13 +184,13 @@ impl Document {
     fn from_decoded(path: &Path, d: fileio::Decoded) -> (Self, Vec<String>) {
         let mut warnings = Vec::new();
         if d.lossy {
-            warnings.push(format!(
+            warnings.push(tf!(
                 "檔案含有無法以 {} 解碼的位元組，已用 � 取代；為避免資料損失，將禁止覆寫原檔。可改用其他編碼重新載入",
                 d.format.encoding.name()
             ));
         }
         if d.mixed_line_endings {
-            warnings.push(format!(
+            warnings.push(tf!(
                 "檔案混用多種換行，存檔時會統一為 {}",
                 d.format.line_ending.label()
             ));
@@ -257,16 +259,16 @@ impl Document {
     /// 只改大小寫（Windows、macOS 的檔案系統視為同一個檔案）也允許。回傳新路徑。
     pub fn rename_file(&mut self, new_name: &str) -> Result<PathBuf, String> {
         validate_file_name(new_name)?;
-        let old = self.path.clone().ok_or("這份文件還沒有存成檔案")?;
+        let old = self.path.clone().ok_or(t("這份文件還沒有存成檔案"))?;
         let new = old.with_file_name(new_name);
         if new == old {
             return Ok(new);
         }
         let case_only = old.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase());
         if new.exists() && !case_only {
-            return Err(format!("這個資料夾裡已經有「{new_name}」"));
+            return Err(tf!("這個資料夾裡已經有「{new_name}」", new_name = new_name));
         }
-        std::fs::rename(&old, &new).map_err(|e| format!("無法重新命名：{e}"))?;
+        std::fs::rename(&old, &new).map_err(|e| tf!("無法重新命名：{e}", e = e))?;
         self.disk_mtime = mtime_of(&new);
         self.path = Some(new.clone());
         Ok(new)

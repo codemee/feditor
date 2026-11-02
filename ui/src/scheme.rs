@@ -15,6 +15,8 @@
 //! ```
 
 use eframe::egui::{Color32, Visuals};
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use std::path::{Path, PathBuf};
 
 /// 一種顏色的用途。順序固定：內建配色的色票照這個順序排。
@@ -62,11 +64,11 @@ impl Group {
 
     pub fn label(self) -> &'static str {
         match self {
-            Group::Background => "背景",
-            Group::Text => "文字",
-            Group::Controls => "按鈕與邊線",
-            Group::Accent => "強調與狀態",
-            Group::Syntax => "語法上色",
+            Group::Background => t("背景"),
+            Group::Text => t("文字"),
+            Group::Controls => t("按鈕與邊線"),
+            Group::Accent => t("強調與狀態"),
+            Group::Syntax => t("語法上色"),
         }
     }
 }
@@ -135,31 +137,31 @@ impl Role {
     /// 編輯畫面上顯示的名稱。
     pub fn label(self) -> &'static str {
         match self {
-            Role::EditorBg => "編輯區背景",
-            Role::PanelBg => "面板背景",
-            Role::PopupBg => "浮動視窗背景",
-            Role::FaintBg => "淡色背景",
-            Role::CodeBg => "程式碼底色",
-            Role::Text => "一般文字",
-            Role::TextStrong => "強調文字",
-            Role::TextWeak => "次要文字",
-            Role::Button => "按鈕",
-            Role::ButtonHover => "按鈕（滑鼠移過）",
-            Role::ButtonActive => "按鈕（按下）",
-            Role::Selection => "選取範圍",
-            Role::Line => "邊線",
-            Role::LineHover => "邊線（滑鼠移過）",
-            Role::Accent => "強調色",
-            Role::Cursor => "游標",
-            Role::Link => "連結",
-            Role::Warning => "警告",
-            Role::Error => "錯誤",
-            Role::SynComment => "註解",
-            Role::SynString => "字串",
-            Role::SynNumber => "數字",
-            Role::SynKeyword => "關鍵字",
-            Role::SynType => "型別",
-            Role::SynFunction => "函式",
+            Role::EditorBg => t("編輯區背景"),
+            Role::PanelBg => t("面板背景"),
+            Role::PopupBg => t("浮動視窗背景"),
+            Role::FaintBg => t("淡色背景"),
+            Role::CodeBg => t("程式碼底色"),
+            Role::Text => t("一般文字"),
+            Role::TextStrong => t("強調文字"),
+            Role::TextWeak => t("次要文字"),
+            Role::Button => t("按鈕"),
+            Role::ButtonHover => t("按鈕（滑鼠移過）"),
+            Role::ButtonActive => t("按鈕（按下）"),
+            Role::Selection => t("選取範圍"),
+            Role::Line => t("邊線"),
+            Role::LineHover => t("邊線（滑鼠移過）"),
+            Role::Accent => t("強調色"),
+            Role::Cursor => t("游標"),
+            Role::Link => t("連結"),
+            Role::Warning => t("警告"),
+            Role::Error => t("錯誤"),
+            Role::SynComment => t("註解"),
+            Role::SynString => t("字串"),
+            Role::SynNumber => t("數字"),
+            Role::SynKeyword => t("關鍵字"),
+            Role::SynType => t("型別"),
+            Role::SynFunction => t("函式"),
         }
     }
 
@@ -260,7 +262,7 @@ pub fn parse_scheme(text: &str, find_base: impl Fn(&str) -> Option<Scheme>) -> R
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
-            return Err(format!("第 {} 行：需要「鍵 = 值」", n + 1));
+            return Err(tf!("第 {} 行：需要「鍵 = 值」", n + 1));
         };
         let (key, mut value) = (key.trim(), value.trim());
         // 名稱可以有空白；其他的值只取第一段，後面的空白加 # 是行尾說明（顏色值本身以 # 開頭）
@@ -273,20 +275,20 @@ pub fn parse_scheme(text: &str, find_base: impl Fn(&str) -> Option<Scheme>) -> R
                 dark = match value.to_ascii_lowercase().as_str() {
                     "dark" => true,
                     "light" => false,
-                    _ => return Err(format!("第 {} 行：mode 只能是 dark 或 light", n + 1)),
+                    _ => return Err(tf!("第 {} 行：mode 只能是 dark 或 light", n + 1)),
                 }
             }
             "base" => base_name = Some(value.to_owned()),
             _ => {
-                let role = Role::from_key(key).ok_or_else(|| format!("第 {} 行：不認得的設定「{key}」", n + 1))?;
-                let color = parse_hex(value).ok_or_else(|| format!("第 {} 行：「{value}」不是顏色，要寫成 #RRGGBB", n + 1))?;
+                let role = Role::from_key(key).ok_or_else(|| tf!("第 {} 行：不認得的設定「{}」", n + 1, key))?;
+                let color = parse_hex(value).ok_or_else(|| tf!("第 {} 行：「{}」不是顏色，要寫成 #RRGGBB", n + 1, value))?;
                 overrides.push((role, color));
             }
         }
     }
-    let name = name.filter(|n| !n.is_empty()).ok_or("缺少 name")?;
+    let name = name.filter(|n| !n.is_empty()).ok_or(t("缺少 name"))?;
     let mut scheme = match base_name {
-        Some(b) => find_base(&b).ok_or_else(|| format!("找不到 base 指定的配色「{b}」"))?,
+        Some(b) => find_base(&b).ok_or_else(|| tf!("找不到 base 指定的配色「{b}」", b = b))?,
         None => default_for(dark),
     };
     scheme.name = name;
@@ -319,7 +321,7 @@ pub fn load_custom(dir: &Path) -> (Vec<Scheme>, Vec<String>) {
     for path in files {
         let label = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let Ok(bytes) = std::fs::read(&path) else {
-            messages.push(format!("無法讀取配色檔 {label}"));
+            messages.push(tf!("無法讀取配色檔 {label}", label = label));
             continue;
         };
         // base 可以是內建配色，也可以是排在前面的自訂配色
@@ -331,7 +333,7 @@ pub fn load_custom(dir: &Path) -> (Vec<Scheme>, Vec<String>) {
                 s.path = Some(path);
                 found.push(s);
             }
-            Err(e) => messages.push(format!("配色檔 {label} 有誤，已略過：{e}")),
+            Err(e) => messages.push(tf!("配色檔 {label} 有誤，已略過：{e}", label = label, e = e)),
         }
     }
     (found, messages)
@@ -388,6 +390,12 @@ pub fn names_for(all: &[Scheme], dark: bool) -> Vec<&Scheme> {
 #[cfg(test)]
 pub const DEFAULT_DARK: &str = "EVA";
 pub const DEFAULT_LIGHT: &str = "預設淺色";
+
+/// 配色在畫面上顯示的名稱。內建配色的名稱就是設定檔裡的 ID，所以只有「預設淺色」這種中文名稱
+/// 需要照介面語言翻譯，其餘（EVA、Dracula…）和自訂配色原樣顯示。
+pub fn display_name(name: &str) -> String {
+    if name == DEFAULT_LIGHT { t("預設淺色").to_owned() } else { name.to_owned() }
+}
 
 pub fn default_for(dark: bool) -> Scheme {
     let all = builtins();

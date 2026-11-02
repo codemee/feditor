@@ -186,7 +186,7 @@ pub fn run_headless_pass(ctx: &egui::Context, run_ui: impl FnMut(&mut egui::Ui))
 /// 為什麼要量：egui 排版時，同一行裡不同字型的字是「以行高置中」對齊的，不是對齊基準線。
 /// 兩個字型的上緣與下緣比例差越多（例如 Consolas 與微軟正黑體），拉丁字母就會越偏離中文字，
 /// 看起來上下參差。這裡用 egui 自己的排版結果去量，不去假設字型的內部度量。
-fn latin_cjk_offset(fonts: egui::FontDefinitions) -> f32 {
+fn latin_cjk_offset(fonts: egui::FontDefinitions, family: egui::FontFamily) -> f32 {
     // 排版座標會取整到像素，所以量測用很大的字級：取整誤差相對於字級就小到可以忽略，
     // 套用到各種字級時殘差才會在 1 點以內。
     const PROBE_SIZE: f32 = 96.0;
@@ -198,7 +198,7 @@ fn latin_cjk_offset(fonts: egui::FontDefinitions) -> f32 {
     run_headless_pass(&ctx, |ui| {
         let galley = ui.painter().layout_no_wrap(
             "A第".to_owned(),
-            egui::FontId::monospace(PROBE_SIZE),
+            egui::FontId::new(PROBE_SIZE, family.clone()),
             egui::Color32::WHITE,
         );
         if let Some(row) = galley.rows.first() {
@@ -216,17 +216,17 @@ pub fn build_fonts(family: Option<&str>) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
 
     // 中文字形：優先用微軟正黑體；找不到時 egui 會改用系統的字型後備機制
-    let has_cjk = match std::fs::read(r"C:\Windows\Fonts\msjh.ttc") {
-        Ok(bytes) => {
+    let has_cjk = match cjk_font_bytes() {
+        Some(bytes) => {
             fonts
                 .font_data
-                .insert("cjk".into(), Arc::new(egui::FontData::from_owned(bytes)));
+                .insert("cjk".into(), Arc::new(egui::FontData::from_static(bytes)));
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts.families.entry(family).or_default().push("cjk".into());
             }
             true
         }
-        Err(_) => false,
+        None => false,
     };
 
     // 指定的字型放在等寬家族的最前面；指定的找不到就用系統預設的。
@@ -250,7 +250,7 @@ pub fn build_fonts(family: Option<&str>) -> egui::FontDefinitions {
         // 先量出拉丁字母與中文字的垂直落差，再把等寬字型往下補償，讓兩者基準線一致。
         // 只有真的載入了中文字型才量（否則量到的是缺字的替代符號，沒有意義）。
         if has_cjk {
-            let gap = latin_cjk_offset(fonts.clone());
+            let gap = latin_cjk_offset(fonts.clone(), egui::FontFamily::Monospace);
             // 落差大得離譜表示量測有問題，寧可不補償
             if gap.abs() < 0.5 {
                 data.tweak.y_offset_factor = gap;
@@ -258,7 +258,46 @@ pub fn build_fonts(family: Option<&str>) -> egui::FontDefinitions {
             }
         }
     }
+
+    // 介面文字（標籤、下拉選單、按鈕）用的是比例字型，同樣有拉丁字母與中文字的基準線落差：
+    // 不補償的話，中文字會比旁邊的英文數字、也比下拉選單的框低一截。
+    // 這邊把中文字往上抬（拉丁字型不動），和等寬字型那邊（把拉丁字母往下補）方向相反：
+    // 介面的拉丁字型本來就置中，偏的是中文。
+    if has_cjk {
+        lift_ui_cjk(&mut fonts);
+    }
     fonts
+}
+
+/// 介面用的中文字型項目名稱（資料與 `"cjk"` 共用同一份，只有垂直補償不同）。
+const UI_CJK: &str = "cjk-ui";
+
+/// 量出介面（比例）字型的拉丁字母與中文字的基準線落差，把介面專用的中文字型往上抬同樣的量。
+fn lift_ui_cjk(fonts: &mut egui::FontDefinitions) {
+    let gap = latin_cjk_offset(fonts.clone(), egui::FontFamily::Proportional);
+    // 落差大得離譜表示量測有問題，寧可不補償
+    if gap.abs() >= 0.5 {
+        return;
+    }
+    let Some(base) = fonts.font_data.get("cjk").cloned() else { return };
+    let mut data = (*base).clone(); // 資料是靜態借用的，複製的只有設定
+    data.tweak.y_offset_factor = -gap;
+    fonts.font_data.insert(UI_CJK.into(), Arc::new(data));
+    if let Some(names) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        for name in names.iter_mut().filter(|n| n.as_str() == "cjk") {
+            *name = UI_CJK.into();
+        }
+    }
+}
+
+/// 微軟正黑體的檔案內容。整個程式只讀一次、不釋放，讓字型設定重建時不必重複複製這份大檔案。
+fn cjk_font_bytes() -> Option<&'static [u8]> {
+    static BYTES: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::fs::read(r"C:\Windows\Fonts\msjh.ttc")
+            .ok()
+            .map(|bytes| &*Box::leak(bytes.into_boxed_slice()))
+    })
 }
 
 #[cfg(test)]
@@ -517,6 +556,74 @@ mod tests {
         }
         eprintln!("已檢查 {checked} 個等寬字型的基準線對齊");
         assert!(checked >= 2);
+    }
+
+    /// 介面（比例）字型排「F第」：回傳（拉丁字母的排版基準線, 中文字的排版基準線, 中文字網格的最下緣）。
+    #[cfg(windows)]
+    fn probe_proportional(fonts: egui::FontDefinitions, size: f32) -> (f32, f32, f32) {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts);
+        run_headless_pass(&ctx, |_| {});
+        let mut result = (f32::NAN, f32::NAN, f32::NAN);
+        run_headless_pass(&ctx, |ui| {
+            let galley = ui.painter().layout_no_wrap(
+                "F第".to_owned(),
+                egui::FontId::proportional(size),
+                egui::Color32::WHITE,
+            );
+            let row = &galley.rows[0].row;
+            let first = row.glyphs[1].first_vertex as usize;
+            let bottom = row.visuals.mesh.vertices[first..first + 4]
+                .iter()
+                .map(|v| v.pos.y)
+                .fold(f32::MIN, f32::max);
+            result = (row.glyphs[0].pos.y, row.glyphs[1].pos.y, bottom);
+        });
+        result
+    }
+
+    /// 介面字型：拉丁字母基準線 − 中文字實際畫出來的基準線（中文字往上抬了多少要算進去）。
+    #[cfg(windows)]
+    fn ui_residual(fonts: &egui::FontDefinitions, size: f32, lifted: bool) -> f32 {
+        let mut fonts = fonts.clone();
+        if !lifted {
+            let mut data = (*fonts.font_data[UI_CJK]).clone();
+            data.tweak.y_offset_factor = 0.0;
+            fonts.font_data.insert(UI_CJK.into(), Arc::new(data));
+        }
+        let (latin, cjk, bottom) = probe_proportional(fonts.clone(), size);
+        // 沒抬的版本拿來當中文字原本的位置
+        let mut plain = fonts;
+        let mut data = (*plain.font_data[UI_CJK]).clone();
+        data.tweak.y_offset_factor = 0.0;
+        plain.font_data.insert(UI_CJK.into(), Arc::new(data));
+        let (_, _, bottom_plain) = probe_proportional(plain, size);
+        latin - (cjk + (bottom - bottom_plain))
+    }
+
+    /// 介面的中文字要和拉丁字母對齊基準線（下拉選單裡的中文才不會偏下），
+    /// 而且是用「抬中文字」的方式補，等寬字型那邊（編輯區）不受影響。
+    #[cfg(windows)]
+    #[test]
+    fn ui_chinese_text_is_lifted_to_the_latin_baseline_without_touching_the_editor_font() {
+        if !have_cjk_font() {
+            return;
+        }
+        let fonts = build_fonts(None);
+        let lift = fonts.font_data[UI_CJK].tweak.y_offset_factor;
+        assert!(lift < -0.02, "中文字應該被往上抬（量到 {lift}）");
+        let proportional = &fonts.families[&egui::FontFamily::Proportional];
+        assert!(proportional.iter().any(|n| n == UI_CJK) && !proportional.iter().any(|n| n == "cjk"));
+        let mono = &fonts.families[&egui::FontFamily::Monospace];
+        assert!(mono.iter().any(|n| n == "cjk"), "編輯區仍用原本的中文字型項目");
+        assert_eq!(fonts.font_data["cjk"].tweak.y_offset_factor, 0.0);
+        for size in [12.0_f32, 14.0, 20.0] {
+            let with = ui_residual(&fonts, size, true);
+            let without = ui_residual(&fonts, size, false);
+            eprintln!("字級 {size}：抬之後殘差 {with}，沒抬 {without}");
+            assert!(with.abs() <= 1.0, "字級 {size}：抬了之後基準線還差 {with} 點");
+            assert!(without.abs() > with.abs() + 0.5, "字級 {size}：沒抬時落差應該更大（{without}）");
+        }
     }
 
     /// 對照組：沒有補償時，基準線落差必須真的存在。

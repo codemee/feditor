@@ -2,6 +2,8 @@
 
 use crate::editor::model::{EditorState, Selection};
 use feditor_core::Buffer;
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use feditor_script::{EditorApi, ScriptEngine};
 use feditor_script_js::JsEngine;
 use std::ops::Range;
@@ -105,7 +107,7 @@ impl EditorApi for Host<'_> {
             self.state.clamp(self.buffer);
             self.state
                 .command(self.buffer, name)
-                .ok_or_else(|| format!("不認得的編輯指令：{name}"))?;
+                .ok_or_else(|| tf!("不認得的編輯指令：{name}", name = name))?;
         }
         Ok(())
     }
@@ -121,7 +123,7 @@ impl EditorApi for Host<'_> {
         if self.interactive {
             rfd::MessageDialog::new()
                 .set_level(rfd::MessageLevel::Info)
-                .set_title("巨集")
+                .set_title(t("巨集"))
                 .set_description(message)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
@@ -135,7 +137,7 @@ impl EditorApi for Host<'_> {
         }
         rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Info)
-            .set_title("巨集")
+            .set_title(t("巨集"))
             .set_description(message)
             .set_buttons(rfd::MessageButtons::YesNo)
             .show()

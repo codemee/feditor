@@ -4,6 +4,7 @@
 //! 這裡的 `slots[active]` 只是個空位；切換分頁時把內容換進換出。與畫面無關，方便單元測試。
 
 use crate::document::Document;
+use feditor_core::i18n::t;
 use crate::editor::model::EditorState;
 use crate::session::Session;
 use std::path::Path;
@@ -136,7 +137,7 @@ impl TabSet {
         let full = d
             .path
             .as_ref()
-            .map_or_else(|| "尚未儲存".to_owned(), |p| p.display().to_string());
+            .map_or_else(|| t("尚未儲存").to_owned(), |p| p.display().to_string());
         (d.name(), full, d.dirty)
     }
 
