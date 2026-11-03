@@ -196,6 +196,32 @@ impl Node {
         }
     }
 
+    /// 版面存成文字（記在工作階段檔）：`P3` 是一般窗格、`W5` 是預覽窗格（`is_preview` 判斷），
+    /// `H0.500[甲,乙]` 是左右分割、`V0.400[甲,乙]` 是上下分割，數字是第一個子節點的比例。
+    pub fn to_spec(&self, is_preview: &dyn Fn(PaneId) -> bool) -> String {
+        match self {
+            Node::Leaf(id) => format!("{}{id}", if is_preview(*id) { 'W' } else { 'P' }),
+            Node::Split { axis, ratio, first, second } => format!(
+                "{}{ratio:.3}[{},{}]",
+                if *axis == Axis::Horizontal { 'H' } else { 'V' },
+                first.to_spec(is_preview),
+                second.to_spec(is_preview)
+            ),
+        }
+    }
+
+    /// [`Node::to_spec`] 的反向。回傳版面，以及每個葉子的（窗格編號, 是不是預覽窗格）。
+    /// 格式不對、有重複的窗格編號、或巢狀太深都回傳 `None`。
+    pub fn from_spec(spec: &str) -> Option<(Node, Vec<(PaneId, bool)>)> {
+        let mut chars = spec.trim().chars().peekable();
+        let mut leaves = Vec::new();
+        let node = parse_spec_node(&mut chars, &mut leaves, 0)?;
+        let mut ids: Vec<PaneId> = leaves.iter().map(|(id, _)| *id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        (chars.next().is_none() && ids.len() == leaves.len()).then_some((node, leaves))
+    }
+
     /// 設定 `path` 指到的分割節點的比例。
     pub fn set_ratio(&mut self, path: &[bool], value: f32) {
         if let Node::Split { ratio, first, second, .. } = self {
@@ -205,6 +231,56 @@ impl Node {
                 Some((true, rest)) => second.set_ratio(rest, value),
             }
         }
+    }
+}
+
+fn parse_spec_node(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    leaves: &mut Vec<(PaneId, bool)>,
+    depth: usize,
+) -> Option<Node> {
+    if depth > 32 {
+        return None;
+    }
+    let number = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+        let mut s = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() || c == '.' {
+                s.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        s
+    };
+    match chars.next()? {
+        c @ ('P' | 'W') => {
+            let id: PaneId = number(chars).parse().ok()?;
+            leaves.push((id, c == 'W'));
+            Some(Node::Leaf(id))
+        }
+        c @ ('H' | 'V') => {
+            let ratio: f32 = number(chars).parse().ok()?;
+            if chars.next()? != '[' {
+                return None;
+            }
+            let first = parse_spec_node(chars, leaves, depth + 1)?;
+            if chars.next()? != ',' {
+                return None;
+            }
+            let second = parse_spec_node(chars, leaves, depth + 1)?;
+            if chars.next()? != ']' {
+                return None;
+            }
+            Some(Node::Split {
+                axis: if c == 'H' { Axis::Horizontal } else { Axis::Vertical },
+                ratio: ratio.clamp(0.05, 0.95),
+                first: Box::new(first),
+                second: Box::new(second),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -285,8 +361,14 @@ impl<T> Layout<T> {
         id
     }
 
+    #[cfg(test)]
     pub fn pane_count(&self) -> usize {
         self.root.leaves().len()
+    }
+
+    /// 還原版面之後，下一個新窗格的編號要比所有已經用過的大。
+    pub fn reserve_ids_up_to(&mut self, max_used: PaneId) {
+        self.next_id = self.next_id.max(max_used + 1);
     }
 }
 
@@ -471,6 +553,36 @@ mod tests {
         assert_eq!(preview_rect(r, Zone::Split(Side::Right)).min.x, 400.0);
         assert_eq!(preview_rect(r, Zone::Split(Side::Bottom)).min.y, 300.0);
         assert_eq!(preview_rect(r, Zone::Into), r);
+    }
+
+    #[test]
+    fn layouts_survive_a_round_trip_through_text_including_preview_panes() {
+        let mut root = Node::Leaf(0);
+        root.split(0, Side::Right, 1);
+        root.split(1, Side::Bottom, 2);
+        root.set_ratio(&[], 0.3);
+        root.set_ratio(&[true], 0.65);
+        let spec = root.to_spec(&|id| id == 2);
+        assert_eq!(spec, "H0.300[P0,V0.650[P1,W2]]");
+        let (back, leaves) = Node::from_spec(&spec).unwrap();
+        assert_eq!(leaves, vec![(0, false), (1, false), (2, true)]);
+        assert_eq!(back.to_spec(&|id| id == 2), spec);
+        assert_eq!(back.leaves(), root.leaves());
+        // 單一窗格
+        assert_eq!(Node::from_spec("P7").unwrap().0, Node::Leaf(7));
+        // 比例拉回合理範圍
+        let (n, _) = Node::from_spec("H0.0[P0,P1]").unwrap();
+        assert!(matches!(n, Node::Split { ratio, .. } if ratio >= 0.05));
+    }
+
+    #[test]
+    fn broken_layout_text_is_rejected() {
+        for bad in ["", "X1", "P", "Pabc", "H0.5[P0]", "H0.5[P0,P1", "H0.5[P0,P1]x", "H[P0,P1]", "H0.5(P0,P1)", "P1P2", "H0.5[P1,P1]", "H0.5[P0,H0.5[P1,P0]]"] {
+            assert!(Node::from_spec(bad).is_none(), "{bad:?} 應該被拒絕");
+        }
+        // 巢狀太深不會讓程式當掉
+        let deep = format!("{}P0{}", "H0.5[P1,".repeat(100), "]".repeat(100));
+        assert!(Node::from_spec(&deep).is_none());
     }
 
     #[test]

@@ -337,6 +337,54 @@ fn install_api<'js>(
     Ok(())
 }
 
+impl JsEngine {
+    /// 執行預覽外掛：載入 `source`，呼叫全域函式 `preview(text, info)`，把回傳值轉成 JSON 字串。
+    ///
+    /// `info` 是 `{ path, name, ext }`（沒存過檔時 `path` 與 `name` 是 `undefined`）。
+    /// 外掛跑在和巨集同樣的沙盒裡（有時間與記憶體上限、不能碰檔案與網路），而且拿不到 `editor`：
+    /// 呼叫 `editor.*` 會丟出錯誤。`console.log` 的輸出可用 [`JsEngine::take_output`] 取回。
+    pub fn convert(&mut self, source: &str, text: &str, path: Option<&str>) -> Result<String, ScriptError> {
+        let host: HostCell = Rc::default(); // 沒有編輯器
+        let deadline = Instant::now() + self.timeout;
+        self.runtime
+            .set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+
+        let context = Context::full(&self.runtime).map_err(|e| ScriptError(e.to_string()))?;
+        let output = self.output.clone();
+        let result = context.with(|ctx| {
+            (|| -> rquickjs::Result<String> {
+                install_api(&ctx, &host, &output)?;
+                ctx.eval::<(), _>(source)?;
+                let globals = ctx.globals();
+                let Ok(func) = globals.get::<_, Function>("preview") else {
+                    return Err(Exception::throw_type(&ctx, t("外掛沒有定義 preview 函式")));
+                };
+                let info = Object::new(ctx.clone())?;
+                if let Some(path) = path {
+                    let p = std::path::Path::new(path);
+                    info.set("path", path)?;
+                    if let Some(name) = p.file_name() {
+                        info.set("name", name.to_string_lossy().into_owned())?;
+                    }
+                    if let Some(ext) = p.extension() {
+                        info.set("ext", ext.to_string_lossy().to_ascii_lowercase())?;
+                    }
+                }
+                let value: rquickjs::Value = func.call((text, info))?;
+                match ctx.json_stringify(value)? {
+                    Some(json) => json.to_string(),
+                    None => Err(Exception::throw_type(&ctx, t("preview 沒有回傳內容"))),
+                }
+            })()
+            .catch(&ctx)
+            .map_err(|e| ScriptError(e.to_string()))
+        });
+
+        self.runtime.set_interrupt_handler(None);
+        result
+    }
+}
+
 impl ScriptEngine for JsEngine {
     fn name(&self) -> &'static str {
         "javascript"
@@ -377,6 +425,49 @@ mod tests {
         let mut engine = JsEngine::new()?;
         engine.run(src, buf)?;
         Ok(engine.take_output())
+    }
+
+    fn convert(src: &str, text: &str, path: Option<&str>) -> Result<String, ScriptError> {
+        JsEngine::new()?.convert(src, text, path)
+    }
+
+    #[test]
+    fn preview_plugins_turn_text_into_json_and_see_the_file_info() {
+        let src = "function preview(text, info) { return { header: ['行'], rows: text.split('\\n').map(l => [l]), name: info.name, ext: info.ext }; }";
+        let json = convert(src, "a\nb", Some("C:\\x\\Report.LOG")).unwrap();
+        assert!(json.contains("\"header\":[\"行\"]"), "{json}");
+        assert!(json.contains("\"name\":\"Report.LOG\"") && json.contains("\"ext\":\"log\""), "{json}");
+        // 沒有檔名時 name、ext 是 undefined，序列化時被略過
+        let json = convert("function preview(t, i) { return { n: i.name, t }; }", "x", None).unwrap();
+        assert_eq!(json, "{\"t\":\"x\"}");
+        // 回傳字串也行
+        assert_eq!(convert("function preview(t) { return '# ' + t; }", "hi", None).unwrap(), "\"# hi\"");
+    }
+
+    #[test]
+    fn preview_plugins_report_missing_functions_empty_results_and_errors() {
+        let e = convert("var x = 1;", "t", None).unwrap_err();
+        assert!(e.to_string().contains("preview"), "{e}");
+        let e = convert("function preview() {}", "t", None).unwrap_err();
+        assert!(e.to_string().contains("preview"), "{e}");
+        let e = convert("function preview() { throw new Error('壞掉了'); }", "t", None).unwrap_err();
+        assert!(e.to_string().contains("壞掉了"), "{e}");
+        assert!(convert("function preview( {", "t", None).is_err(), "語法錯誤");
+    }
+
+    #[test]
+    fn preview_plugins_have_no_editor_and_are_stopped_when_they_loop_forever() {
+        let e = convert("function preview() { editor.insert(0, 'x'); return 1; }", "t", None).unwrap_err();
+        assert!(e.to_string().to_lowercase().contains("editor") || !e.to_string().is_empty(), "{e}");
+        let mut engine = JsEngine::new().unwrap();
+        engine.set_timeout(Duration::from_millis(200));
+        let started = Instant::now();
+        assert!(engine.convert("function preview() { for(;;){} }", "t", None).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3), "無窮迴圈要被中止");
+        // console.log 的輸出可以取回
+        let mut engine = JsEngine::new().unwrap();
+        engine.convert("function preview() { console.log('偵錯'); return 1; }", "t", None).unwrap();
+        assert_eq!(engine.take_output(), ["偵錯"]);
     }
 
     #[test]

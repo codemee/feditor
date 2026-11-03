@@ -61,6 +61,8 @@ impl From<ThemeChoice> for egui::ThemePreference {
 pub const MIN_FONT_SIZE: f32 = 8.0;
 pub const MAX_FONT_SIZE: f32 = 48.0;
 pub const DEFAULT_FONT_SIZE: f32 = 13.0;
+/// 預覽窗格內文的預設字級（預覽的字級和編輯區分開調整）。
+pub const DEFAULT_PREVIEW_FONT_SIZE: f32 = 14.0;
 
 /// 把字級限制在合理範圍內；不是有限數字（NaN、無限大）時退回預設值。
 pub fn clamp_font_size(size: f32) -> f32 {
@@ -135,6 +137,8 @@ pub struct Settings {
     pub font_family: Option<String>,
     /// 編輯區字級（點）。
     pub font_size: f32,
+    /// 預覽窗格內文的字級（點在預覽窗格上時，縮放快捷鍵調的是它）。
+    pub preview_font_size: f32,
     pub view: ViewOptions,
     /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
     pub show_output: bool,
@@ -154,6 +158,7 @@ impl Default for Settings {
             theme: ThemeChoice::default(),
             font_family: None,
             font_size: DEFAULT_FONT_SIZE,
+            preview_font_size: DEFAULT_PREVIEW_FONT_SIZE,
             view: ViewOptions::default(),
             show_output: false,
             light_scheme: String::new(),
@@ -207,6 +212,15 @@ impl Settings {
                         }
                     }
                 }
+                "preview_font_size" => {
+                    if let Ok(size) = value.parse::<f32>() {
+                        settings.preview_font_size = if size.is_finite() {
+                            size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+                        } else {
+                            DEFAULT_PREVIEW_FONT_SIZE
+                        };
+                    }
+                }
                 "light_scheme" => settings.light_scheme = value.trim_matches('"').trim().to_owned(),
                 "dark_scheme" => settings.dark_scheme = value.trim_matches('"').trim().to_owned(),
                 "language" => {
@@ -246,6 +260,7 @@ impl Settings {
             text.push_str(&format!("font_family = {name}\n"));
         }
         text.push_str(&format!("font_size = {}\n", self.font_size));
+        text.push_str(&format!("preview_font_size = {}\n", self.preview_font_size));
         let v = self.view;
         text.push_str(&format!(
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
@@ -423,6 +438,21 @@ mod tests {
         assert_eq!(zoom_steps(&mut acc, 0.0), 0);
         assert_eq!(zoom_steps(&mut acc, -1.0), 0);
         assert_eq!(acc, 0.0, "無效的輸入不可汙染累積量");
+    }
+
+    #[test]
+    fn preview_font_size_is_separate_validated_and_round_trips() {
+        assert_eq!(Settings::default().preview_font_size, DEFAULT_PREVIEW_FONT_SIZE);
+        assert_eq!(Settings::parse("preview_font_size = 19.5").preview_font_size, 19.5);
+        assert_eq!(Settings::parse("preview_font_size = 1").preview_font_size, MIN_FONT_SIZE);
+        assert_eq!(Settings::parse("preview_font_size = 999").preview_font_size, MAX_FONT_SIZE);
+        assert_eq!(Settings::parse("preview_font_size = inf").preview_font_size, DEFAULT_PREVIEW_FONT_SIZE);
+        assert_eq!(Settings::parse("preview_font_size = big").preview_font_size, DEFAULT_PREVIEW_FONT_SIZE);
+        let mut s = Settings::default();
+        s.preview_font_size = 17.0;
+        s.font_size = 12.0;
+        let back = Settings::parse(&s.to_text());
+        assert_eq!((back.preview_font_size, back.font_size), (17.0, 12.0), "和編輯區的字級各自獨立");
     }
 
     #[test]

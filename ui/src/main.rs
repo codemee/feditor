@@ -16,6 +16,9 @@ mod macros;
 mod modal;
 mod pane_ops;
 mod panes;
+mod preview;
+mod preview_pane;
+mod preview_ui;
 mod scheme;
 mod session;
 mod settings;
@@ -35,7 +38,7 @@ use feditor_core::fileio::{LineEnding, common_encodings, format_choices, format_
 use find::{FindState, Summary};
 use icons::Icon;
 use settings::{
-    DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, ThemeChoice, adjust_font_size,
+    DEFAULT_FONT_SIZE, DEFAULT_PREVIEW_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, ThemeChoice, adjust_font_size,
     clamp_font_size, zoom_steps,
 };
 use std::ops::Range;
@@ -74,6 +77,29 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
         .fold(0.0_f32, f32::max);
     let spacing = ui.spacing();
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
+}
+
+/// 搜尋框或取代框有鍵盤焦點時，讓它自己留住 Tab：egui 預設會在畫面一開始就把 Tab 當成「移到下一個元件」，
+/// 留住之後 Tab 才會留在事件裡，由 [`App::tab_between_find_and_replace`] 在搜尋與取代之間切換。
+/// 方向鍵照原本的樣子留給輸入框（游標左右移動）。
+fn keep_tab_in_find_inputs(ui: &egui::Ui) {
+    let filter = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: false };
+    ui.memory_mut(|m| {
+        for id in [find_input_id(), replace_input_id()] {
+            if m.has_focus(id) {
+                m.set_focus_lock_filter(id, filter);
+            }
+        }
+    });
+}
+
+/// 顯示系統的「開啟檔案」交談窗（可多選），從 `dir` 開始；取消回傳空清單。
+fn pick_files_in_dialog(dir: &std::path::Path) -> Vec<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(t("開啟檔案"))
+        .set_directory(dir)
+        .pick_files()
+        .unwrap_or_default()
 }
 
 /// 配色狀態鈕目前要顯示的圖示。
@@ -359,6 +385,8 @@ enum Action {
     OpenThemesDir,
     /// 設定編輯區的字級（點）。設定面板的字級欄與快捷鍵都走這一條，所以兩邊永遠同步。
     SetFontSize(f32),
+    /// 設定預覽窗格的字級（點）。
+    SetPreviewFontSize(f32),
     /// 設定編輯區的字型家族；`None` 表示作業系統預設的等寬字型。
     SetFontFamily(Option<String>),
     /// 編輯區的顯示選項（空白字元、行號、目前行、自動換行）。
@@ -374,6 +402,16 @@ enum Action {
     PaneTab(panes::PaneId, pane_ops::TabCmd),
     /// 關閉窗格：裡面的分頁移到相鄰的窗格。
     ClosePane(panes::PaneId),
+    /// 開啟或關閉有焦點的窗格的預覽。
+    TogglePreview,
+    /// 關閉一個預覽窗格。
+    ClosePreview(panes::PaneId),
+    /// 開啟預覽外掛的資料夾。
+    OpenPreviewsDir,
+    /// 開始拖曳一個預覽窗格。
+    BeginPreviewDrag(panes::PaneId),
+    /// 把預覽窗格（第一個）搬到一般窗格（第二個）的某一側。
+    MovePreview(panes::PaneId, panes::PaneId, panes::Side),
     /// 開始拖曳某個窗格的某個分頁。
     BeginTabDrag(panes::PaneId, usize),
     /// 把某個窗格的某個分頁搬到別處（放進另一個窗格，或切出新窗格）。
@@ -448,6 +486,14 @@ const REDO_Y: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
 const FIND_PREV: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::F3);
+/// 開關預覽。不用 Ctrl+Shift+V：egui 會把它當成貼上。
+const TOGGLE_PREVIEW: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers {
+        shift: true,
+        ..egui::Modifiers::COMMAND
+    },
+    egui::Key::P,
+);
 const FIND_IN_FILES: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers {
         shift: true,
@@ -478,6 +524,16 @@ struct App {
     tab_drag: Option<pane_ops::TabDrag>,
     /// 換了有焦點的窗格：下一個畫面把鍵盤焦點也移過去。
     pending_editor_focus: bool,
+    /// 鍵盤焦點在預覽窗格上（點了預覽窗格）：縮放快捷鍵調的是預覽的字級，不是編輯區的。
+    preview_focused: bool,
+    /// 拖進來的是資料夾時，用這個函式讓使用者從該資料夾選要開的檔案（預設是系統的「開啟檔案」交談窗；測試時換掉）。
+    pick_files_in: fn(&std::path::Path) -> Vec<PathBuf>,
+    /// 預覽窗格（窗格編號 → 狀態）。預覽窗格也是版面裡的葉子，但不在 `layout.others`。
+    previews: std::collections::HashMap<panes::PaneId, preview_pane::PreviewPane>,
+    /// 使用者的預覽外掛（設定資料夾的 `previews/*.js`）。
+    preview_plugins: Vec<std::sync::Arc<preview::Plugin>>,
+    /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
+    pane_rects: Vec<(panes::PaneId, egui::Rect)>,
     last_macro: Option<PathBuf>,
     log: Vec<(LogKind, String)>,
     last_title: String,
@@ -534,6 +590,11 @@ impl App {
             layout: panes::Layout::default(),
             tab_drag: None,
             pending_editor_focus: false,
+            preview_focused: false,
+            pick_files_in: pick_files_in_dialog,
+            previews: Default::default(),
+            preview_plugins: Vec::new(),
+            pane_rects: Vec::new(),
             last_macro: None,
             log: Vec::new(),
             last_title: String::new(),
@@ -564,6 +625,7 @@ impl App {
         };
         app.refresh_macros();
         app.refresh_schemes();
+        app.refresh_preview_plugins();
         if let Some(path) = initial {
             app.open_path(&path);
         }
@@ -979,25 +1041,35 @@ impl App {
 
     /// 把上次開著的檔案開回來（游標也放回原位）。
     fn restore_session(&mut self) {
-        let session = session::Session::load();
+        self.restore_from(&session::Session::load());
+    }
+
+    fn restore_from(&mut self, session: &session::Session) {
+        // 有存窗格版面：整個版面還原（已經不存在的檔案略過）
+        if self.restore_session_layout(session) {
+            return;
+        }
+        // 沒有版面（舊版的工作階段）或只有一個窗格：全部開在目前的窗格
+        let focus = session.panes.iter().find(|p| p.id == session.focus).or(session.panes.first());
         let mut active_tab = None;
-        for (i, (path, caret)) in session.files.iter().enumerate() {
-            if !path.exists() {
-                continue;
-            }
-            self.open_path(path);
-            let n = self.doc.buffer.len_chars();
-            self.editor.sel = editor::model::Selection::collapsed((*caret).min(n));
-            self.editor.scroll_to_caret = true;
-            if i == session.active {
-                active_tab = Some(self.tabs.active());
+        for pane in &session.panes {
+            for (i, (path, caret)) in pane.files.iter().enumerate() {
+                if !path.exists() {
+                    continue;
+                }
+                self.open_path(path);
+                let n = self.doc.buffer.len_chars();
+                self.editor.sel = editor::model::Selection::collapsed((*caret).min(n));
+                self.editor.scroll_to_caret = true;
+                if focus.is_some_and(|f| std::ptr::eq(f, pane)) && i == pane.active {
+                    active_tab = Some(self.tabs.active());
+                }
             }
         }
         if let Some(i) = active_tab {
             self.switch_tab(i);
         }
     }
-
     /// 作用中的檔案被別的程式改了：沒有未儲存的修改就直接重新載入；有的話問使用者
     /// （`ask` 收到檔名，回傳 `true` 表示要重新載入、捨棄自己的修改）。
     fn handle_external_change(&mut self, ask: impl FnOnce(&str) -> bool) {
@@ -1082,7 +1154,7 @@ impl App {
 
     fn close_active_tab(&mut self) {
         // 有多個窗格時，窗格裡最後一個分頁關掉就連窗格一起關（不留空白文件）
-        if self.tabs.len() == 1 && self.layout.pane_count() > 1 {
+        if self.tabs.len() == 1 && self.tab_pane_count() > 1 {
             self.remove_focused_pane();
             return;
         }
@@ -1134,7 +1206,8 @@ impl App {
         }
     }
     /// 從檔案總管拖進視窗的檔案：每個都用 [`App::open_path`] 開（已開著的切過去，最後一個成為作用中分頁）。
-    /// 資料夾略過並提示；同一個路徑只開一次；有對話框正在等回答時不處理，免得換了分頁。
+    /// 拖進來的是資料夾：以它為起點顯示「開啟檔案」交談窗，讓使用者選要開哪些檔案（取消就什麼都不開）。
+    /// 同一個路徑只處理一次；有對話框正在等回答時不處理，免得換了分頁。
     fn open_dropped(&mut self, paths: Vec<PathBuf>) {
         if self.modal.is_some() {
             return;
@@ -1146,7 +1219,9 @@ impl App {
             }
             seen.push(path.clone());
             if path.is_dir() {
-                self.push(LogKind::Warn, tf!("{} 是資料夾，已略過", path.display()));
+                for picked in (self.pick_files_in)(&path) {
+                    self.open_path(&picked);
+                }
             } else {
                 self.open_path(&path);
             }
@@ -1373,6 +1448,11 @@ impl App {
                 }
             }
             Action::ClosePane(pane) => self.close_pane(pane),
+            Action::TogglePreview => self.toggle_preview(),
+            Action::ClosePreview(id) => self.close_preview(id),
+            Action::OpenPreviewsDir => self.open_folder(preview::previews_dir()),
+            Action::BeginPreviewDrag(id) => self.begin_preview_drag(id),
+            Action::MovePreview(id, target, side) => self.move_preview(id, target, side),
             Action::BeginTabDrag(pane, i) => self.begin_tab_drag(pane, i),
             Action::MoveTab(pane, i, target) => self.move_tab(pane, i, target),
             Action::CloseTab(i) => self.close_tab(if i == usize::MAX { self.tabs.active() } else { i }),
@@ -1395,6 +1475,13 @@ impl App {
                 let n = n.clamp(1, 2);
                 if n != self.settings.wide_cols {
                     self.settings.wide_cols = n;
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetPreviewFontSize(size) => {
+                let size = if size.is_finite() { clamp_font_size(size) } else { DEFAULT_PREVIEW_FONT_SIZE };
+                if size != self.settings.preview_font_size {
+                    self.settings.preview_font_size = size;
                     self.mark_settings_dirty();
                 }
             }
@@ -1444,6 +1531,11 @@ impl App {
                 action = Some(Action::ToggleFolderSearch);
             }
 
+            let preview_on = self.preview_id().is_some();
+            if icons::toggle(ui, Icon::Preview, t("預覽 (Ctrl+Shift+P)"), preview_on).clicked() {
+                action = Some(Action::TogglePreview);
+            }
+
             group_separator(ui);
 
             let run = icons::toggle(ui, Icon::Run, t("巨集：執行、設快捷鍵、編輯"), self.macro_open);
@@ -1482,6 +1574,7 @@ impl App {
                     if self.settings_open {
                         // 使用者可能剛在 themes 資料夾放了新的配色檔
                         self.refresh_schemes();
+                        self.refresh_preview_plugins();
                         self.apply_schemes(ui.ctx());
                     }
                 }
@@ -2321,10 +2414,40 @@ impl App {
         });
         ui.add_space(2.0);
         ui.label(
-            egui::RichText::new(t("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設"))
+            egui::RichText::new(t("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設（點在預覽窗格上時，調的是預覽的字級）"))
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
+        group_gap(ui);
+
+        // ── 預覽 ──
+        group_title(ui, t("預覽"));
+        settings_grid(ui, "settings_preview", |ui| {
+            form_row(ui, t("預覽外掛"), |ui| {
+                if ui
+                    .button(t("預覽資料夾"))
+                    .on_hover_text(t("預覽外掛（*.js）放在這裡；開啟設定面板時會重新讀取"))
+                    .clicked()
+                {
+                    action = Some(Action::OpenPreviewsDir);
+                }
+                ui.label(egui::RichText::new(tf!("已載入 {} 個外掛", self.preview_plugins.len())).weak());
+            });
+            // 預覽字級：點在預覽窗格上時，縮放快捷鍵調的也是它，所以兩邊永遠同步
+            form_row(ui, t("預覽字級"), |ui| {
+                let mut size = self.settings.preview_font_size;
+                let response = ui.add(
+                    egui::DragValue::new(&mut size)
+                        .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
+                        .speed(0.1)
+                        .max_decimals(1)
+                        .suffix(" pt"),
+                );
+                if response.changed() {
+                    action = Some(Action::SetPreviewFontSize(size));
+                }
+            });
+        });
         group_gap(ui);
 
         // ── 狀態列 ──
@@ -2354,7 +2477,41 @@ impl App {
 
     /// 尋找列：搜尋框、三個選項（區分大小寫、完整單字、規則表達式）、上一筆／下一筆，
     /// 以及可展開的取代欄。
+    ///
+    /// 鍵盤只管兩個輸入框：Tab 只在搜尋框與取代框之間切換（見 [`App::tab_between_find_and_replace`]），
+    /// 其他按鈕（選項、上一筆／下一筆、取代、關閉…）一律用滑鼠點，不會被 Tab 聚焦。
     fn find_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        self.tab_between_find_and_replace(ui);
+        let action = icons::mouse_only(|| self.find_bar_contents(ui));
+        // 要在兩個輸入框畫完之後才設：TextEdit 每個畫面畫完自己都會重設鍵盤過濾條件，先設會被蓋掉
+        keep_tab_in_find_inputs(ui);
+        action
+    }
+
+    /// 搜尋框或取代框有鍵盤焦點時，Tab（或 Shift+Tab）在兩者之間切換：
+    /// 搜尋框 → 取代框（取代列收著就先展開）、取代框 → 搜尋框。Tab 不會跳到按鈕或別的元件。
+    fn tab_between_find_and_replace(&mut self, ui: &egui::Ui) {
+        let find_focused = ui.memory(|m| m.has_focus(find_input_id()));
+        let replace_focused = ui.memory(|m| m.has_focus(replace_input_id()));
+        if !(find_focused || replace_focused) {
+            return;
+        }
+        let pressed = ui.input_mut(|i| {
+            let tab = i.consume_key(egui::Modifiers::NONE, egui::Key::Tab);
+            let back = i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab);
+            tab || back
+        });
+        if pressed {
+            if find_focused {
+                self.find.show_replace = true;
+                ui.memory_mut(|m| m.request_focus(replace_input_id()));
+            } else {
+                ui.memory_mut(|m| m.request_focus(find_input_id()));
+            }
+        }
+    }
+
+    fn find_bar_contents(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
         if self.find.stats_pending() {
             let App { doc, find, .. } = self;
@@ -2801,6 +2958,14 @@ impl eframe::App for App {
 
         // 快捷鍵（Ctrl+Shift+S 要先於 Ctrl+S 檢查，因為 egui 比對修飾鍵時 Ctrl+S 也會吃到它）
         let font_size = self.settings.font_size;
+        // 點了預覽窗格之後，縮放調的是預覽的字級；否則調編輯區的
+        let preview_zoom = self.preview_focused && self.preview_id().is_some();
+        let (zoom_base, zoom_default) = if preview_zoom {
+            (self.settings.preview_font_size, DEFAULT_PREVIEW_FONT_SIZE)
+        } else {
+            (font_size, DEFAULT_FONT_SIZE)
+        };
+        let zoom_action = |size: f32| if preview_zoom { Action::SetPreviewFontSize(size) } else { Action::SetFontSize(size) };
         let zoom_delta = ctx.input(|i| i.zoom_delta());
         // 沒有任何輸入框有焦點時，Ctrl+Z／Y 由我們負責（有焦點時由該輸入框自己處理）
         let nothing_focused = ctx.memory(|m| m.focused().is_none());
@@ -2813,6 +2978,8 @@ impl eframe::App for App {
                 Some(Action::Undo)
             } else if i.consume_shortcut(&FIND_IN_FILES) {
                 Some(Action::ToggleFolderSearch)
+            } else if i.consume_shortcut(&TOGGLE_PREVIEW) {
+                Some(Action::TogglePreview)
             } else if i.consume_shortcut(&PREV_TAB) {
                 Some(Action::PrevTab)
             } else if i.consume_shortcut(&NEXT_TAB) {
@@ -2842,11 +3009,11 @@ impl eframe::App for App {
                 || i.consume_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_IN_SECONDARY)
             {
                 // Ctrl ＋（含不按 Shift 的 Ctrl ＝）：放大字級
-                Some(Action::SetFontSize(adjust_font_size(font_size, 1.0)))
+                Some(zoom_action(adjust_font_size(zoom_base, 1.0)))
             } else if i.consume_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_OUT) {
-                Some(Action::SetFontSize(adjust_font_size(font_size, -1.0)))
+                Some(zoom_action(adjust_font_size(zoom_base, -1.0)))
             } else if i.consume_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_RESET) {
-                Some(Action::SetFontSize(DEFAULT_FONT_SIZE))
+                Some(zoom_action(zoom_default))
             } else {
                 None
             }
@@ -2877,11 +3044,11 @@ impl eframe::App for App {
         if action.is_none() {
             let steps = zoom_steps(&mut self.zoom_accum, zoom_delta);
             if steps != 0 {
-                action = Some(Action::SetFontSize(adjust_font_size(font_size, steps as f32)));
+                action = Some(zoom_action(adjust_font_size(zoom_base, steps as f32)));
             }
         }
 
-        egui::Panel::top("toolbar").show(ui, |ui| {
+        egui::Panel::top("toolbar").show_separator_line(false).show(ui, |ui| {
             if let Some(a) = self.toolbar(ui) {
                 action = Some(a);
             }
@@ -2925,7 +3092,9 @@ impl eframe::App for App {
                     }
                 });
         }
-        egui::CentralPanel::default().show(ui, |ui| {
+        // 窗格是有框線的卡片，不需要工具列下面的分隔線；上方也不多留邊，離工具列近一點（左右與下方維持原本的空隙）
+        let central = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin { left: 8, right: 8, top: 0, bottom: 8 });
+        egui::CentralPanel::default().frame(central).show(ui, |ui| {
             if let Some(a) = self.panes_ui(ui) {
                 action = Some(a);
             }
@@ -3233,9 +3402,16 @@ mod tests {
         assert!(app.doc.sync());
         assert_eq!(app.all_dirty().len(), 2, "兩個窗格各一個未儲存的分頁");
         let session = app.session_all();
-        let names: Vec<_> = session.files.iter().map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(session.panes.len(), 2);
+        let names: Vec<_> = session
+            .panes
+            .iter()
+            .flat_map(|p| p.files.iter())
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(names, ["a.txt", "b.txt"], "依畫面由左到右");
-        assert_eq!(session.active, 1, "作用中的是有焦點窗格的作用中分頁");
+        assert_eq!(session.focus, app.layout.focus, "記住有焦點的窗格");
+        assert!(session.layout.as_deref().is_some_and(|l| l.starts_with('H')), "{:?}", session.layout);
         let _ = dir;
     }
 
@@ -3259,6 +3435,425 @@ mod tests {
         assert_eq!(app.tab_drag.as_ref().map(|d| d.label.as_str()), Some("a.txt"));
         app.begin_tab_drag(first, 9);
         assert_eq!(app.tab_drag.as_ref().unwrap().index, 0, "不存在的分頁不能拖");
+    }
+
+    // ── 預覽窗格與版面還原 ───────────────────────────────────
+
+    /// 資料夾裡有 a.md、b.md、c.txt；回傳沒有使用者外掛的 App。
+    fn app_for_preview() -> (App, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in [("a.md", "# 甲標題\n\n內文"), ("b.md", "# 乙標題"), ("c.txt", "純文字")] {
+            std::fs::write(dir.path().join(name), text).unwrap();
+        }
+        let mut app = App::new(None, Settings::default());
+        app.preview_plugins.clear(); // 不要受使用者自己的外掛影響
+        (app, dir)
+    }
+
+    fn wait_for_preview(app: &mut App, id: panes::PaneId, done: impl Fn(&preview::Rendered) -> bool) -> preview::Rendered {
+        let ctx = egui::Context::default();
+        for _ in 0..250 {
+            let _ = app.update_preview(id, &ctx);
+            if let Some(r) = app.previews.get(&id).and_then(|p| p.rendered()) {
+                if done(r) {
+                    return r.clone();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("預覽一直沒有出現");
+    }
+
+    #[test]
+    fn the_preview_button_opens_one_pane_on_the_right_keeps_the_focus_and_toggles_off() {
+        let (mut app, dir) = app_for_preview();
+        app.open_path(&dir.path().join("a.md"));
+        let editor_pane = app.layout.focus;
+        app.toggle_preview();
+        assert_eq!((app.layout.pane_count(), app.tab_pane_count()), (2, 1));
+        let pv = app.preview_id().unwrap();
+        assert!(app.is_preview(pv));
+        assert_eq!(app.layout.root.leaves(), vec![editor_pane, pv], "預覽在右邊");
+        assert_eq!(app.layout.focus, editor_pane, "焦點留在編輯的窗格");
+        // 再按一次關掉（整個程式只有一個預覽窗格，不會越開越多）
+        app.toggle_preview();
+        assert_eq!(app.layout.pane_count(), 1);
+        assert!(app.previews.is_empty() && app.preview_id().is_none());
+        // 目前的文件沒有預覽（.txt、沒存過檔）也照開：預覽窗格會說明，切到有預覽的文件就顯示
+        app.open_path(&dir.path().join("c.txt"));
+        app.toggle_preview();
+        assert_eq!(app.layout.pane_count(), 2);
+        let pv = app.preview_id().unwrap();
+        assert_eq!(app.update_preview(pv, &egui::Context::default()), preview_pane::Status::NoRenderer);
+        app.toggle_preview();
+        app.new_document();
+        app.toggle_preview();
+        assert_eq!(app.layout.pane_count(), 2);
+    }
+    #[test]
+    fn a_preview_pane_renders_in_the_background_follows_edits_and_the_active_tab() {
+        let (mut app, dir) = app_for_preview();
+        app.open_path(&dir.path().join("a.md"));
+        app.toggle_preview();
+        let pv = app.preview_id().unwrap();
+        let r = wait_for_preview(&mut app, pv, |_| true);
+        assert!(matches!(&r, preview::Rendered::Markdown(b) if matches!(&b[0], preview::Block::Heading(1, _))), "{r:?}");
+        // 改了文字：停一下之後預覽跟著更新
+        let at = app.doc.buffer.len_chars();
+        app.doc.buffer.insert(at, "\n\n## 新增的小標題");
+        app.doc.sync();
+        let r = wait_for_preview(&mut app, pv, |r| {
+            matches!(r, preview::Rendered::Markdown(b) if b.iter().any(|x| matches!(x, preview::Block::Heading(2, _))))
+        });
+        assert!(matches!(r, preview::Rendered::Markdown(_)));
+        // 換到沒有預覽的分頁：預覽窗格說沒有預覽；換回來又有
+        let ctx = egui::Context::default();
+        app.open_path(&dir.path().join("c.txt"));
+        assert_eq!(app.update_preview(pv, &ctx), preview_pane::Status::NoRenderer);
+        app.open_path(&dir.path().join("a.md"));
+        assert!(matches!(app.update_preview(pv, &ctx), preview_pane::Status::Ready(_) | preview_pane::Status::Working));
+    }
+
+    #[test]
+    fn dropping_a_tab_on_the_preview_pane_edge_splits_the_preview_pane_but_not_into_it() {
+        let (mut app, dir) = app_for_preview();
+        app.open_path(&dir.path().join("a.md"));
+        app.open_path(&dir.path().join("c.txt"));
+        let a = app.layout.focus;
+        app.switch_tab(0);
+        app.toggle_preview(); // [A][預覽]
+        let pv = app.preview_id().unwrap();
+        // 放進預覽窗格：不行
+        app.move_tab(a, 1, Target::Into(pv));
+        assert_eq!((app.layout.pane_count(), app.tabs.len()), (2, 2), "預覽窗格不收分頁");
+        // 放到預覽窗格的下側：把預覽窗格切開，分頁變成預覽下面的新窗格
+        app.move_tab(a, 1, Target::Split(pv, Side::Bottom));
+        let b = app.layout.focus;
+        assert_ne!(b, a);
+        assert_eq!(app.layout.root.leaves(), vec![a, pv, b], "[A | (預覽 / B)]");
+        assert_eq!(app.tab_pane_count(), 2);
+        assert_eq!(app.doc.name(), "c.txt");
+        // 預覽沒有因為任何窗格被關掉而消失：關掉 A，預覽還在，分頁併進 B
+        app.close_pane(a);
+        assert_eq!(app.tab_pane_count(), 1);
+        assert!(app.preview_id().is_some(), "預覽窗格是獨立的，不跟著某個窗格");
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.layout.pane_count(), 2);
+    }
+
+    #[test]
+    fn a_preview_pane_can_be_dragged_anywhere_and_always_shows_the_focused_document() {
+        let (mut app, dir) = app_for_preview();
+        app.open_path(&dir.path().join("a.md"));
+        app.open_path(&dir.path().join("b.md"));
+        let a = app.layout.focus;
+        app.toggle_preview(); // [A][預覽]
+        let pv = app.preview_id().unwrap();
+        // b.md 拖到下面變成第二個一般窗格：[[A / B] | 預覽]
+        app.move_tab(a, 1, Target::Split(a, Side::Bottom));
+        let b = app.layout.focus;
+        assert_eq!(app.layout.root.leaves(), vec![a, b, pv]);
+        let ctx = egui::Context::default();
+        let heading = |r: &preview::Rendered| match r {
+            preview::Rendered::Markdown(bl) => match bl.first() {
+                Some(preview::Block::Heading(1, s)) => s[0].text.clone(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        };
+        // 焦點在 B（b.md）：預覽就是 b.md
+        let r = wait_for_preview(&mut app, pv, |r| heading(r) == "乙標題");
+        assert_eq!(heading(&r), "乙標題");
+        // 焦點換到 A：預覽跟著換成 a.md
+        app.focus_pane(a);
+        let _ = app.update_preview(pv, &ctx);
+        assert_eq!(app.previews[&pv].source, a);
+        let r = wait_for_preview(&mut app, pv, |r| heading(r) == "甲標題");
+        assert_eq!(heading(&r), "甲標題");
+        // 拖預覽的標題：開始拖曳，放到 B 的左側
+        app.begin_preview_drag(pv);
+        assert!(app.tab_drag.as_ref().is_some_and(|d| d.preview && d.pane == pv));
+        app.move_preview(pv, b, Side::Left);
+        assert_eq!(app.layout.root.leaves(), vec![a, pv, b], "預覽在 B 的左邊");
+        assert_eq!(app.layout.focus, a, "焦點不變");
+        // 再放到 A 的下側
+        app.move_preview(pv, a, Side::Bottom);
+        assert_eq!(app.layout.pane_count(), 3);
+        // 不合法的放法什麼都不做：放到自己、來源不是預覽、放到不存在的窗格
+        let before = app.layout.root.leaves();
+        app.move_preview(pv, pv, Side::Right);
+        app.move_preview(a, b, Side::Right);
+        app.move_preview(pv, 999, Side::Right);
+        assert_eq!(app.layout.root.leaves(), before);
+        assert!(app.is_preview(pv), "放不下也不會讓預覽消失");
+        // 版面存起來再還原：預覽還在同一個位置，而且只有一個
+        let session = session::Session::parse(&app.session_all().to_text());
+        let mut fresh = App::new(None, Settings::default());
+        fresh.preview_plugins.clear();
+        fresh.restore_from(&session);
+        assert_eq!((fresh.layout.pane_count(), fresh.previews.len()), (3, 1));
+        assert_eq!(fresh.layout.root.to_spec(&|id| fresh.is_preview(id)), session.layout.clone().unwrap());
+    }
+    #[test]
+    fn closing_the_last_tab_next_to_a_preview_leaves_a_blank_document_and_keeps_the_preview_pane() {
+        let (mut app, dir) = app_for_preview();
+        app.open_path(&dir.path().join("a.md"));
+        app.toggle_preview();
+        app.close_tab(0);
+        assert_eq!(app.tab_pane_count(), 1);
+        assert_eq!(app.layout.pane_count(), 2, "預覽窗格還在（顯示沒有預覽）");
+        assert!(app.doc.path.is_none());
+        let pv = app.preview_id().unwrap();
+        assert_eq!(app.update_preview(pv, &egui::Context::default()), preview_pane::Status::NoRenderer);
+    }
+
+    /// 三個檔案、兩個窗格、一個預覽窗格：[a.md, c.txt] | [b.md][預覽]，焦點在 b.md 的窗格。
+    fn app_with_three_panes(dir: &std::path::Path) -> App {
+        let mut app = App::new(None, Settings::default());
+        app.preview_plugins.clear();
+        for name in ["a.md", "b.md", "c.txt"] {
+            app.open_path(&dir.join(name));
+        }
+        let first = app.layout.focus;
+        app.move_tab(first, 1, Target::Split(first, Side::Right));
+        app.toggle_preview();
+        app
+    }
+
+    #[test]
+    fn the_pane_layout_comes_back_after_a_restart_with_tabs_carets_focus_and_previews() {
+        let (_app, dir) = app_for_preview();
+        let mut app = app_with_three_panes(dir.path());
+        app.editor.set_caret(&mut app.doc.buffer, 3, false);
+        let before = app.session_all();
+        assert_eq!(before.panes.len(), 2);
+        assert_eq!(before.previews.len(), 1);
+        // 存成文字再讀回來（就是關閉再重開）
+        let session = session::Session::parse(&before.to_text());
+        assert_eq!(session, before);
+
+        let mut fresh = App::new(None, Settings::default());
+        fresh.preview_plugins.clear();
+        fresh.restore_from(&session);
+        assert_eq!((fresh.layout.pane_count(), fresh.tab_pane_count()), (3, 2));
+        assert_eq!(fresh.previews.len(), 1);
+        assert_eq!(fresh.layout.focus, app.layout.focus, "焦點窗格");
+        assert_eq!(fresh.doc.name(), "b.md");
+        assert_eq!(fresh.editor.sel.head, 3, "游標位置");
+        let names = |a: &App| {
+            a.layout
+                .root
+                .leaves()
+                .into_iter()
+                .filter(|id| !a.is_preview(*id))
+                .map(|id| {
+                    let n = if id == a.layout.focus { a.tabs.len() } else { a.layout.others[&id].len() };
+                    (0..n)
+                        .map(|i| if id == a.layout.focus { a.tabs.label(&a.doc, i).0 } else { a.layout.others[&id].label_stashed(i).0 })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&fresh), names(&app));
+        assert_eq!(names(&fresh), vec![vec!["a.md", "c.txt"], vec!["b.md"]]);
+        let pv = *fresh.previews.keys().next().unwrap();
+        assert_eq!(fresh.previews[&pv].source, fresh.layout.focus, "預覽跟著有焦點的窗格（b.md）");
+        // 版面也一樣（比例、分割方向）
+        assert_eq!(fresh.session_all().layout, before.layout);
+        // 還原之後還能正常新增窗格（編號不會撞到舊的）
+        let before_ids = fresh.layout.root.leaves();
+        fresh.move_tab(fresh.layout.focus, 0, Target::Split(fresh.layout.focus, Side::Bottom)); // b.md 只有一個分頁：不動
+        assert_eq!(fresh.layout.root.leaves(), before_ids);
+    }
+
+    #[test]
+    fn restoring_skips_missing_files_and_drops_panes_that_end_up_empty_but_keeps_the_preview() {
+        let (_app, dir) = app_for_preview();
+        let app = app_with_three_panes(dir.path());
+        let session = session::Session::parse(&app.session_all().to_text());
+        // b.md 不見了：它的窗格拿掉，剩下 [a.md, c.txt]；預覽窗格是獨立的，還在
+        std::fs::remove_file(dir.path().join("b.md")).unwrap();
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&session);
+        assert_eq!((fresh.tab_pane_count(), fresh.layout.pane_count()), (1, 2));
+        assert_eq!(fresh.previews.len(), 1);
+        assert_eq!(fresh.tabs.len(), 2);
+        assert_ne!(fresh.layout.focus, session.focus, "原本有焦點的窗格沒了，焦點移到還在的窗格");
+        // c.txt 也不見了：只剩 a.md
+        std::fs::remove_file(dir.path().join("c.txt")).unwrap();
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&session);
+        assert_eq!((fresh.tabs.len(), fresh.doc.name().as_str()), (1, "a.md"));
+        // 全部不見了：什麼都不開，也不會當掉
+        std::fs::remove_file(dir.path().join("a.md")).unwrap();
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&session);
+        assert_eq!((fresh.layout.pane_count(), fresh.tabs.len()), (1, 1));
+        assert!(fresh.doc.path.is_none());
+    }
+
+    #[test]
+    fn an_old_flat_session_still_restores_into_one_pane_and_a_broken_layout_falls_back_to_it() {
+        let (_app, dir) = app_for_preview();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        let old = session::Session::parse(&format!("active = 1\nfile = {}\t0\nfile = {}\t2\n", a.display(), b.display()));
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&old);
+        assert_eq!((fresh.layout.pane_count(), fresh.tabs.len()), (1, 2));
+        assert_eq!(fresh.doc.name(), "b.md", "作用中的分頁");
+        assert_eq!(fresh.editor.sel.head, 2);
+        // 版面文字壞掉：退回單一窗格，檔案還是開起來
+        let mut broken = session::Session::parse(&format!("layout = H0.5[P0\nfocus = 0\npane = 0\nactive = 0\nfile = {}\t0\n", a.display()));
+        broken.focus = 0;
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&broken);
+        assert_eq!((fresh.layout.pane_count(), fresh.doc.name().as_str()), (1, "a.md"));
+    }
+
+    #[test]
+    fn the_preview_font_size_is_adjusted_separately_from_the_editor_font_size() {
+        let ctx = egui::Context::default();
+        let mut app = App::new(None, Settings::default());
+        let editor_size = app.settings.font_size;
+        app.handle(Action::SetPreviewFontSize(20.0), &ctx);
+        assert_eq!(app.settings.preview_font_size, 20.0);
+        assert_eq!(app.settings.font_size, editor_size, "編輯區的字級不受影響");
+        assert!(app.settings_dirty_since.is_some(), "要寫進設定");
+        app.handle(Action::SetPreviewFontSize(9999.0), &ctx);
+        assert_eq!(app.settings.preview_font_size, settings::MAX_FONT_SIZE, "拉回範圍內");
+        app.handle(Action::SetPreviewFontSize(f32::NAN), &ctx);
+        assert_eq!(app.settings.preview_font_size, DEFAULT_PREVIEW_FONT_SIZE, "不是數字就用預覽自己的預設");
+    }
+
+    #[test]
+    fn clicking_the_preview_pane_gives_it_the_input_focus_and_clicking_an_editor_pane_takes_it_back() {
+        let (mut app, dir) = app_for_preview();
+        app.open_path(&dir.path().join("a.md"));
+        app.toggle_preview();
+        let pv = app.preview_id().unwrap();
+        let editor_pane = app.layout.focus;
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)));
+        let frame = |app: &mut App, events: Vec<egui::Event>| {
+            let mut r = raw.clone();
+            r.events = events;
+            let mut output = ctx.run_ui(r, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    app.panes_ui(ui);
+                });
+            });
+            output.textures_delta.clear();
+        };
+        let press = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+            ]
+        };
+        frame(&mut app, vec![]); // 先排一次版面，才知道每個窗格在哪
+        frame(&mut app, vec![]);
+        let rect_of = |app: &App, id| app.pane_rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r).unwrap();
+        assert!(!app.preview_focused, "一開始焦點在編輯區");
+        // 點預覽窗格
+        let pv_rect = rect_of(&app, pv);
+        frame(&mut app, press(pv_rect.center()));
+        assert!(app.preview_focused, "預覽窗格取得輸入焦點");
+        assert_eq!(app.layout.focus, editor_pane, "一般窗格的焦點（預覽跟著它）不變");
+        frame(&mut app, vec![egui::Event::PointerButton { pos: pv_rect.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+        // 點編輯的窗格：焦點回來
+        let ed_rect = rect_of(&app, editor_pane);
+        frame(&mut app, press(ed_rect.center()));
+        assert!(!app.preview_focused);
+        // 換分頁也把焦點交還編輯區
+        app.preview_focused = true;
+        app.new_document();
+        frame(&mut app, vec![]);
+        assert!(!app.preview_focused);
+        // 關掉預覽就沒有預覽焦點這回事
+        app.preview_focused = true;
+        app.close_preview(pv);
+        assert!(!app.preview_focused);
+    }
+
+    #[test]
+    fn tab_in_the_find_bar_only_switches_between_the_search_and_replace_fields() {
+        let mut app = App::new(None, Settings::default());
+        app.find.open = true;
+        let ctx = egui::Context::default();
+        let frame = |app: &mut App, events: Vec<egui::Event>| {
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0)));
+            raw.events = events;
+            let mut output = ctx.run_ui(raw, |ui| {
+                egui::Panel::top("find").show(ui, |ui| {
+                    app.find_bar(ui);
+                });
+                egui::CentralPanel::default().show(ui, |_| {});
+            });
+            output.textures_delta.clear();
+        };
+        let tab = |shift: bool| {
+            vec![egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: Some(egui::Key::Tab),
+                pressed: true,
+                repeat: false,
+                modifiers: if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE },
+            }]
+        };
+        let focus = |ctx: &egui::Context| {
+            (
+                ctx.memory(|m| m.has_focus(find_input_id())),
+                ctx.memory(|m| m.has_focus(replace_input_id())),
+            )
+        };
+        ctx.memory_mut(|m| m.request_focus(find_input_id()));
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        assert_eq!(focus(&ctx), (true, false), "一開始在搜尋框");
+        assert!(!app.find.show_replace);
+        // 取代列收著：Tab 把它展開，並切到取代框
+        frame(&mut app, tab(false));
+        frame(&mut app, vec![]);
+        assert!(app.find.show_replace);
+        assert_eq!(focus(&ctx), (false, true));
+        // 取代框 → 搜尋框
+        frame(&mut app, tab(false));
+        frame(&mut app, vec![]);
+        assert_eq!(focus(&ctx), (true, false));
+        // Shift+Tab 也一樣只在兩個框之間切換，不會跳到別的元件
+        frame(&mut app, tab(true));
+        frame(&mut app, vec![]);
+        assert_eq!(focus(&ctx), (false, true));
+        frame(&mut app, tab(true));
+        frame(&mut app, vec![]);
+        assert_eq!(focus(&ctx), (true, false));
+        // 連按多次，焦點始終在這兩個框其中之一
+        for _ in 0..7 {
+            frame(&mut app, tab(false));
+            frame(&mut app, vec![]);
+            let (f, r) = focus(&ctx);
+            assert!(f ^ r, "焦點跑到別的元件去了");
+        }
+    }
+
+    #[test]
+    fn icon_buttons_drawn_in_mouse_only_mode_are_not_reachable_with_tab() {
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 200.0)));
+        let mut output = ctx.run_ui(raw, |ui| {
+            let normal = icons::small_button(ui, Icon::Close, "x", true);
+            let mouse = icons::mouse_only(|| icons::small_button(ui, Icon::Close, "x", true));
+            assert!(normal.sense.is_focusable(), "一般的按鈕可以用 Tab 聚焦");
+            assert!(!mouse.sense.is_focusable(), "mouse_only 裡的按鈕不行");
+            assert!(mouse.sense.senses_click(), "但還是可以點");
+            let after = icons::small_button(ui, Icon::Close, "x", true);
+            assert!(after.sense.is_focusable(), "離開 mouse_only 就恢復");
+        });
+        output.textures_delta.clear();
     }
 
     #[test]
@@ -3328,13 +3923,15 @@ mod tests {
     }
 
     #[test]
-    fn dropped_files_open_in_tabs_and_skip_folders_and_duplicates() {
+    fn dropped_files_open_in_tabs_and_a_dropped_folder_asks_which_files_to_open() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.txt");
         let b = dir.path().join("b.txt");
         std::fs::write(&a, "aaa").unwrap();
         std::fs::write(&b, "bbb").unwrap();
         let mut app = App::new(None, Settings::default());
+        // 交談窗以拖進來的資料夾為起點；這裡假裝使用者在那個資料夾裡選了 b.txt
+        app.pick_files_in = |dir| vec![dir.join("b.txt")];
         app.open_dropped(vec![
             a.clone(),
             dir.path().to_path_buf(), // 資料夾
@@ -3344,11 +3941,27 @@ mod tests {
         assert_eq!(app.tabs.len(), 2, "a、b 各一個分頁（空白文件被 a 用掉）");
         assert_eq!(app.doc.text(), "bbb", "最後一個成為作用中分頁");
         let warns = app.log.iter().filter(|(kind, _)| *kind == LogKind::Warn).count();
-        assert_eq!(warns, 1, "資料夾提示一次");
+        assert_eq!(warns, 0, "資料夾不再被略過");
         // 再拖一次已經開著的檔案：切過去，不重複開
         app.open_dropped(vec![a.clone()]);
         assert_eq!(app.tabs.len(), 2);
         assert_eq!(app.doc.text(), "aaa");
+    }
+
+    #[test]
+    fn cancelling_the_dialog_for_a_dropped_folder_opens_nothing_and_it_is_asked_once_per_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "aaa").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.pick_files_in = |_| Vec::new(); // 使用者按了取消
+        app.open_dropped(vec![dir.path().to_path_buf()]);
+        assert_eq!(app.tabs.len(), 1);
+        assert!(app.doc.path.is_none(), "什麼都沒開");
+        // 同一個資料夾拖兩次（同一批）只問一次：第二次回傳的檔案如果被開了兩次就會多出分頁
+        app.pick_files_in = |dir| vec![dir.join("a.txt")];
+        app.open_dropped(vec![dir.path().to_path_buf(), dir.path().to_path_buf()]);
+        assert_eq!(app.tabs.len(), 1, "只開了一次（空白文件被用掉）");
+        assert!(app.doc.path.is_some());
     }
 
     #[test]
@@ -3719,6 +4332,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx, settings.font_family.as_deref());
+            egui_extras::install_image_loaders(&cc.egui_ctx); // 預覽 SVG 與 Markdown 圖片用
             cc.egui_ctx.set_theme(settings.theme);
             // 關掉 egui 內建的「Ctrl ＋／－ 縮放整個介面」：我們的 Ctrl ＋／－ 是調整編輯區字級
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);

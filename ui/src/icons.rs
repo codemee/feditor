@@ -26,6 +26,7 @@ pub enum Icon {
     ChevronUp,
     ChevronDown,
     ChevronRight,
+    ChevronLeft,
     Close,
     /// 配色：跟隨系統（半黑半白的圓）。
     ThemeSystem,
@@ -59,6 +60,8 @@ pub enum Icon {
     Rename,
     /// 關閉窗格（窗格外框裡一個 ×）。
     ClosePane,
+    /// 預覽（眼睛）。
+    Preview,
     /// 介面語言：跟隨系統（地球）。
     LangSystem,
     /// 介面語言：中文（「中」字）。
@@ -120,6 +123,19 @@ pub fn small_toggle_rich(
     widget(ui, icon, label, true, on, Size::Small).on_hover_ui(tooltip)
 }
 
+// 圖示按鈕能不能用 Tab 鍵聚焦（預設可以）。只在畫面執行緒用，由 `mouse_only` 暫時關掉。
+thread_local! {
+    static TAB_FOCUSABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// 在 `f` 裡畫出來的圖示按鈕都不能用 Tab 鍵聚焦，只能用滑鼠點（例如尋找列：Tab 只留給兩個輸入框）。
+pub fn mouse_only<R>(f: impl FnOnce() -> R) -> R {
+    let before = TAB_FOCUSABLE.replace(false);
+    let result = f();
+    TAB_FOCUSABLE.set(before);
+    result
+}
+
 /// 配置並繪製按鈕本體，不含 tooltip（由各個包裝函式決定 tooltip 的形式）。
 fn widget(
     ui: &mut Ui,
@@ -130,7 +146,12 @@ fn widget(
     size: Size,
 ) -> Response {
     let (button_px, icon_px) = size.px();
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    // `Sense::click()` 同時是「可以用 Tab 聚焦」的；只能用滑鼠點的按鈕改用 `Sense::CLICK`
+    let sense = match (enabled, TAB_FOCUSABLE.get()) {
+        (false, _) => Sense::hover(),
+        (true, true) => Sense::click(),
+        (true, false) => Sense::CLICK,
+    };
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(button_px), sense);
     response.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, tip));
 
@@ -294,9 +315,16 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         Icon::ChevronUp => line(&[(3.5, 10.5), (8.0, 6.0), (12.5, 10.5)]),
         Icon::ChevronDown => line(&[(3.5, 6.0), (8.0, 10.5), (12.5, 6.0)]),
         Icon::ChevronRight => line(&[(6.0, 3.5), (10.5, 8.0), (6.0, 12.5)]),
+        Icon::ChevronLeft => line(&[(10.0, 3.5), (5.5, 8.0), (10.0, 12.5)]),
         Icon::Close => {
             line(&[(3.5, 3.5), (12.5, 12.5)]);
             line(&[(12.5, 3.5), (3.5, 12.5)]);
+        }
+        Icon::Preview => {
+            // 眼睛：上下眼瞼的弧線加瞳孔
+            line(&[(1.2, 8.0), (4.2, 4.8), (8.0, 3.4), (11.8, 4.8), (14.8, 8.0)]);
+            line(&[(1.2, 8.0), (4.2, 11.2), (8.0, 12.6), (11.8, 11.2), (14.8, 8.0)]);
+            painter.circle_stroke(p(8.0, 8.0), 2.4 * s, stroke);
         }
         Icon::LangSystem => {
             // 地球：圓、赤道、一條直的子午線（橢圓）與上下兩條緯線

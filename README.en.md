@@ -11,7 +11,7 @@ A cross-platform text editor with scripting macros, modeled after EmEditor. Writ
 | `core/` | `feditor-core`: text buffer (ropey) with undo/redo, file encodings, search, line wrapping, search in files, and the interface language (Chinese/English table). Independent of the UI and macro engines |
 | `script/` | `feditor-script`: language-agnostic macro API (`EditorApi`, `ScriptEngine`) |
 | `script-js/` | `feditor-script-js`: JavaScript macro engine (QuickJS via rquickjs) |
-| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs and split panes (`panes.rs`, `pane_ops.rs`), macro library, syntax highlighting, and session restore |
+| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs and split panes (`panes.rs`, `pane_ops.rs`), preview (`preview*.rs`), macro library, syntax highlighting, and session restore |
 | `examples/` | Example macros (`macros/`) and test files in various encodings (`files/`) |
 | `proto/` | Standalone IME verification prototypes (egui, iced, Slint); not part of the main workspace |
 
@@ -25,17 +25,19 @@ Operations are **toolbar buttons**; there are no menus. Buttons show icons only;
 | Find & Replace | Ctrl+F (replace: Ctrl+H), F3 / Shift+F3 | Opens the find bar with regular expression, case-sensitive, and whole-word options |
 | Find in Files | Ctrl+Shift+F | Search all text files under a folder; clicking a result opens it and selects the match (see below) |
 | Settings (⋯, far right) | | Interface language (follow system / 中文 / English), appearance (follow system / light / dark), a separate color scheme for light and for dark, font (monospace fonts only), font size, display options (line numbers, current line, whitespace, syntax coloring, word wrap) |
-| Font size | Ctrl +/−, Ctrl+wheel, Ctrl+0 | Adjusts the editor font size; synced with the settings panel |
+| Font size | Ctrl +/−, Ctrl+wheel, Ctrl+0 | Adjusts the editor font size; synced with the settings panel. When the preview pane is clicked, it adjusts the preview font size instead (the "Preview font size" in the "Preview" group of the settings panel) |
 | Macro panel / Rerun | F5 (rerun) | The panel lists your macros: run, set a shortcut, edit, delete; all changes are rolled back if a macro fails |
 | Record Macro | | Start/stop recording: keys and typing are recorded into a macro that can be replayed |
 | Tab bar | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | Shown only when two or more files are open; click to switch, middle-click or × to close (the × only appears when the pointer is over the tab), **double-click a tab to rename the file**, **drag a tab to split the pane** (see below); unsaved tabs have a "●" after the name |
+| Preview (eye) | Ctrl+Shift+P | Opens a preview pane (only one in the whole program, shared by all documents); press again to close it (see below) |
+| When tabs do not fit (both sides and the right end of each pane's tab bar) | | No scrollbar: a thin-line `<` and `>` arrow on each side scrolls the tabs (the mouse wheel works too), and the `v` "Choose a tab" dropdown on the right lists every tab of the pane so you can pick one directly; switching tabs scrolls the bar to the active one |
 | Close pane (right end of each pane's tab bar) | | Only present when there are several panes; the pane's tabs move to the neighbouring pane |
 | Clear Output (top right of the output pane) | | Clear macro output and messages |
 | Language, Encoding (with BOM), Line ending (right side of the status bar) | | Shows and changes the save format. In the encoding list, "with BOM" for UTF-8 and UTF-16 is its own entry: UTF-8, UTF-8 BOM, Big5, GBK, Shift_JIS, EUC-KR, UTF-16LE BOM, UTF-16LE, UTF-16BE BOM, UTF-16BE |
 | Reload (right side of the status bar) | | Re-read the current file with a specific encoding when auto-detection is wrong |
 | Caret position, shown as "行 X，欄 Y" (line X, column Y; right side of the status bar, left of the language) | | Both start at 1. In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns; choose in the settings panel under "欄號" (column number) (default 1; a Tab counts as 1) |
 
-The left side of the status bar shows the file path and whether it is unsaved; the right side holds the format settings of this file. Together they make up the file status. You can also open a file from the command line, `feditor <path>`, or drag files from the file manager into the window (several at once, one tab each; a file that is already open is switched to; folders are skipped).
+The left side of the status bar shows the file path and whether it is unsaved; the right side holds the format settings of this file. Together they make up the file status. You can also open a file from the command line, `feditor <path>`, or drag files from the file manager into the window (several at once, one tab each; a file that is already open is switched to). If you drop a **folder**, the Open File dialog is shown starting in that folder so you can pick which files to open (multi-select; cancel opens nothing).
 
 Above the status bar is the **output panel**, which holds file-opening messages, warnings, errors, and macro output. It is collapsed to a single line by default (showing only the latest message); use the arrow on the left to expand or collapse it. The expanded height can be dragged, and the expanded/collapsed state is remembered. If an error or macro output arrives while it is collapsed, the panel pops open temporarily so you do not miss it.
 
@@ -49,9 +51,35 @@ Above the status bar is the **output panel**, which holds file-opening messages,
   - The pane with an accent line on top has the **focus** (click in a pane to change it); find, save, macros, and the status bar all act on its current tab.
   - Closing the last tab of a pane closes the pane too; you can also press the button at the right end of a pane's tab bar to close the pane, and its tabs (including unsaved changes) move to the neighbouring pane, so no document is closed.
   - Press Esc while dragging to cancel. There is no "top" split for now, and tabs cannot be reordered by dragging within the same pane.
-- **Session**: when started without a file argument, the files that were open last time (and their caret positions) are reopened. It is stored in `session.conf` in the settings folder; blank never-saved documents are not recorded. The pane layout is not saved; next time everything opens in a single pane.
+- **Session**: when started without a file argument, the files that were open last time (and their caret positions) are reopened. It is stored in `session.conf` in the settings folder; blank never-saved documents are not recorded. **The pane layout is remembered too**: after closing and reopening, every pane (with its own tabs, active tab, caret positions, divider ratios, the focused pane, and preview panes) comes back; files that no longer exist are skipped, and a pane with no file left to open does not reappear.
 - **External change detection**: when another program modifies a file (checked when the window regains focus and once per second for the active file of the focused pane), a document without unsaved changes is reloaded automatically with the caret kept; otherwise you are asked whether to reload, and choosing to keep your version means you are not asked again.
 
+### Preview
+
+Some text files can be shown in a different form. The **eye** button on the toolbar (Ctrl+Shift+P) opens a **preview pane** to the right of the current pane, showing a preview of the **focused document**; it follows pane switches, tab switches, and edits (it re-renders 0.3 s after you stop typing, in the background, so the UI never freezes). Built in:
+
+| File | What you see |
+|---|---|
+| Markdown (`.md`, `.markdown`) | Headings, bold / italic / strikethrough, inline code, links (URLs are clickable), lists (nested, with task checkboxes), quotes, code blocks, tables, rules, and local images (relative paths are resolved against the file's folder; nothing is fetched from the network). Of the raw HTML, only `<kbd>` (drawn as a key), `<picture>` / `<img>` (a `<picture>` picks the `<source media="(prefers-color-scheme: dark)">` or `light` image to match the current dark or light theme, like GitHub), and `<br>` are understood; other tags, `<script>`, `<style>`, and comments are skipped |
+| CSV, TSV | A table, the first row as the header, resizable columns; only the first 5000 rows are shown |
+| JSON, TOML, YAML | A collapsible tree with colors for strings, numbers, and booleans; on a syntax error, the line and column of the error |
+| SVG | The drawing itself, updating as you edit |
+
+- There is only **one** preview pane in the whole program, shared by all documents: it always shows the focused document, is not tied to any pane, and stays when other panes are closed. It is a rounded card like the others, with its own title bar and close button; it can be resized and **dragged anywhere in the layout**: drag its title to the left, right, or bottom of another pane; conversely, **drag a tab onto the preview pane**'s left, right, or bottom edge to split the preview pane (the tab becomes a new pane next to it), while dropping into the middle does nothing because the preview pane takes no tabs. A preview shows where it will land, and Esc cancels. **The preview pane can take the input focus too**: click it (its border turns to the accent color) and Ctrl + / −, Ctrl + wheel, and Ctrl + 0 adjust the preview font size (independent of the editor font size); click an editor pane or switch tabs and the focus returns to the editor. The file needs an extension (unsaved documents have no preview), files over 5 MB are not previewed, and a preview cannot be opened when the pane is too narrow to hold two minimum-size panes.
+- **Preview plugins**: to preview other file types, write a JavaScript plugin and put it in the `previews` folder under the config directory (Windows `%APPDATA%\feditor\previews\`; the "Preview folder" button in the "Preview" group of the settings panel opens it), one `*.js` file per plugin; they are **re-read whenever the settings panel opens**. See `examples/previews/` (a log-file table, an INI tree, a to-do list). Plugins run in the same sandbox as macros (time and memory limits, no file or network access, and no `editor`), so installing someone else's plugin is safe.
+  - The header is declared in `//` comments: `@name` (optional, defaults to the file name), `@extensions` (the extensions it handles, comma-separated, case-insensitive, required), and `@output` (how to show the result, required).
+  - A plugin defines a global function `preview(text, info)`: `text` is the whole file, and `info` is `{ path, name, ext }` (empty for unsaved documents). What it returns depends on `@output`:
+
+    | `@output` | Return | Shown as |
+    |---|---|---|
+    | `markdown` | a Markdown string | like the built-in Markdown preview |
+    | `table` | `{ header: [...], rows: [[...], ...] }` | a table |
+    | `tree` | any JSON value (object, array, ...) | a collapsible tree |
+    | `svg` | an SVG string | a drawing |
+    | `text` | a string | monospaced text |
+
+  - When a plugin handles an extension, it takes priority over the built-in preview (so you can even replace the built-in Markdown preview). Plugin errors (no `preview` function, an exception, a timeout, a wrong return shape, ...) are shown in the preview pane; a plugin with a bad header is skipped and the reason is shown in the output panel.
+  - For now a plugin can only choose among these output forms, and calling external programs is not supported.
 ### Appearance
 
 The "⋯" button at the far right of the toolbar opens **Settings**: interface language, appearance and color schemes, font, and font size.
@@ -120,6 +148,7 @@ The editor area is **custom-drawn** (`ui/src/editor/`) instead of using egui's b
 - Current limits: a single extremely long line (hundreds of thousands of characters) gets slow; vertical scroll positions beyond roughly 1,000,000 lines are limited by f32 precision (a measured 4,000,000-line, 346 MB file opens in about 4.5 s and uses about 840 MB; it is usable, but the spacing between rows visibly jitters); and while a Windows IME has focus, some Ctrl+Alt+letter combinations are swallowed by the IME and never reach the editor.
 ### Find & Replace
 
+- **The keyboard only serves the two input fields**: pressing Tab (or Shift+Tab) in the search or replace field only switches between those two fields (and expands the replace row if it is collapsed); all the other buttons (options, previous / next, replace, close, ...) are mouse-only by default and are never reached by Tab.
 - Three options: regular expression, case-sensitive (off by default), and whole word. Search is live while you type and shows "n / total"; when nothing is left in one direction it wraps around and shows "wrapped".
 - Hovering the "regular expression" button shows a syntax cheat sheet and a link to the full documentation (<https://docs.rs/regex/latest/regex/#syntax>); the tooltip stays open when the pointer moves onto it, so the link can be clicked.
 - **Regular expressions** use the Rust `regex` syntax (guaranteed linear time, so a badly written pattern cannot hang the editor); `^` and `$` work per line. In the replacement, `$1` and `${name}` insert capture groups, `\n` and `\t` mean newline and tab, and a literal `$` is written `$$`.

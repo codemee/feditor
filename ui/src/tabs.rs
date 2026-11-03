@@ -6,8 +6,6 @@
 use crate::document::Document;
 use feditor_core::i18n::t;
 use crate::editor::model::EditorState;
-#[cfg(test)]
-use crate::session::Session;
 use std::path::Path;
 
 #[derive(Default)]
@@ -247,21 +245,6 @@ impl TabSet {
                 d.path.as_ref().map(|p| (p.clone(), e.sel.head, i == self.active))
             })
             .collect()
-    }
-
-    /// 目前開著哪些檔案（只算有存過檔的分頁）與各自的游標位置，用來記住工作階段。
-    /// 實際存檔用的是跨窗格的 App::session_all；這個只算單一分頁集，測試用。
-    #[cfg(test)]
-    pub fn session(&self, doc: &Document, editor: &EditorState) -> Session {
-        let mut files = Vec::new();
-        let mut active = 0;
-        for (path, caret, is_active) in self.session_entries(Some((doc, editor))) {
-            if is_active {
-                active = files.len();
-            }
-            files.push((path, caret));
-        }
-        Session { files, active }
     }
 
     /// 有未儲存修改的分頁編號。
@@ -564,8 +547,9 @@ mod tests {
         f.tabs.push(&mut f.doc, &mut f.editor, named("untitled"));
         f.tabs.push(&mut f.doc, &mut f.editor, Document::open(&b).unwrap().0);
         f.editor.sel.head = 3;
-        let s = f.tabs.session(&f.doc, &f.editor);
-        assert_eq!(s.files, vec![(a, 2), (b, 3)], "沒存過的分頁不記");
-        assert_eq!(s.active, 1);
+        let entries = f.tabs.session_entries(Some((&f.doc, &f.editor)));
+        let files: Vec<_> = entries.iter().map(|(p, c, _)| (p.clone(), *c)).collect();
+        assert_eq!(files, vec![(a, 2), (b, 3)], "沒存過的分頁不記");
+        assert_eq!(entries.iter().position(|e| e.2), Some(1), "作用中的是第二個存過檔的分頁");
     }
 }

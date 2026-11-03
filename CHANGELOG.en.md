@@ -2,6 +2,29 @@
 
 # Changelog
 
+## [0.1.5] - 2026-11-03
+
+### Added
+- **Preview**: the "eye" button on the toolbar (Ctrl+Shift+P) opens a preview pane (there is only one in the whole program, shared by all documents), following the focused document, its tab, and its text. Built in: Markdown, CSV/TSV (tables), JSON/TOML/YAML (collapsible trees, with the line and column of errors), and SVG.
+- **Preview plugins**: `previews/*.js` in the config folder (the settings panel has a "Preview folder" button). Plugins run in the macro sandbox, declare `@extensions` and `@output` (`markdown`, `table`, `tree`, `svg`, `text`), and define `preview(text, info)`. Examples included: a log-file table, an INI tree, and a to-do list.
+- **The pane layout is remembered**: after closing and reopening, every pane (its tabs, active tab, caret, divider ratios, focus, and preview panes) comes back; files that no longer exist are skipped, and a pane with no file left to open does not reappear.
+- **Markdown preview understands the HTML `<kbd>`, `<picture>`, `<img>`, and `<br>`**: `<kbd>` is drawn as a key; `<picture>` picks the image for the dark or light theme (like GitHub). Other HTML is still not rendered.
+- **The preview pane can take the input focus**: click it and the zoom shortcuts (Ctrl + / −, Ctrl + wheel, Ctrl + 0) adjust the preview font size, independent of the editor font size (the "Preview" group of the settings panel gains a "Preview font size"); click an editor pane or switch tabs and the focus returns to the editor.
+- **The preview pane can be dragged anywhere in the layout like any other pane**: drag its title to the left, right, or bottom of another pane; you can also drag a tab onto the left, right, or bottom of the preview pane to split the preview pane. The preview pane is no longer tied to one pane, so it stays when other panes are closed.
+- **A "Choose a tab" dropdown in the tab bar** lists all the tabs of the pane; pick one to switch to it.
+
+### Fixed
+- Tables in the Markdown preview had very narrow columns, with text squeezed to one character per line or cut off: column widths now follow the content, and only when the table does not fit are the wider columns shrunk proportionally, with the text wrapping inside the cells.
+- A big blank gap appeared above tables in the Markdown preview: a `<picture>` / `<img>` inside a table cell was treated as a standalone block and moved above the table, and `width` / `height` were ignored. Images can now appear inside table cells, paragraphs, and headings (inline) and honor `width` / `height` (for example 24-pixel toolbar icons).
+- In Markdown preview tables, columns did not line up between rows when the images in one column had different widths: each row was laid out on its own while the column width came from an estimate, so an image wider than the estimate pushed the rest of that row out of place. Column widths are now estimated from the real width in the image file header (counted up to 240 pixels), images in cells are always scaled down to fit the column, and every cell sits at a fixed position computed from the column widths, so content that overflows can never push other columns around.
+- Code blocks, inline code, and `<kbd>` in the Markdown preview were much bigger than the body text: the preview drew monospaced text at the editor font size, which went out of balance as soon as the editor font size was raised. The preview's monospaced text is now derived from the body font size and no longer depends on the editor font size.
+
+### Changed
+- In the find bar, Tab now only switches between the search and replace fields (and expands the replace row if it is collapsed); the other buttons (options, previous / next, replace, close, ...) are mouse-only and are never reached by Tab.
+- The separator line under the toolbar is gone (the border at the top of the panes already separates them), and the panes now sit right under the toolbar instead of leaving a big gap.
+- When tabs do not fit, the thick scrollbar is gone; thin-line `<` and `>` arrows on both sides scroll the tabs instead (the mouse wheel works too), and switching tabs scrolls the bar to the active one.
+- Dropping a **folder** into the window now shows the Open File dialog starting in that folder so you can pick which files to open (it used to be skipped with a warning).
+
 ## [0.1.4] - 2026-11-02
 
 ### Changed
@@ -67,6 +90,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.1.5]: https://github.com/codemee/feditor/releases/tag/v0.1.5
 [0.1.4]: https://github.com/codemee/feditor/releases/tag/v0.1.4
 [0.1.3]: https://github.com/codemee/feditor/releases/tag/v0.1.3
 [0.1.2]: https://github.com/codemee/feditor/releases/tag/v0.1.2
