@@ -2,7 +2,11 @@
 
 # Changelog
 
-## Unreleased
+## [0.2.1] - 2026-11-03
+
+### Changed
+- **The Windows release is now a single `feditor-windows-x64.exe`**: no zip any more, just download and run it. The C runtime is linked statically, so the Visual C++ redistributable does not need to be installed.
+- The ends of the status bar and the output panel line up with the outer edges of the pane cards instead of sticking out past the rounded frames.
 
 ### Added
 - **Mouse reporting in the terminal**: when a program (vim, htop and the like) asks for mouse reporting with sequences such as `ESC[?1000h`, presses, releases, drags and the wheel are sent to it; holding Shift still lets you select text.
@@ -111,6 +115,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0
 [0.1.5]: https://github.com/codemee/feditor/releases/tag/v0.1.5
 [0.1.4]: https://github.com/codemee/feditor/releases/tag/v0.1.4

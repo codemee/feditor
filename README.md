@@ -14,7 +14,7 @@
 
 到 [Releases](https://github.com/codemee/feditor/releases) 下載對應平台的壓縮檔：
 
-- **Windows**：解壓縮後執行 `feditor.exe`。
+- **Windows**：下載 `feditor-windows-x64.exe`，直接執行（單一檔案，不需要安裝，也不用解壓縮）。
 - **macOS**（Apple Silicon）：下載 `feditor-macos.dmg`，開啟後把 `FEditor.app` 拖到旁邊的「應用程式」捷徑。沒有公證，第一次開啟要在 Finder 對它按右鍵 →「打開」，或執行 `xattr -dr com.apple.quarantine FEditor.app`。
 - **Linux**：解壓縮後執行 `./feditor`。
 

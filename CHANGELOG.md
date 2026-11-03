@@ -2,7 +2,11 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.2.1] - 2026-11-03
+
+### 變更
+- **Windows 的發佈檔改成單一 `feditor-windows-x64.exe`**：不再是 zip，下載後直接執行。C 執行階段改成靜態連結，不需要另外安裝 Visual C++ 可轉散發套件。
+- 狀態列與輸出面板的左右兩端對齊窗格卡片的外緣，不再比圓角框更寬。
 
 ### 新增
 - **終端機的滑鼠回報**：程式（vim、htop 這類）用 `ESC[?1000h` 等序列要求滑鼠回報時，滑鼠按下、放開、拖曳與滾輪會送給程式；按住 Shift 仍然可以選取文字。
@@ -111,6 +115,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0
 [0.1.5]: https://github.com/codemee/feditor/releases/tag/v0.1.5
 [0.1.4]: https://github.com/codemee/feditor/releases/tag/v0.1.4

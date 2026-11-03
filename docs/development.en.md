@@ -37,7 +37,7 @@ cargo run --release -p feditor                  # start the editor
 
 ## Releasing
 
-- The GitHub Actions configuration is in `.github/workflows/`: on a push to `main` CI runs the tests and the build on Windows, macOS and Linux; pushing a `vX.Y.Z` tag triggers the Release workflow, which produces `feditor-windows-x64.zip`, `feditor-macos.dmg` and `feditor-linux-x64.tar.gz`.
+- The GitHub Actions configuration is in `.github/workflows/`: on a push to `main` CI runs the tests and the build on Windows, macOS and Linux; pushing a `vX.Y.Z` tag triggers the Release workflow, which produces `feditor-windows-x64.exe` (a single exe with the C runtime linked statically, configured in `.cargo/config.toml`), `feditor-macos.dmg` and `feditor-linux-x64.tar.gz`.
 - To release a new version: update the version in `Cargo.toml` (the workspace and the dependency versions between crates), turn "Unreleased" in the CHANGELOG into the new version with a date and add the link, wait for CI to pass, tag it, and then add bilingual release notes to the Release.
 - The macOS build is not notarized, only ad-hoc signed, and Apple Silicon only; CI checks that the `.app` and `.dmg` are packaged completely.
 

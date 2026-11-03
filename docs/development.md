@@ -37,7 +37,7 @@ cargo run --release -p feditor                  # 啟動編輯器
 
 ## 發佈
 
-- GitHub Actions 設定在 `.github/workflows/`：推到 `main` 時 CI 在 Windows、macOS、Linux 都跑測試與建置；推送 `vX.Y.Z` 標籤會觸發 Release 工作流程，產生 `feditor-windows-x64.zip`、`feditor-macos.dmg`、`feditor-linux-x64.tar.gz`。
+- GitHub Actions 設定在 `.github/workflows/`：推到 `main` 時 CI 在 Windows、macOS、Linux 都跑測試與建置；推送 `vX.Y.Z` 標籤會觸發 Release 工作流程，產生 `feditor-windows-x64.exe`（單一 exe，C 執行階段靜態連結，設定在 `.cargo/config.toml`）、`feditor-macos.dmg`、`feditor-linux-x64.tar.gz`。
 - 發佈新版本：更新 `Cargo.toml` 的版本號（工作區與各 crate 之間的相依版本）、把 CHANGELOG 的「未發布」改成新版本與日期並補上連結、等 CI 通過、打標籤、再為 Release 補上中英文的版本說明。
 - macOS 版沒有 Apple 公證，只有 ad-hoc 簽章，且只有 Apple Silicon 版；CI 會檢查 `.app` 與 `.dmg` 是否打包完整。
 

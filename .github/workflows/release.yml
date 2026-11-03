@@ -18,7 +18,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            asset: feditor-windows-x64.zip
+            asset: feditor-windows-x64.exe
           - os: macos-latest
             asset: feditor-macos.dmg
           - os: ubuntu-latest
@@ -35,10 +35,10 @@ jobs:
             libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev libfontconfig1-dev
       - name: 建置
         run: cargo build --release -p feditor
-      - name: 打包（Windows）
+      - name: 打包（Windows）：單一 exe，不壓縮
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path target/release/feditor.exe, README.md, README.en.md -DestinationPath ${{ matrix.asset }}
+        run: Copy-Item target/release/feditor.exe ${{ matrix.asset }}
       - name: 打包（macOS）：FEditor.app → .dmg
         if: runner.os == 'macOS'
         run: |

@@ -1,0 +1,3 @@
+# Windows（MSVC）：把 C 執行階段靜態連結進 exe，發佈的單一 feditor.exe 不需要另外安裝 Visual C++ 可轉散發套件。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

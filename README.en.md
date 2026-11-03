@@ -14,7 +14,7 @@ A cross-platform text editor with scripting macros, modeled after EmEditor and w
 
 Download the archive for your platform from [Releases](https://github.com/codemee/feditor/releases):
 
-- **Windows**: unzip and run `feditor.exe`.
+- **Windows**: download `feditor-windows-x64.exe` and run it (a single file: no installation and nothing to unzip).
 - **macOS** (Apple Silicon): download `feditor-macos.dmg`, open it, and drag `FEditor.app` onto the "Applications" shortcut next to it. It is not notarized, so the first time you open it, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
 - **Linux**: unpack and run `./feditor`.
 
