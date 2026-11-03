@@ -80,6 +80,13 @@ Some text files can be shown in a different form. The **eye** button on the tool
 
   - When a plugin handles an extension, it takes priority over the built-in preview (so you can even replace the built-in Markdown preview). Plugin errors (no `preview` function, an exception, a timeout, a wrong return shape, ...) are shown in the preview pane; a plugin with a bad header is skipped and the reason is shown in the output panel.
   - For now a plugin can only choose among these output forms, and calling external programs is not supported.
+### Terminal
+
+- The `>_` toolbar button (`` Ctrl+` ``) opens a terminal pane below the focused pane, running the system's default shell (`$SHELL` on Unix; on Windows PowerShell 7 first, then Windows PowerShell, then cmd). It starts in the folder of the current document. `` Ctrl+` `` switches focus between the editor and the terminal; the pane closes when the shell exits (type `exit`) or you press its close button.
+- The pseudo-terminal and escape sequences (colors, cursor movement, full-screen programs) are handled by `alacritty_terminal`. Like the preview pane, a terminal pane holds no tabs and can be dragged anywhere in the layout; the remembered pane layout does not include terminals.
+- Input: ordinary keys, arrows and function keys, Ctrl+letter (Ctrl+C copies when text is selected, otherwise interrupts), paste (bracketed paste mode), and IME; mouse drag selects and the wheel scrolls (in full-screen programs the wheel sends arrow keys).
+- Not yet: mouse reporting to programs, clickable links, search, several terminals as tabs, an independent font size (it uses the editor's monospace font).
+
 ### Appearance
 
 The "⋯" button at the far right of the toolbar opens **Settings**: interface language, appearance and color schemes, font, and font size.

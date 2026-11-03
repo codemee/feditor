@@ -60,6 +60,8 @@ pub enum Icon {
     Rename,
     /// 關閉窗格（窗格外框裡一個 ×）。
     ClosePane,
+    /// 終端機（提示字元 >_）。
+    Terminal,
     /// 預覽（眼睛）。
     Preview,
     /// 介面語言：跟隨系統（地球）。
@@ -319,6 +321,11 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         Icon::Close => {
             line(&[(3.5, 3.5), (12.5, 12.5)]);
             line(&[(12.5, 3.5), (3.5, 12.5)]);
+        }
+        Icon::Terminal => {
+            // 提示字元：向右的 > 加底線
+            line(&[(3.0, 4.5), (7.2, 8.0), (3.0, 11.5)]);
+            line(&[(8.8, 12.0), (13.0, 12.0)]);
         }
         Icon::Preview => {
             // 眼睛：上下眼瞼的弧線加瞳孔

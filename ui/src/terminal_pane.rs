@@ -1,0 +1,475 @@
+//! 終端機窗格：App 這一側的管理（開關、焦點、輸入）與畫面。shell 與跳脫序列的處理在 `terminal.rs`。
+//!
+//! 終端機窗格和預覽窗格一樣不放分頁（[`App::is_preview`] 對兩者都回傳 `true`），可以拖到版面的任何位置。
+//! 鍵盤焦點用 egui 的焦點機制：點一下終端機畫面，它的元件拿到焦點，這一幀開頭把所有按鍵、文字、
+//! 複製貼上事件從輸入裡取走、送給 shell，編輯區與全域快捷鍵就不會收到。
+
+use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::TermMode;
+use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::vte::ansi::{Color, NamedColor};
+use eframe::egui::{self, Color32};
+use feditor_core::i18n::t;
+use feditor_core::tf;
+
+use crate::panes::{PaneId, Side as PaneSide};
+use crate::terminal::{self, GridSize, Terminal};
+use crate::{App, LogKind};
+
+/// 開關終端機。不用 Ctrl+C／V／D 等 shell 要用的鍵。
+pub const TOGGLE_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Backtick);
+
+pub struct TerminalPane {
+    /// 還沒開 shell（第一次畫的時候才知道有幾格）。開失敗時是錯誤訊息。
+    term: Option<Terminal>,
+    error: Option<String>,
+    /// shell 的起始資料夾。
+    dir: Option<std::path::PathBuf>,
+    /// 下一個畫面要把鍵盤焦點給它。
+    want_focus: bool,
+    /// 滑鼠滾輪累積的捲動量（行）。
+    scroll_acc: f32,
+}
+
+impl TerminalPane {
+    pub fn new(dir: Option<std::path::PathBuf>) -> Self {
+        Self { term: None, error: None, dir, want_focus: true, scroll_acc: 0.0 }
+    }
+
+    fn title(&self) -> String {
+        self.term.as_ref().and_then(Terminal::title).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| t("終端機").to_owned())
+    }
+}
+
+pub(crate) fn widget_id(id: PaneId) -> egui::Id {
+    egui::Id::unique(("terminal_widget", id))
+}
+
+impl App {
+    /// 終端機窗格的編號（目前只開一個）。
+    pub(crate) fn terminal_id(&self) -> Option<PaneId> {
+        self.terminals.keys().min().copied()
+    }
+
+    /// 在有焦點的窗格下方開一個終端機。窗格太小放不下就提示。
+    fn open_terminal(&mut self) {
+        let focus = self.layout.focus;
+        let rect = self.pane_rects.iter().find(|(id, _)| *id == focus).map(|(_, r)| *r);
+        if rect.is_some_and(|r| !crate::panes::can_split(r, PaneSide::Bottom)) {
+            self.push(LogKind::Warn, t("窗格太小，放不下終端機"));
+            return;
+        }
+        let id = self.layout.alloc_id();
+        if self.layout.root.split(focus, PaneSide::Bottom, id) {
+            let dir = self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            self.terminals.insert(id, TerminalPane::new(dir.or_else(|| std::env::current_dir().ok())));
+        }
+    }
+
+    pub(crate) fn close_terminal(&mut self, id: PaneId) {
+        if self.terminals.remove(&id).is_some() {
+            self.layout.root.remove(id);
+            self.pending_editor_focus = true;
+        }
+    }
+
+    /// 工具列的終端機鈕：已經有就關掉（shell 跟著結束），沒有就開一個。
+    pub(crate) fn toggle_terminal(&mut self) {
+        match self.terminal_id() {
+            Some(id) => self.close_terminal(id),
+            None => self.open_terminal(),
+        }
+    }
+
+    /// 快捷鍵：沒有終端機就開；有的話在編輯區與終端機之間切換焦點。
+    pub(crate) fn focus_terminal_shortcut(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.terminal_id() else {
+            self.open_terminal();
+            return;
+        };
+        if ctx.memory(|m| m.has_focus(widget_id(id))) {
+            self.pending_editor_focus = true;
+        } else if let Some(p) = self.terminals.get_mut(&id) {
+            p.want_focus = true;
+        }
+    }
+
+    /// shell 結束了（使用者輸入 exit）：關掉窗格。
+    pub(crate) fn reap_terminals(&mut self) {
+        let done: Vec<PaneId> = self.terminals.iter().filter(|(_, p)| p.term.as_ref().is_some_and(Terminal::exited)).map(|(id, _)| *id).collect();
+        for id in done {
+            self.close_terminal(id);
+        }
+    }
+
+    /// 終端機有鍵盤焦點時，把這一幀的按鍵等輸入事件從 egui 取走，送給 shell。要在其他快捷鍵處理之前呼叫。
+    pub(crate) fn terminal_input(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.terminals.keys().copied().find(|id| ctx.memory(|m| m.has_focus(widget_id(*id)))) else {
+            return;
+        };
+        let Some(term) = self.terminals.get(&id).and_then(|p| p.term.as_ref()) else { return };
+        let mut taken: Vec<egui::Event> = Vec::new();
+        ctx.input_mut(|i| {
+            i.events.retain(|e| {
+                let mine = match e {
+                    // 開關終端機的快捷鍵留給全域處理
+                    egui::Event::Key { key, modifiers, .. } if *key == TOGGLE_TERMINAL.logical_key && modifiers.command => false,
+                    egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) | egui::Event::Ime(_) => true,
+                    _ => false,
+                };
+                if mine {
+                    taken.push(e.clone());
+                }
+                !mine
+            });
+        });
+        let alt = ctx.input(|i| i.modifiers.alt && !i.modifiers.ctrl);
+        let mode = term.mode();
+        let mut out: Vec<u8> = Vec::new();
+        for event in taken {
+            match event {
+                egui::Event::Text(text) => {
+                    if text.chars().all(|c| !c.is_control()) {
+                        if alt {
+                            out.extend(terminal::alt_text(&text));
+                        } else {
+                            out.extend(text.as_bytes());
+                        }
+                    }
+                }
+                egui::Event::Ime(egui::ImeEvent::Commit(text)) => out.extend(text.as_bytes()),
+                egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    let clipboard_key = (modifiers.command || modifiers.ctrl) && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
+                    let alt_gr = modifiers.ctrl && modifiers.alt;
+                    if !clipboard_key && !alt_gr {
+                        if let Some(bytes) = terminal::encode_key(key, modifiers, mode) {
+                            out.extend(bytes);
+                        }
+                    }
+                }
+                egui::Event::Copy => {
+                    let selected = term.term.lock().selection_to_string().filter(|s| !s.is_empty());
+                    match selected {
+                        Some(s) => ctx.copy_text(s),
+                        None => out.push(0x03), // 沒有選取：就是 Ctrl+C，中斷執行中的程式
+                    }
+                }
+                egui::Event::Cut => out.push(0x18),
+                egui::Event::Paste(text) => out.extend(terminal::paste_bytes(&text, mode)),
+                _ => {}
+            }
+        }
+        if !out.is_empty() {
+            term.term.lock().scroll_display(Scroll::Bottom);
+            term.write(out);
+        }
+    }
+
+    /// 終端機窗格：標題列（可拖曳、關閉鈕）加上終端機畫面。
+    pub(crate) fn show_terminal_pane(&mut self, ui: &mut egui::Ui, id: PaneId, rect: egui::Rect) -> Option<crate::Action> {
+        let ctx = ui.ctx().clone();
+        let title = self.terminals.get(&id)?.title();
+        let mut action = None;
+        let framed = egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 8, top: 5, bottom: 0 }).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.set_min_height(crate::pane_ops::TAB_HEIGHT);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::icons::small_button(ui, crate::Icon::ClosePane, t("關閉終端機"), true).clicked() {
+                        action = Some(crate::Action::CloseTerminal(id));
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let r = ui.add(egui::Label::new(egui::RichText::new(&title).weak()).truncate().selectable(false).sense(egui::Sense::click_and_drag()));
+                        let r = r.on_hover_cursor(egui::CursorIcon::Grab).on_hover_text(t("拖曳標題，可以把終端機移到別的窗格旁邊"));
+                        if r.drag_started() {
+                            action = Some(crate::Action::BeginPreviewDrag(id));
+                        }
+                    });
+                });
+            });
+        });
+        let bar_h = framed.response.rect.height();
+        let inset = crate::pane_ops::CARD_INSET;
+        let body = egui::Rect::from_min_max(egui::pos2(rect.min.x + inset, rect.min.y + bar_h), egui::pos2(rect.max.x - inset, rect.max.y - inset));
+        let dark = ui.visuals().dark_mode;
+        let bg = ui.visuals().extreme_bg_color;
+        ui.painter().rect_filled(body, egui::CornerRadius::same(4), bg);
+        let content = body.shrink(6.0);
+        ui.set_clip_rect(content.intersect(ui.clip_rect()));
+
+        // 一格的大小：用編輯區的等寬字
+        let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
+        let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
+        let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
+
+        let pane = self.terminals.get_mut(&id)?;
+        if pane.term.is_none() && pane.error.is_none() {
+            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone()) {
+                Ok(t) => pane.term = Some(t),
+                Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
+            }
+        }
+        if let Some(e) = &pane.error {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                ui.label(egui::RichText::new(e).color(ui.visuals().error_fg_color));
+            });
+            return action;
+        }
+        let Some(term) = pane.term.as_mut() else { return action };
+        term.resize(size, (cw as u16, ch as u16));
+
+        // 互動：點一下取得焦點、拖曳選取、滾輪捲動
+        let wid = widget_id(id);
+        let resp = ui.interact(content, wid, egui::Sense::click_and_drag());
+        if std::mem::take(&mut pane.want_focus) {
+            ctx.memory_mut(|m| m.request_focus(wid));
+        }
+        let focused = ctx.memory(|m| m.has_focus(wid));
+        if focused {
+            // Tab、方向鍵、Esc 都是給 shell 的，不要讓 egui 拿去切換焦點
+            ctx.memory_mut(|m| m.set_focus_lock_filter(wid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true }));
+            ui.output_mut(|o| {
+                o.ime = Some(egui::output::IMEOutput {
+                    purpose: egui::IMEPurpose::Terminal,
+                    rect: content,
+                    cursor_rect: egui::Rect::from_min_size(content.min, egui::vec2(cw, ch)),
+                    should_interrupt_composition: false,
+                });
+            });
+        }
+        let mode = term.mode();
+        let display_offset = term.term.lock().grid().display_offset() as i32;
+        let point_at = |pos: egui::Pos2| -> (Point, Side) {
+            let x = (pos.x - content.min.x) / cw;
+            let col = (x.floor().max(0.0) as usize).min(size.cols - 1);
+            let row = (((pos.y - content.min.y) / ch).floor().max(0.0) as i32).min(size.lines as i32 - 1);
+            let side = if x.fract() < 0.5 { Side::Left } else { Side::Right };
+            (Point::new(Line(row - display_offset), Column(col)), side)
+        };
+        if let Some(pos) = resp.interact_pointer_pos() {
+            if resp.drag_started_by(egui::PointerButton::Primary) {
+                let (p, side) = point_at(pos);
+                term.term.lock().selection = Some(Selection::new(SelectionType::Simple, p, side));
+            } else if resp.dragged_by(egui::PointerButton::Primary) {
+                let (p, side) = point_at(pos);
+                if let Some(sel) = term.term.lock().selection.as_mut() {
+                    sel.update(p, side);
+                }
+            }
+        }
+        if resp.clicked() {
+            term.term.lock().selection = None;
+        }
+        if resp.hovered() {
+            let dy = ctx.input(|i| i.smooth_scroll_delta.y);
+            pane.scroll_acc += dy / ch;
+            let lines = pane.scroll_acc.trunc() as i32;
+            if lines != 0 {
+                pane.scroll_acc -= lines as f32;
+                if mode.contains(TermMode::ALT_SCREEN) {
+                    // vim、less 這類全螢幕程式：滾輪改成方向鍵
+                    let key: &[u8] = if lines > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                    for _ in 0..lines.abs() * 3 {
+                        term.write(key.to_vec());
+                    }
+                } else {
+                    term.term.lock().scroll_display(Scroll::Delta(lines));
+                }
+            }
+        }
+
+        // 畫格子
+        let painter = ui.painter_at(content);
+        let palette = Palette::new(dark, ui.visuals().text_color());
+        let accent = ui.visuals().selection.bg_fill;
+        let guard = term.term.lock();
+        let rc = guard.renderable_content();
+        let offset = rc.display_offset as i32;
+        let cell_rect = |col: usize, row: i32, cells: f32| {
+            egui::Rect::from_min_size(egui::pos2(content.min.x + col as f32 * cw, content.min.y + row as f32 * ch), egui::vec2(cw * cells, ch))
+        };
+        for cell in rc.display_iter {
+            let flags = cell.cell.flags;
+            if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let row = cell.point.line.0 + offset;
+            if row < 0 || row >= size.lines as i32 {
+                continue;
+            }
+            let col = cell.point.column.0;
+            let cells = if flags.contains(Flags::WIDE_CHAR) { 2.0 } else { 1.0 };
+            let (mut fg, mut bgc) = (cell.cell.fg, cell.cell.bg);
+            if flags.contains(Flags::INVERSE) {
+                std::mem::swap(&mut fg, &mut bgc);
+            }
+            let selected = rc.selection.is_some_and(|s| s.contains(cell.point));
+            let r = cell_rect(col, row, cells);
+            if selected {
+                painter.rect_filled(r, 0.0, accent);
+            } else if let Some(c) = palette.background(bgc) {
+                painter.rect_filled(r, 0.0, c);
+            }
+            let ch_ = cell.cell.c;
+            if ch_ != ' ' && ch_ != '\0' && !flags.contains(Flags::HIDDEN) {
+                let mut color = palette.foreground(fg, flags.contains(Flags::BOLD));
+                if flags.contains(Flags::DIM) {
+                    color = color.gamma_multiply(0.6);
+                }
+                painter.text(r.min, egui::Align2::LEFT_TOP, ch_.to_string(), font.clone(), color);
+            }
+            if flags.intersects(Flags::ALL_UNDERLINES) {
+                let y = r.max.y - 1.0;
+                painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.0, palette.foreground(fg, false)));
+            }
+            if flags.contains(Flags::STRIKEOUT) {
+                let y = r.center().y;
+                painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.0, palette.foreground(fg, false)));
+            }
+        }
+        // 游標
+        let cur = rc.cursor;
+        let cur_row = cur.point.line.0 + offset;
+        if rc.mode.contains(TermMode::SHOW_CURSOR) && cur_row >= 0 && cur_row < size.lines as i32 {
+            let r = cell_rect(cur.point.column.0, cur_row, 1.0);
+            let color = ui.visuals().text_color();
+            if focused {
+                match cur.shape {
+                    alacritty_terminal::vte::ansi::CursorShape::Beam => {
+                        {
+                            painter.rect_filled(egui::Rect::from_min_size(r.min, egui::vec2(2.0, ch)), 0.0, color);
+                        }
+                    }
+                    alacritty_terminal::vte::ansi::CursorShape::Underline => {
+                        {
+                            painter.rect_filled(egui::Rect::from_min_size(egui::pos2(r.min.x, r.max.y - 2.0), egui::vec2(cw, 2.0)), 0.0, color);
+                        }
+                    }
+                    _ => {
+                        painter.rect_filled(r, 0.0, color.gamma_multiply(0.55));
+                    }
+                }
+            } else {
+                painter.rect_stroke(r, 0.0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+            }
+        }
+        action
+    }
+}
+
+/// 終端機的顏色：16 色、256 色與預設前景。深色與淺色各一組 16 色，都要在各自的底色上看得清楚。
+struct Palette {
+    dark: bool,
+    default_fg: Color32,
+}
+
+impl Palette {
+    fn new(dark: bool, default_fg: Color32) -> Self {
+        Self { dark, default_fg }
+    }
+
+    fn ansi(&self, i: usize) -> Color32 {
+        const DARK: [(u8, u8, u8); 16] = [
+            (0x1e, 0x1e, 0x1e), (0xcd, 0x31, 0x31), (0x0d, 0xbc, 0x79), (0xe5, 0xe5, 0x10),
+            (0x24, 0x72, 0xc8), (0xbc, 0x3f, 0xbc), (0x11, 0xa8, 0xcd), (0xe5, 0xe5, 0xe5),
+            (0x66, 0x66, 0x66), (0xf1, 0x4c, 0x4c), (0x23, 0xd1, 0x8b), (0xf5, 0xf5, 0x43),
+            (0x3b, 0x8e, 0xea), (0xd6, 0x70, 0xd6), (0x29, 0xb8, 0xdb), (0xff, 0xff, 0xff),
+        ];
+        const LIGHT: [(u8, u8, u8); 16] = [
+            (0x00, 0x00, 0x00), (0xcd, 0x31, 0x31), (0x00, 0xbc, 0x00), (0x94, 0x98, 0x00),
+            (0x04, 0x51, 0xa5), (0xbc, 0x05, 0xbc), (0x05, 0x98, 0xbc), (0x55, 0x55, 0x55),
+            (0x66, 0x66, 0x66), (0xcd, 0x31, 0x31), (0x14, 0xce, 0x14), (0xb5, 0xba, 0x00),
+            (0x04, 0x51, 0xa5), (0xbc, 0x05, 0xbc), (0x05, 0x98, 0xbc), (0xa5, 0xa5, 0xa5),
+        ];
+        let (r, g, b) = if self.dark { DARK[i] } else { LIGHT[i] };
+        Color32::from_rgb(r, g, b)
+    }
+
+    fn indexed(&self, i: usize) -> Color32 {
+        match i {
+            0..=15 => self.ansi(i),
+            16..=231 => {
+                let n = i - 16;
+                let level = |v: usize| [0u8, 95, 135, 175, 215, 255][v];
+                Color32::from_rgb(level(n / 36), level(n / 6 % 6), level(n % 6))
+            }
+            _ => {
+                let v = (8 + 10 * (i.min(255) - 232)) as u8;
+                Color32::from_gray(v)
+            }
+        }
+    }
+
+    /// 前景色。粗體的 8 色用亮色版本（和多數終端機一樣）。
+    fn foreground(&self, c: Color, bold: bool) -> Color32 {
+        match c {
+            Color::Spec(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
+            Color::Indexed(i) => self.indexed(if bold && i < 8 { i as usize + 8 } else { i as usize }),
+            Color::Named(n) => match n {
+                NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::Cursor => self.default_fg,
+                NamedColor::DimForeground => self.default_fg.gamma_multiply(0.6),
+                NamedColor::Background => self.default_fg,
+                other => {
+                    let i = other as usize;
+                    match i {
+                        0..=7 => self.ansi(if bold { i + 8 } else { i }),
+                        8..=15 => self.ansi(i),
+                        // DimBlack…DimWhite（259～266）：對應的暗色
+                        259..=266 => self.ansi(i - 259).gamma_multiply(0.6),
+                        _ => self.default_fg,
+                    }
+                }
+            },
+        }
+    }
+
+    /// 背景色；預設背景回傳 `None`（用窗格自己的底色，不另外畫）。
+    fn background(&self, c: Color) -> Option<Color32> {
+        match c {
+            Color::Spec(rgb) => Some(Color32::from_rgb(rgb.r, rgb.g, rgb.b)),
+            Color::Indexed(i) => Some(self.indexed(i as usize)),
+            Color::Named(NamedColor::Background) => None,
+            Color::Named(n) => {
+                let i = n as usize;
+                match i {
+                    0..=15 => Some(self.ansi(i)),
+                    259..=266 => Some(self.ansi(i - 259).gamma_multiply(0.6)),
+                    // 前景色當背景（反相之後的預設前景）
+                    _ => Some(self.default_fg),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alacritty_terminal::vte::ansi::Rgb;
+
+    #[test]
+    fn palette_maps_named_indexed_and_true_colors() {
+        let p = Palette::new(true, Color32::WHITE);
+        assert_eq!(p.foreground(Color::Spec(Rgb { r: 1, g: 2, b: 3 }), false), Color32::from_rgb(1, 2, 3));
+        assert_eq!(p.foreground(Color::Named(NamedColor::Foreground), false), Color32::WHITE);
+        assert_eq!(p.foreground(Color::Named(NamedColor::Red), false), p.ansi(1));
+        assert_eq!(p.foreground(Color::Named(NamedColor::Red), true), p.ansi(9), "粗體用亮色");
+        assert_eq!(p.foreground(Color::Indexed(2), false), p.ansi(2));
+        // 6×6×6 色立方與灰階
+        assert_eq!(p.indexed(16), Color32::from_rgb(0, 0, 0));
+        assert_eq!(p.indexed(231), Color32::from_rgb(255, 255, 255));
+        assert_eq!(p.indexed(196), Color32::from_rgb(255, 0, 0));
+        assert_eq!(p.indexed(232), Color32::from_gray(8));
+        assert_eq!(p.indexed(255), Color32::from_gray(238));
+        // 預設背景不畫
+        assert_eq!(p.background(Color::Named(NamedColor::Background)), None);
+        assert!(p.background(Color::Named(NamedColor::Blue)).is_some());
+    }
+
+    #[test]
+    fn light_and_dark_palettes_differ() {
+        assert_ne!(Palette::new(true, Color32::WHITE).ansi(7), Palette::new(false, Color32::BLACK).ansi(7));
+    }
+}

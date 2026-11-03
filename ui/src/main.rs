@@ -24,6 +24,8 @@ mod session;
 mod settings;
 mod syntax;
 mod tabs;
+mod terminal;
+mod terminal_pane;
 mod watcher;
 mod theme;
 
@@ -405,6 +407,9 @@ enum Action {
     ClosePane(panes::PaneId),
     /// 開啟或關閉有焦點的窗格的預覽。
     TogglePreview,
+    /// 開關終端機窗格。
+    ToggleTerminal,
+    CloseTerminal(panes::PaneId),
     /// 關閉一個預覽窗格。
     ClosePreview(panes::PaneId),
     /// 開啟預覽外掛的資料夾。
@@ -531,6 +536,8 @@ struct App {
     pick_files_in: fn(&std::path::Path) -> Vec<PathBuf>,
     /// 預覽窗格（窗格編號 → 狀態）。預覽窗格也是版面裡的葉子，但不在 `layout.others`。
     previews: std::collections::HashMap<panes::PaneId, preview_pane::PreviewPane>,
+    /// 終端機窗格（和預覽窗格一樣不放分頁）。
+    terminals: std::collections::HashMap<panes::PaneId, terminal_pane::TerminalPane>,
     /// 使用者的預覽外掛（設定資料夾的 `previews/*.js`）。
     preview_plugins: Vec<std::sync::Arc<preview::Plugin>>,
     /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
@@ -596,6 +603,7 @@ impl App {
             preview_focused: false,
             pick_files_in: pick_files_in_dialog,
             previews: Default::default(),
+            terminals: Default::default(),
             preview_plugins: Vec::new(),
             pane_rects: Vec::new(),
             last_macro: None,
@@ -1493,6 +1501,8 @@ impl App {
             }
             Action::ClosePane(pane) => self.close_pane(pane),
             Action::TogglePreview => self.toggle_preview(),
+            Action::ToggleTerminal => self.toggle_terminal(),
+            Action::CloseTerminal(id) => self.close_terminal(id),
             Action::ClosePreview(id) => self.close_preview(id),
             Action::OpenPreviewsDir => self.open_folder(preview::previews_dir()),
             Action::BeginPreviewDrag(id) => self.begin_preview_drag(id),
@@ -1573,6 +1583,11 @@ impl App {
             let grep_tip = t("在資料夾的所有檔案中尋找 (Ctrl+Shift+F)");
             if icons::toggle(ui, Icon::FindInFiles, grep_tip, self.folder.open).clicked() {
                 action = Some(Action::ToggleFolderSearch);
+            }
+
+            let terminal_on = self.terminal_id().is_some();
+            if icons::toggle(ui, Icon::Terminal, t("終端機 (Ctrl+`)"), terminal_on).clicked() {
+                action = Some(Action::ToggleTerminal);
             }
 
             let preview_on = self.preview_id().is_some();
@@ -2998,6 +3013,12 @@ impl eframe::App for App {
             }
         }
 
+        // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
+        self.terminal_input(&ctx);
+        self.reap_terminals();
+        if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::TOGGLE_TERMINAL)) {
+            self.focus_terminal_shortcut(&ctx);
+        }
         self.capture_shortcut(&ctx);
         if self.folder.poll() {
             ctx.request_repaint();
@@ -4413,6 +4434,30 @@ mod tests {
         let id = app.layout.focus;
         let active = app.tabs.active();
         assert!(app.pane_tab_text(id, active).contains(t(" （已刪除）")));
+    }
+
+    #[test]
+    fn a_terminal_pane_opens_below_closes_and_is_left_out_of_the_session() {
+        let mut app = App::new(None, Settings::default());
+        app.toggle_terminal();
+        assert_eq!(app.layout.pane_count(), 2);
+        let id = app.terminal_id().expect("開了終端機窗格");
+        assert!(app.is_preview(id), "終端機和預覽一樣不放分頁");
+        assert_eq!(app.tab_pane_count(), 1);
+        assert_eq!(app.layout.root.leaves(), vec![app.layout.focus, id], "在有焦點的窗格下面");
+        // 工作階段不記終端機窗格
+        let spec = app.session_all().layout.unwrap();
+        assert!(!spec.contains('W') && spec.matches('P').count() == 1, "{spec}");
+        // 不能把分頁放進終端機窗格
+        let focus = app.layout.focus;
+        app.move_tab(focus, 0, Target::Into(id));
+        assert_eq!(app.tabs.len(), 1);
+        // 可以像預覽一樣被拖到別處；再按一次就關掉
+        app.move_preview(id, focus, Side::Right);
+        assert_eq!(app.layout.root.leaves(), vec![focus, id]);
+        app.toggle_terminal();
+        assert_eq!(app.layout.pane_count(), 1);
+        assert!(app.terminals.is_empty());
     }
 
     #[test]

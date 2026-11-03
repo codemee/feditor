@@ -261,6 +261,15 @@ impl App {
         out
     }
 
+    /// 要記進工作階段的版面：終端機窗格不記（shell 的狀態還原不了），從版面拿掉。
+    fn session_root(&self) -> panes::Node {
+        let mut root = self.layout.root.clone();
+        for id in self.terminals.keys() {
+            root.remove(*id);
+        }
+        root
+    }
+
     /// 所有窗格開著的檔案與窗格版面，用來記住工作階段。
     pub(crate) fn session_all(&self) -> Session {
         let mut panes = Vec::new();
@@ -288,7 +297,7 @@ impl App {
         Session {
             panes,
             previews,
-            layout: Some(self.layout.root.to_spec(&|id| self.is_preview(id))),
+            layout: Some(self.session_root().to_spec(&|id| self.is_preview(id))),
             focus: self.layout.focus,
         }
     }
@@ -647,7 +656,11 @@ impl App {
             let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
             if let Some(pos) = pressed {
                 if let Some(&(id, _)) = arranged.panes.iter().find(|(_, r)| r.contains(pos)) {
-                    if self.is_preview(id) {
+                    if self.terminals.contains_key(&id) {
+                        // 終端機窗格：它自己的元件會拿到鍵盤焦點；編輯區放掉焦點，縮放快捷鍵仍調編輯區字級
+                        self.preview_focused = false;
+                        ctx.memory_mut(|m| m.surrender_focus(editor_id(self.layout.focus)));
+                    } else if self.is_preview(id) {
                         // 預覽窗格也能取得輸入焦點：編輯區放掉鍵盤焦點，縮放快捷鍵改調預覽的字級
                         self.preview_focused = true;
                         ctx.memory_mut(|m| m.surrender_focus(editor_id(self.layout.focus)));
@@ -668,6 +681,7 @@ impl App {
             }
         }
 
+        let terminal_focused = self.terminals.keys().any(|id| ctx.memory(|m| m.has_focus(crate::terminal_pane::widget_id(*id))));
         let mut shapes: Vec<(PaneId, egui::Rect, f32)> = Vec::new();
         for &(id, rect) in &arranged.panes {
             let mut child = ui.new_child(
@@ -680,10 +694,12 @@ impl App {
 
             // 窗格是圓角卡片：底色加框線，有焦點的窗格（有多個窗格時）框線用強調色，和分頁的圓角風格一致
             // 有鍵盤焦點的窗格框線用強調色：焦點在預覽時是預覽窗格，否則是有焦點的一般窗格
-            let focused = if self.is_preview(id) {
+            let focused = if self.terminals.contains_key(&id) {
+                ctx.memory(|m| m.has_focus(crate::terminal_pane::widget_id(id)))
+            } else if self.is_preview(id) {
                 self.preview_focused
             } else {
-                multi && id == self.layout.focus && !self.preview_focused
+                multi && id == self.layout.focus && !self.preview_focused && !terminal_focused
             };
             let (card_fill, card_stroke) = {
                 let v = ui.visuals();
@@ -698,6 +714,13 @@ impl App {
             ui.painter().rect_stroke(rect, CARD_RADIUS, card_stroke, egui::StrokeKind::Inside);
 
             // 預覽窗格：自己的標題列與內容，不能放分頁，也不參與焦點
+            if self.terminals.contains_key(&id) {
+                shapes.push((id, rect, 0.0));
+                if let Some(a) = self.show_terminal_pane(&mut child, id, rect) {
+                    action = Some(a);
+                }
+                continue;
+            }
             if self.is_preview(id) {
                 shapes.push((id, rect, 0.0));
                 if let Some(a) = self.show_preview_pane(&mut child, id, rect) {
