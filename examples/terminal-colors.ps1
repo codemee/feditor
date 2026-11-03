@@ -92,3 +92,9 @@ if (Want 9) {
   Write-Host ""
 }
 
+if (Want 10) {
+  Show-Title '10. 低對比度（最低對比度保護會把看不清楚的字調到看得清楚）／low contrast (the minimum-contrast guard makes these readable)'
+  Write-Host "$e[30;40m黑字黑底 black on black$reset  $e[37;47m白字白底 white on white$reset  $e[97;107m亮白字亮白底$reset  $e[33;47m黃字白底 yellow on white$reset"
+  Write-Host "$e[38;2;40;40;40m深灰字（真彩色）dark gray text$reset  $e[38;2;235;235;235m淺灰字（真彩色）light gray text$reset  $e[90;100m灰字灰底$reset"
+  Write-Host "進度條與表格線不受影響 graphic glyphs are left alone: $e[34;44m████$reset$e[36;46m▓▓▓▓$reset ┌─┬─┐"
+}

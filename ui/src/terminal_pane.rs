@@ -318,6 +318,8 @@ impl App {
             }
             let selected = rc.selection.is_some_and(|s| s.contains(cell.point));
             let r = cell_rect(col, row, cells);
+            // 這一格實際的底色：選取、程式指定的底色，或窗格自己的底色
+            let cell_bg = if selected { accent } else { palette.background(bgc).unwrap_or(palette.default_bg) };
             if selected {
                 painter.rect_filled(r, 0.0, accent);
             } else if let Some(c) = palette.background(bgc) {
@@ -326,6 +328,9 @@ impl App {
             let ch_ = cell.cell.c;
             if ch_ != ' ' && ch_ != '\0' && !flags.contains(Flags::HIDDEN) {
                 let mut color = palette.foreground(fg, flags.contains(Flags::BOLD));
+                if !is_graphic_glyph(ch_) {
+                    color = palette.readable(color, cell_bg);
+                }
                 if flags.contains(Flags::DIM) {
                     color = color.gamma_multiply(0.6);
                 }
@@ -390,6 +395,31 @@ impl App {
     }
 }
 
+/// 文字和底色的最低對比度（WCAG 比值）。程式輸出的顏色低於它就會被調整到看得清楚為止。
+/// 3:1 是 WCAG 對大字與圖形的下限，比 4.5 寬鬆，不會把程式刻意用的淡色（例如註解的灰）全部拉黑。
+const MIN_CONTRAST: f32 = 3.0;
+
+/// WCAG 相對亮度。
+fn luminance(c: Color32) -> f32 {
+    let channel = |v: u8| {
+        let s = v as f32 / 255.0;
+        if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
+}
+
+/// WCAG 對比度（1～21）。
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// 方塊、表格線、點字、Powerline 符號這類「圖形字元」：程式常刻意讓前景色和底色接近來拼出圖案
+///（進度條、狀態列的三角形接縫），調整它們的顏色會破壞圖案，所以不做對比度保護。
+fn is_graphic_glyph(c: char) -> bool {
+    matches!(c as u32, 0x2500..=0x259F | 0x2800..=0x28FF | 0xE0B0..=0xE0BF)
+}
+
 /// 終端機的顏色：16 色來自配色方案，256 色的其餘部分（色立方與灰階）是標準色，真彩色原樣畫。
 struct Palette {
     default_fg: Color32,
@@ -406,6 +436,25 @@ impl Palette {
 
     fn ansi(&self, i: usize) -> Color32 {
         self.ansi[i]
+    }
+
+    /// 最低對比度保護：前景和它所在的底色對比不到 [`MIN_CONTRAST`] 時，把前景往能拉開差距的方向（底色亮就往黑、
+    /// 底色暗就往白）一步步調整，直到夠為止；調不到（例如前景和底色一樣）就直接用黑或白。
+    /// 對比夠的顏色原封不動，所以多數輸出不受影響。
+    fn readable(&self, fg: Color32, bg: Color32) -> Color32 {
+        if contrast(fg, bg) >= MIN_CONTRAST {
+            return fg;
+        }
+        let target = if luminance(bg) > 0.5 { Color32::BLACK } else { Color32::WHITE };
+        for step in 1..=10 {
+            let t = step as f32 / 10.0;
+            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+            let c = Color32::from_rgb(mix(fg.r(), target.r()), mix(fg.g(), target.g()), mix(fg.b(), target.b()));
+            if contrast(c, bg) >= MIN_CONTRAST {
+                return c;
+            }
+        }
+        target
     }
     fn indexed(&self, i: usize) -> Color32 {
         match i {
@@ -509,6 +558,39 @@ mod tests {
         assert_ne!(p.foreground(g.fg, g.flags.contains(Flags::BOLD)), Color32::BLACK, "粗體綠 {:?}", g.fg);
         assert_eq!(p.foreground(n.fg, false), Color32::BLACK, "沒設顏色的字用預設前景");
     }
+    #[test]
+    fn low_contrast_text_is_pushed_toward_readable_and_good_text_is_untouched() {
+        let dark_bg = Color32::from_rgb(0x1e, 0x1e, 0x1e);
+        let light_bg = Color32::from_rgb(0xfa, 0xfa, 0xfa);
+        let dark = Palette::new(Color32::WHITE, dark_bg, crate::scheme::default_for(true).terminal_colors());
+        let light = Palette::new(Color32::BLACK, light_bg, crate::scheme::default_for(false).terminal_colors());
+        // 對比夠的原封不動
+        let fine = Color32::from_rgb(0xdd, 0xdd, 0xdd);
+        assert_eq!(dark.readable(fine, dark_bg), fine);
+        // 深色底上的深灰字：變亮到夠為止
+        let dim = Color32::from_rgb(0x30, 0x30, 0x30);
+        let fixed = dark.readable(dim, dark_bg);
+        assert!(contrast(fixed, dark_bg) >= MIN_CONTRAST && luminance(fixed) > luminance(dim), "{fixed:?}");
+        // 淺色底上的淺黃字：變暗，而且盡量保留色相（不是直接變黑）
+        let yellow = Color32::from_rgb(0xf5, 0xf5, 0x43);
+        let fixed = light.readable(yellow, light_bg);
+        assert!(contrast(fixed, light_bg) >= MIN_CONTRAST && luminance(fixed) < luminance(yellow), "{fixed:?}");
+        assert!(fixed.r() > fixed.b() && fixed.g() > fixed.b(), "黃色調暗之後還是偏黃 {fixed:?}");
+        // 前景和底色一模一樣：往對比的方向拉到剛好夠（淡灰），不會是整片消失
+        assert!(contrast(dark.readable(dark_bg, dark_bg), dark_bg) >= MIN_CONTRAST);
+        assert!(contrast(light.readable(light_bg, light_bg), light_bg) >= MIN_CONTRAST);
+    }
+
+    #[test]
+    fn graphic_glyphs_are_exempt_from_the_contrast_guard() {
+        for c in ['█', '▀', '─', '│', '┌', '⣿', '\u{e0b0}', '\u{e0b2}'] {
+            assert!(is_graphic_glyph(c), "{c}");
+        }
+        for c in ['a', '中', '>', ' ', '→'] {
+            assert!(!is_graphic_glyph(c), "{c}");
+        }
+    }
+
     #[test]
     fn light_and_dark_palettes_differ() {
         let dark = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors());
