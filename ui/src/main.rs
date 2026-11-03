@@ -1585,10 +1585,14 @@ impl App {
                 action = Some(Action::ToggleFolderSearch);
             }
 
+            group_separator(ui);
+
             let terminal_on = self.terminal_id().is_some();
             if icons::toggle(ui, Icon::Terminal, t("終端機 (Ctrl+`)"), terminal_on).clicked() {
                 action = Some(Action::ToggleTerminal);
             }
+
+            group_separator(ui);
 
             let preview_on = self.preview_id().is_some();
             if icons::toggle(ui, Icon::Preview, t("預覽 (Ctrl+Shift+P)"), preview_on).clicked() {
