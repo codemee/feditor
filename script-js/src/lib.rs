@@ -434,7 +434,8 @@ mod tests {
     #[test]
     fn preview_plugins_turn_text_into_json_and_see_the_file_info() {
         let src = "function preview(text, info) { return { header: ['行'], rows: text.split('\\n').map(l => [l]), name: info.name, ext: info.ext }; }";
-        let json = convert(src, "a\nb", Some("C:\\x\\Report.LOG")).unwrap();
+        let path = std::path::Path::new("x").join("Report.LOG");
+        let json = convert(src, "a\nb", path.to_str()).unwrap();
         assert!(json.contains("\"header\":[\"行\"]"), "{json}");
         assert!(json.contains("\"name\":\"Report.LOG\"") && json.contains("\"ext\":\"log\""), "{json}");
         // 沒有檔名時 name、ext 是 undefined，序列化時被略過
