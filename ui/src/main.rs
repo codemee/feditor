@@ -145,6 +145,8 @@ enum Then {
     RenameMacro(usize),
     /// 重新命名作用中文件的檔案（磁碟上的檔名）。
     RenameFile,
+    /// 幫目前的終端機分頁取名字。
+    RenameTerminal,
     /// 把正在編輯的配色另存成自訂配色。
     SaveSchemeAs,
 }
@@ -872,13 +874,30 @@ impl App {
             return;
         }
         self.switch_tab(i);
-        if self.doc.path.is_none() {
+        if self.doc.terminal.is_some() {
+            self.ask_rename_terminal(None);
+        } else if self.doc.path.is_none() {
             if self.save_as() {
                 self.save_session();
             }
         } else {
             self.ask_rename_file(None, None);
         }
+    }
+
+    /// 雙按終端機分頁：問新名字（留空就改回預設的「終端機 N」）。
+    fn ask_rename_terminal(&mut self, text: Option<String>) {
+        let Some(terminal) = self.doc.terminal.as_ref() else { return };
+        let (old, number) = (terminal.title(), terminal.number());
+        let text = text.unwrap_or_else(|| old.clone());
+        let len = text.chars().count();
+        let spec = modal::Spec::new(
+            t("重新命名終端機"),
+            tf!("「{old}」的新名稱（留空就改回預設的「終端機 {n}」）：", old = old, n = number),
+        )
+        .button(t("重新命名"), modal::Answer::Yes)
+        .button(t("取消"), modal::Answer::Cancel);
+        self.modal = Some(Pending::new(spec, Then::RenameTerminal).with_input(modal::Input::new(text).select(0..len)));
     }
 
     fn ask_rename_file(&mut self, text: Option<String>, error: Option<String>) {
@@ -973,6 +992,13 @@ impl App {
                         self.ask_scheme_name(Some(typed), Some(e));
                     } else {
                         self.apply_schemes(ctx);
+                    }
+                }
+            }
+            Then::RenameTerminal => {
+                if answer == Yes {
+                    if let Some(terminal) = self.doc.terminal.as_mut() {
+                        terminal.set_custom_name(&typed);
                     }
                 }
             }
@@ -4498,6 +4524,28 @@ mod tests {
         }
         assert!(app.terminal_tabs().is_empty());
     }
+    #[test]
+    fn double_clicking_a_terminal_tab_renames_it_and_an_empty_name_restores_the_default() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.new_terminal();
+        assert_eq!(app.doc.name(), "終端機 1");
+        app.start_rename_tab(app.tabs.active());
+        assert!(matches!(app.modal.as_ref().map(|m| &m.then), Some(&Then::RenameTerminal)), "要問新名字，不是另存新檔");
+        app.modal = None;
+        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("  伺服器  ".into()), &ctx);
+        assert_eq!(app.doc.name(), "伺服器", "前後空白去掉");
+        assert_eq!(app.pane_tab_text(app.layout.focus, app.tabs.active()), "伺服器");
+        app.resolve_modal(Then::RenameTerminal, modal::Answer::Cancel, Some("別的".into()), &ctx);
+        assert_eq!(app.doc.name(), "伺服器", "取消不改");
+        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("   ".into()), &ctx);
+        assert_eq!(app.doc.name(), "終端機 1", "留空改回預設");
+        // 取了名字之後，新的終端機仍然拿到最小的空號（編號和名字無關）
+        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("終端機 1".into()), &ctx);
+        app.new_terminal();
+        assert_eq!(app.doc.name(), "終端機 2");
+    }
+
     #[test]
     fn closing_a_clean_tab_removes_it() {
         let mut app = app_with("one");

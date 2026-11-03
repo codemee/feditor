@@ -631,7 +631,7 @@ impl App {
             ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
         }        if close_resp.clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Close(i)));
-        } else if response.double_clicked() && !is_terminal {
+        } else if response.double_clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Rename(i)));
         } else if response.clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Switch(i)));
@@ -645,7 +645,7 @@ impl App {
             close_resp.on_hover_text(t("關閉分頁"));
         } else if self.tab_drag.is_none() {
             if is_terminal {
-                response.on_hover_text(t("終端機：拖曳標籤可以移到別的窗格，按 × 結束這個 shell"));
+                response.on_hover_text(t("終端機：雙按重新命名，拖曳標籤可以移到別的窗格，按 × 結束這個 shell"));
             } else {
                 response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
             }

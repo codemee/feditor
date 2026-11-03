@@ -39,6 +39,8 @@ pub struct TerminalPane {
     uid: u64,
     /// 顯示在標題上的編號（目前沒人用的最小正整數）。
     number: usize,
+    /// 使用者自己取的名字；沒有就用「終端機 N」。
+    custom_name: Option<String>,
     /// 還沒開 shell（第一次畫的時候才知道有幾格）。開失敗時是錯誤訊息。
     term: Option<Terminal>,
     error: Option<String>,
@@ -63,6 +65,7 @@ impl TerminalPane {
         Self {
             uid: NEXT_UID.fetch_add(1, Ordering::Relaxed),
             number,
+            custom_name: None,
             term: None,
             error: None,
             dir,
@@ -76,9 +79,20 @@ impl TerminalPane {
         self.number
     }
 
-    /// 分頁上的名稱：「終端機 2」。
+    /// 分頁上的名稱：使用者取的名字，沒有就是「終端機 2」。
     pub fn title(&self) -> String {
+        self.custom_name.clone().unwrap_or_else(|| self.default_title())
+    }
+
+    /// 沒有自訂名字時的名稱：「終端機 2」。
+    pub fn default_title(&self) -> String {
         tf!("終端機 {n}", n = self.number)
+    }
+
+    /// 自己取名；前後空白去掉，空的就改回預設名稱。
+    pub fn set_custom_name(&mut self, name: &str) {
+        let name = name.trim();
+        self.custom_name = (!name.is_empty()).then(|| name.to_owned());
     }
 
     /// shell 已經結束。
