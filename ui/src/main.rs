@@ -283,6 +283,18 @@ fn flat_list(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .show(ui, add);
 }
 
+/// 中央面板（放窗格的地方）的左右內縮。
+const CENTRAL_SIDE_MARGIN: i8 = 8;
+
+/// 下方面板（狀態列、輸出面板）用的外框：預設的面板外框，但左右內縮改成和窗格卡片的外緣一樣
+///（中央面板的內縮加上編輯區的空隙），內容的兩端才會和圓角框對齊。
+fn aligned_panel_frame(style: &egui::Style) -> egui::Frame {
+    let frame = egui::Frame::side_top_panel(style);
+    let side = CENTRAL_SIDE_MARGIN + pane_ops::AREA_INSET_X.round() as i8;
+    let m = frame.inner_margin;
+    frame.inner_margin(egui::Margin { left: side, right: side, top: m.top, bottom: m.bottom })
+}
+
 /// 工具列的群組分隔線：只畫一小段，比按鈕 hover 時的底色還矮。
 /// （`ui.separator()` 在橫向排列裡會撐滿整列高度，看起來太長。）
 fn group_separator(ui: &mut egui::Ui) {
@@ -3251,13 +3263,16 @@ impl eframe::App for App {
                 }
             });
         }
-        egui::Panel::bottom("status").show(ui, |ui| {
+        // 下方的面板（狀態列、輸出面板）左右兩端對齊窗格卡片的外緣，不要比圓角框更寬
+        let bottom_frame = aligned_panel_frame(ui.style());
+        egui::Panel::bottom("status").frame(bottom_frame.clone()).show(ui, |ui| {
             if let Some(a) = self.status_bar(ui) {
                 action = Some(a);
             }
         });
         if self.output_expanded() {
             egui::Panel::bottom("output")
+                .frame(bottom_frame.clone())
                 .resizable(true)
                 .default_size(110.0)
                 .show(ui, |ui| {
@@ -3267,7 +3282,7 @@ impl eframe::App for App {
                 });
         } else {
             // 收合：只剩一條標題列。用另一個 id，這樣展開時會回到使用者調整過的高度
-            egui::Panel::bottom("output_bar").show(ui, |ui| {
+            egui::Panel::bottom("output_bar").frame(bottom_frame.clone()).show(ui, |ui| {
                 if let Some(a) = self.output_header(ui, false) {
                     action = Some(a);
                 }
@@ -3284,7 +3299,8 @@ impl eframe::App for App {
                 });
         }
         // 窗格是有框線的卡片，不需要工具列下面的分隔線；上方也不多留邊，離工具列近一點（左右與下方維持原本的空隙）
-        let central = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin { left: 8, right: 8, top: 0, bottom: 8 });
+        let central = egui::Frame::central_panel(ui.style())
+            .inner_margin(egui::Margin { left: CENTRAL_SIDE_MARGIN, right: CENTRAL_SIDE_MARGIN, top: 0, bottom: 8 });
         egui::CentralPanel::default().frame(central).show(ui, |ui| {
             if let Some(a) = self.panes_ui(ui) {
                 action = Some(a);

@@ -24,6 +24,8 @@ use std::ops::Range;
 /// 窗格卡片的圓角半徑，以及編輯畫面離卡片邊緣的距離（要夠大，編輯區的角才不會超出卡片的圓角）。
 const CARD_RADIUS: u8 = 8;
 pub(crate) const CARD_INSET: f32 = 4.0;
+/// 編輯區（窗格卡片）離中央面板左右邊緣的空隙。狀態列等貼在下方的面板要和卡片的外緣對齊，會用到它。
+pub(crate) const AREA_INSET_X: f32 = 6.0;
 /// 分頁的高度與上緣圓角。分頁列下緣沒有留白，作用中的分頁才能和編輯區接在一起。
 pub(crate) const TAB_HEIGHT: f32 = 26.0;
 /// 按一下箭頭，分頁列捲動多少。
@@ -683,7 +685,10 @@ impl App {
         let mut action = None;
         // 整個編輯區四周留一圈空隙，窗格卡片才不會貼著視窗邊緣、工具列與狀態列
         let full = ui.available_rect_before_wrap();
-        let area = egui::Rect::from_min_max(full.min + egui::vec2(6.0, 2.0), full.max - egui::vec2(6.0, 6.0));
+        let area = egui::Rect::from_min_max(
+            full.min + egui::vec2(AREA_INSET_X, 2.0),
+            full.max - egui::vec2(AREA_INSET_X, 6.0),
+        );
         let arranged = self.layout.root.arrange(area, panes::MIN_PANE);
         let multi = arranged.panes.len() > 1;
         let several_tab_panes = self.tab_pane_count() > 1;
