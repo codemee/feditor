@@ -259,6 +259,21 @@ impl TabSet {
         self.doc_in(live, i).disk_state
     }
 
+    /// 終端機分頁的編號（`live` 同 [`TabSet::doc_in`]）。
+    pub fn terminal_tabs(&self, live: Option<&Document>) -> Vec<usize> {
+        (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.is_some()).collect()
+    }
+
+    /// 這個分頁集裡終端機分頁的標題編號。
+    pub fn terminal_numbers(&self, live: Option<&Document>) -> Vec<usize> {
+        (0..self.slots.len()).filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| t.number())).collect()
+    }
+
+    /// shell 已經結束的終端機分頁編號。
+    pub fn exited_terminal_tabs(&self, live: Option<&Document>) -> Vec<usize> {
+        (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.as_ref().is_some_and(|t| t.exited())).collect()
+    }
+
     /// 有未儲存修改的分頁編號。
     pub fn dirty_tabs(&self, doc: &Document) -> Vec<usize> {
         (0..self.slots.len())

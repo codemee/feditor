@@ -59,7 +59,7 @@ pub struct TabDrag {
 }
 
 impl App {
-    fn set_ref(&self, id: PaneId) -> Option<&TabSet> {
+    pub(crate) fn set_ref(&self, id: PaneId) -> Option<&TabSet> {
         if id == self.layout.focus { Some(&self.tabs) } else { self.layout.others.get(&id) }
     }
 
@@ -130,6 +130,24 @@ impl App {
     }
 
     // ── 搬動分頁、切割與關閉窗格 ─────────────────────────────
+
+    /// 在窗格 `at` 的 `side` 側切出新窗格，裡面放著 `tab`，並讓它成為有焦點的窗格。
+    pub(crate) fn open_tab_in_new_pane(&mut self, at: PaneId, side: Side, tab: Tab) {
+        let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
+        let new_id = self.layout.alloc_id();
+        self.layout.root.split(at, side, new_id);
+        self.layout.others.insert(new_id, TabSet::from_tab(tab));
+        self.switch_focus_stashed(new_id);
+        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        self.pending_editor_focus = true;
+        self.tab_changed();
+    }
+
+    /// 窗格 `id` 的第 `i` 個分頁是不是終端機。
+    fn pane_tab_is_terminal(&self, id: PaneId, i: usize) -> bool {
+        let live = (id == self.layout.focus).then_some(&self.doc);
+        self.set_ref(id).is_some_and(|s| s.terminal_tabs(live).contains(&i))
+    }
 
     /// 把窗格 `from` 的第 `idx` 個分頁搬到 `target`；搬完焦點在分頁所在的窗格。
     /// 來源窗格因此空了就關掉它。分頁是「搬」不是「複製」：同一份文件不會同時出現在兩個窗格。
@@ -261,14 +279,6 @@ impl App {
         out
     }
 
-    /// 要記進工作階段的版面：終端機窗格不記（shell 的狀態還原不了），從版面拿掉。
-    fn session_root(&self) -> panes::Node {
-        let mut root = self.layout.root.clone();
-        for id in self.terminals.keys() {
-            root.remove(*id);
-        }
-        root
-    }
 
     /// 所有窗格開著的檔案與窗格版面，用來記住工作階段。
     pub(crate) fn session_all(&self) -> Session {
@@ -297,7 +307,7 @@ impl App {
         Session {
             panes,
             previews,
-            layout: Some(self.session_root().to_spec(&|id| self.is_preview(id))),
+            layout: Some(self.layout.root.to_spec(&|id| self.is_preview(id))),
             focus: self.layout.focus,
         }
     }
@@ -533,6 +543,7 @@ impl App {
     fn tab_widget(&self, ui: &mut egui::Ui, pane: PaneId, i: usize) -> Option<Action> {
         let mut action = None;
         let (_, full, _) = self.pane_label(pane, i);
+        let is_terminal = self.pane_tab_is_terminal(pane, i);
         let text = self.pane_tab_text(pane, i);
         let active_here = i == self.pane_active(pane);
         let font = egui::TextStyle::Button.resolve(ui.style());
@@ -620,7 +631,7 @@ impl App {
             ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
         }        if close_resp.clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Close(i)));
-        } else if response.double_clicked() {
+        } else if response.double_clicked() && !is_terminal {
             action = Some(Action::PaneTab(pane, TabCmd::Rename(i)));
         } else if response.clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Switch(i)));
@@ -633,7 +644,11 @@ impl App {
         if close_resp.hovered() {
             close_resp.on_hover_text(t("關閉分頁"));
         } else if self.tab_drag.is_none() {
-            response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
+            if is_terminal {
+                response.on_hover_text(t("終端機：拖曳標籤可以移到別的窗格，按 × 結束這個 shell"));
+            } else {
+                response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
+            }
         }
         action
     }
@@ -656,16 +671,7 @@ impl App {
             let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
             if let Some(pos) = pressed {
                 if let Some(&(id, _)) = arranged.panes.iter().find(|(_, r)| r.contains(pos)) {
-                    if self.terminals.contains_key(&id) {
-                        // 終端機窗格：它自己的元件會拿到鍵盤焦點；編輯區放掉焦點，縮放快捷鍵仍調編輯區字級
-                        self.preview_focused = false;
-                        ctx.memory_mut(|m| m.surrender_focus(editor_id(self.layout.focus)));
-                        // 點在窗格的任何地方（包含標題列）都把鍵盤焦點給終端機；
-                        // 只靠畫面元件自己搶焦點的話，切到別的窗格後就切不回來
-                        if let Some(p) = self.terminals.get_mut(&id) {
-                            p.request_focus();
-                        }
-                    } else if self.is_preview(id) {
+                    if self.is_preview(id) {
                         // 預覽窗格也能取得輸入焦點：編輯區放掉鍵盤焦點，縮放快捷鍵改調預覽的字級
                         self.preview_focused = true;
                         ctx.memory_mut(|m| m.surrender_focus(editor_id(self.layout.focus)));
@@ -681,12 +687,14 @@ impl App {
             // 換了窗格或分頁之後，鍵盤也要回到編輯區。點分頁時，分頁元件自己會拿到鍵盤焦點，
             // 所以只有使用者正在搜尋框打字（例如用 Ctrl+Tab 換分頁）時才不搶
             let typing_in_find = ctx.memory(|m| m.has_focus(find_input_id()));
-            if !typing_in_find {
+            if let Some(terminal) = self.doc.terminal.as_mut() {
+                // 作用中的分頁是終端機：鍵盤焦點給它（它的畫面元件下一個畫面會去要）
+                terminal.request_focus();
+            } else if !typing_in_find {
                 ctx.memory_mut(|m| m.request_focus(editor_id(self.layout.focus)));
             }
         }
 
-        let terminal_focused = self.terminals.keys().any(|id| ctx.memory(|m| m.has_focus(crate::terminal_pane::widget_id(*id))));
         let mut shapes: Vec<(PaneId, egui::Rect, f32)> = Vec::new();
         for &(id, rect) in &arranged.panes {
             let mut child = ui.new_child(
@@ -699,12 +707,10 @@ impl App {
 
             // 窗格是圓角卡片：底色加框線，有焦點的窗格（有多個窗格時）框線用強調色，和分頁的圓角風格一致
             // 有鍵盤焦點的窗格框線用強調色：焦點在預覽時是預覽窗格，否則是有焦點的一般窗格
-            let focused = if self.terminals.contains_key(&id) {
-                ctx.memory(|m| m.has_focus(crate::terminal_pane::widget_id(id)))
-            } else if self.is_preview(id) {
+            let focused = if self.is_preview(id) {
                 self.preview_focused
             } else {
-                multi && id == self.layout.focus && !self.preview_focused && !terminal_focused
+                multi && id == self.layout.focus && !self.preview_focused
             };
             let (card_fill, card_stroke) = {
                 let v = ui.visuals();
@@ -719,13 +725,6 @@ impl App {
             ui.painter().rect_stroke(rect, CARD_RADIUS, card_stroke, egui::StrokeKind::Inside);
 
             // 預覽窗格：自己的標題列與內容，不能放分頁，也不參與焦點
-            if self.terminals.contains_key(&id) {
-                shapes.push((id, rect, 0.0));
-                if let Some(a) = self.show_terminal_pane(&mut child, id, rect) {
-                    action = Some(a);
-                }
-                continue;
-            }
             if self.is_preview(id) {
                 shapes.push((id, rect, 0.0));
                 if let Some(a) = self.show_preview_pane(&mut child, id, rect) {
@@ -777,15 +776,23 @@ impl App {
                 let App { doc, editor, find, settings, layout, .. } = &mut *self;
                 let options = settings.view;
                 if id == layout.focus {
-                    let reveal = std::mem::take(&mut find.reveal);
-                    let highlight = find.current_chars.clone();
-                    // 使用者在編輯區改了文字：標成未儲存，之前找到的位置與筆數作廢
-                    if show_pane_editor(ui, id, doc, editor, options, highlight, reveal) {
-                        find.invalidate();
+                    if let Some(terminal) = doc.terminal.as_mut() {
+                        crate::terminal_pane::draw_body(ui, terminal, body);
+                    } else {
+                        let reveal = std::mem::take(&mut find.reveal);
+                        let highlight = find.current_chars.clone();
+                        // 使用者在編輯區改了文字：標成未儲存，之前找到的位置與筆數作廢
+                        if show_pane_editor(ui, id, doc, editor, options, highlight, reveal) {
+                            find.invalidate();
+                        }
                     }
                 } else if let Some(set) = layout.others.get_mut(&id) {
                     let (d, e) = set.active_slot_mut();
-                    show_pane_editor(ui, id, d, e, options, None, false);
+                    if let Some(terminal) = d.terminal.as_mut() {
+                        crate::terminal_pane::draw_body(ui, terminal, body);
+                    } else {
+                        show_pane_editor(ui, id, d, e, options, None, false);
+                    }
                 }
             });
         }

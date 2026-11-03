@@ -32,6 +32,8 @@ pub struct Document {
     pub disk_state: DiskState,
     /// 語法上色用的語言：自動（預設）、純文字、或手動指定。只屬於這個分頁，不寫進檔案或工作階段。
     pub lang: crate::syntax::LangChoice,
+    /// 這個分頁是終端機（不是文字文件）：有的話分頁顯示終端機畫面，`buffer` 等欄位只是占位。
+    pub terminal: Option<Box<crate::terminal_pane::TerminalPane>>,
 }
 
 /// 磁碟上的檔案和分頁內容的關係。
@@ -207,11 +209,19 @@ impl Document {
 
     /// 顯示用檔名。
     pub fn name(&self) -> String {
+        if let Some(terminal) = &self.terminal {
+            return terminal.title();
+        }
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| t("未命名").to_owned())
+    }
+
+    /// 終端機分頁：`number` 是標題上的編號，`dir` 是 shell 的起始資料夾。
+    pub fn new_terminal(number: usize, dir: Option<PathBuf>) -> Self {
+        Self { terminal: Some(Box::new(crate::terminal_pane::TerminalPane::new(dir, number))), ..Default::default() }
     }
 
     /// 開啟檔案，回傳文件與需要告知使用者的警告。
@@ -260,6 +270,7 @@ impl Document {
                 disk_mtime: mtime_of(path),
                 disk_state: DiskState::Synced,
                 lang: Default::default(),
+                terminal: None,
                 buffer,
                 format: d.format,
                 dirty: false,

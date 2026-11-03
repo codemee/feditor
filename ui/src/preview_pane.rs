@@ -66,9 +66,8 @@ pub enum Status {
 }
 
 impl App {
-    /// 不放分頁的窗格（預覽窗格或終端機窗格）。它們共用拖曳、切割與關閉的規則。
     pub(crate) fn is_preview(&self, id: PaneId) -> bool {
-        self.previews.contains_key(&id) || self.terminals.contains_key(&id)
+        self.previews.contains_key(&id)
     }
 
     /// 一般窗格（有分頁的窗格）的數量，預覽窗格不算。
@@ -99,10 +98,10 @@ impl App {
 
     /// 開始拖曳預覽窗格（拖它的標題）。
     pub(crate) fn begin_preview_drag(&mut self, id: PaneId) {
-        if !self.is_preview(id) {
+        if !self.previews.contains_key(&id) {
             return;
         }
-        let name = if self.terminals.contains_key(&id) { t("終端機").to_owned() } else { self.doc.name() };
+        let name = self.doc.name();
         self.tab_drag = Some(crate::pane_ops::TabDrag { pane: id, index: 0, label: name, preview: true });
     }
 
@@ -114,9 +113,7 @@ impl App {
         }
         self.layout.root.remove(id);
         if !self.layout.root.split(target, side, id) {
-            // 版面裡找不到目的窗格：不要留下懸空的預覽或終端機
-            self.previews.remove(&id);
-            self.terminals.remove(&id);
+            self.previews.remove(&id); // 版面裡找不到目的窗格：不要留下懸空的預覽
         }
         self.save_session();
     }

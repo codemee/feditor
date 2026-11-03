@@ -39,7 +39,6 @@ impl Dimensions for GridSize {
 /// 背景執行緒收到的事件：標題、結束、要回寫給 shell 的資料。
 #[derive(Default)]
 struct Shared {
-    title: parking_lot_free::Mutex<Option<String>>,
     exited: AtomicBool,
     sender: parking_lot_free::Mutex<Option<EventLoopSender>>,
 }
@@ -64,8 +63,6 @@ pub struct Listener {
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
-            Event::Title(t) => *self.shared.title.lock() = Some(t),
-            Event::ResetTitle => *self.shared.title.lock() = None,
             Event::Exit | Event::ChildExit(_) => {
                 self.shared.exited.store(true, Ordering::Relaxed);
             }
@@ -156,10 +153,6 @@ impl Terminal {
         let _ = self.sender.send(Msg::Input(bytes.into()));
     }
 
-    /// shell 設定的視窗標題（例如目前的資料夾或執行中的指令）。
-    pub fn title(&self) -> Option<String> {
-        self.shared.title.lock().clone()
-    }
 
     /// shell 已經結束。
     pub fn exited(&self) -> bool {

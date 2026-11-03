@@ -409,7 +409,6 @@ enum Action {
     TogglePreview,
     /// 新增一個終端機窗格。
     NewTerminal,
-    CloseTerminal(panes::PaneId),
     /// 關閉一個預覽窗格。
     ClosePreview(panes::PaneId),
     /// 開啟預覽外掛的資料夾。
@@ -536,8 +535,8 @@ struct App {
     pick_files_in: fn(&std::path::Path) -> Vec<PathBuf>,
     /// 預覽窗格（窗格編號 → 狀態）。預覽窗格也是版面裡的葉子，但不在 `layout.others`。
     previews: std::collections::HashMap<panes::PaneId, preview_pane::PreviewPane>,
-    /// 終端機窗格（和預覽窗格一樣不放分頁）。
-    terminals: std::collections::HashMap<panes::PaneId, terminal_pane::TerminalPane>,
+    /// 按 Ctrl+` 從編輯區跳進終端機之前所在的（窗格, 分頁），繞完一圈之後回到這裡。
+    terminal_return: Option<(panes::PaneId, usize)>,
     /// 使用者的預覽外掛（設定資料夾的 `previews/*.js`）。
     preview_plugins: Vec<std::sync::Arc<preview::Plugin>>,
     /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
@@ -603,7 +602,7 @@ impl App {
             preview_focused: false,
             pick_files_in: pick_files_in_dialog,
             previews: Default::default(),
-            terminals: Default::default(),
+            terminal_return: None,
             preview_plugins: Vec::new(),
             pane_rects: Vec::new(),
             last_macro: None,
@@ -1031,7 +1030,7 @@ impl App {
 
     /// 作用中的是空白、沒存過、沒改過的文件：開新檔案時直接用掉它，不要多出一個空分頁。
     fn is_pristine(&self) -> bool {
-        self.doc.path.is_none() && !self.doc.dirty && self.doc.buffer.is_empty()
+        self.doc.terminal.is_none() && self.doc.path.is_none() && !self.doc.dirty && self.doc.buffer.is_empty()
     }
 
     /// 分頁換了：搜尋結果屬於上一個分頁，作廢。
@@ -1397,6 +1396,15 @@ impl App {
     // ── 動作分派 ────────────────────────────────────────────
 
     fn handle(&mut self, action: Action, ctx: &egui::Context) {
+        // 作用中的分頁是終端機：這些針對文字文件的動作沒有意義
+        if self.doc.terminal.is_some()
+            && matches!(
+                action,
+                Action::Save | Action::SaveAs | Action::Reload(_) | Action::Undo | Action::Redo | Action::ReplaceOne | Action::ReplaceAll
+            )
+        {
+            return;
+        }
         match action {
             Action::New => self.new_document(),
             Action::Open => self.open(),
@@ -1502,7 +1510,7 @@ impl App {
             Action::ClosePane(pane) => self.close_pane(pane),
             Action::TogglePreview => self.toggle_preview(),
             Action::NewTerminal => self.new_terminal(),
-            Action::CloseTerminal(id) => self.close_terminal(id),
+
             Action::ClosePreview(id) => self.close_preview(id),
             Action::OpenPreviewsDir => self.open_folder(preview::previews_dir()),
             Action::BeginPreviewDrag(id) => self.begin_preview_drag(id),
@@ -1587,7 +1595,7 @@ impl App {
 
             group_separator(ui);
 
-            let terminal_on = !self.terminals.is_empty();
+            let terminal_on = !self.terminal_tabs().is_empty();
             if icons::toggle(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), terminal_on).clicked() {
                 action = Some(Action::NewTerminal);
             }
@@ -2772,6 +2780,11 @@ impl App {
     /// 狀態列：左邊是檔案狀態，右邊是這個檔案的格式設定（語言、編碼與 BOM、換行、重新載入）。
     /// 這些控制項不放標題，說明都在 tooltip。
     fn status_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        if self.doc.terminal.is_some() {
+            // 終端機分頁沒有編碼、換行這些文字文件的設定，只顯示名稱
+            ui.horizontal(|ui| ui.label(self.doc.name()));
+            return None;
+        }
         let mut action = None;
         ui.horizontal(|ui| {
             tight_buttons(ui);
@@ -3019,7 +3032,7 @@ impl eframe::App for App {
 
         // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
         self.terminal_input(&ctx);
-        self.reap_terminals();
+        self.reap_terminals(&ctx);
         if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::NEW_TERMINAL)) {
             self.new_terminal();
         } else if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::TOGGLE_TERMINAL)) {
@@ -4443,47 +4456,47 @@ mod tests {
     }
 
     #[test]
-    fn terminal_panes_open_below_stack_up_close_independently_and_are_left_out_of_the_session() {
+    fn terminals_are_tabs_that_open_in_their_own_pane_and_can_join_any_tab_bar() {
         let mut app = App::new(None, Settings::default());
         app.new_terminal();
-        assert_eq!(app.layout.pane_count(), 2);
-        let first = *app.terminals.keys().next().expect("開了終端機窗格");
-        assert!(app.is_preview(first), "終端機和預覽一樣不放分頁");
-        assert_eq!(app.tab_pane_count(), 1);
-        assert_eq!(app.layout.root.leaves(), vec![app.layout.focus, first], "在有焦點的窗格下面");
-        // 再開一個、再一個：每個都是獨立的窗格，編號遞增，切在最近用的那一個下面
-        app.new_terminal();
-        app.new_terminal();
-        assert_eq!(app.terminals.len(), 3);
-        assert_eq!(app.tab_pane_count(), 1);
-        let mut numbers: Vec<usize> = app.terminals.values().map(|p| p.number_for_test()).collect();
-        numbers.sort();
-        assert_eq!(numbers, vec![1, 2, 3]);
-        // 工作階段不記終端機窗格
-        let spec = app.session_all().layout.unwrap();
-        assert!(!spec.contains('W') && spec.matches('P').count() == 1, "{spec}");
-        // 不能把分頁放進終端機窗格
-        let focus = app.layout.focus;
-        app.move_tab(focus, 0, Target::Into(first));
-        assert_eq!(app.tabs.len(), 1);
-        // 關掉其中一個，其他的還在；編號 2 空出來，下一個新的就是 2
-        let ids = app.terminals_in_order();
-        let second = ids[1];
-        let n2 = app.terminals[&second].number_for_test();
-        app.close_terminal(second);
-        assert_eq!(app.terminals.len(), 2);
-        app.new_terminal();
-        let mut numbers: Vec<usize> = app.terminals.values().map(|p| p.number_for_test()).collect();
-        numbers.sort();
-        assert_eq!(numbers, vec![1, 2, 3], "回收編號 {n2}");
-        // 可以像預覽一樣被拖到別處
-        app.move_preview(first, focus, Side::Right);
-        assert!(app.layout.root.leaves().contains(&first));
-        for id in app.terminals_in_order() {
-            app.close_terminal(id);
-        }
+        assert_eq!(app.layout.pane_count(), 2, "新終端機在自己的窗格");
+        assert!(app.doc.terminal.is_some(), "焦點在新的終端機分頁");
+        assert_eq!(app.doc.name(), "終端機 1");
+        let term_pane = app.layout.focus;
+        let editor_pane = app.layout.root.leaves()[0];
+        assert_ne!(term_pane, editor_pane);
+        assert_eq!(app.terminal_tabs(), vec![(term_pane, 0)]);
+        // 終端機分頁不是「空白文件」：開檔案不會把它吃掉
+        assert!(!app.is_pristine());
+        // 把終端機分頁拖進編輯窗格的標籤列：兩個分頁在同一個窗格，終端機窗格消失
+        app.move_tab(term_pane, 0, Target::Into(editor_pane));
         assert_eq!(app.layout.pane_count(), 1);
-        assert!(app.terminals.is_empty());
+        assert_eq!(app.tabs.len(), 2);
+        assert!(app.doc.terminal.is_some(), "搬過去之後它是作用中的分頁");
+        // 切回文字分頁、再切回終端機：shell 還活著（同一個 TerminalPane）
+        app.switch_tab(0);
+        assert!(app.doc.terminal.is_none());
+        app.switch_tab(1);
+        assert_eq!(app.doc.terminal.as_ref().map(|t| t.number()), Some(1));
+        // 再開一個：編號 2，在新窗格；兩個終端機各自獨立
+        app.new_terminal();
+        assert_eq!(app.doc.name(), "終端機 2");
+        assert_eq!(app.terminal_tabs().len(), 2);
+        // 拖到側邊：切成新窗格，關掉終端機分頁就結束那個 shell
+        let focus = app.layout.focus;
+        app.move_tab(focus, 0, Target::Split(editor_pane, Side::Right));
+        assert!(app.layout.pane_count() >= 2);
+        // 工作階段裡只有文字文件，沒有終端機
+        assert_eq!(app.session_all().file_count(), 0);
+        // 關掉兩個終端機分頁
+        for _ in 0..4 {
+            if let Some((pane, i)) = app.terminal_tabs().first().copied() {
+                app.focus_pane(pane);
+                app.switch_tab(i);
+                app.close_tab(i);
+            }
+        }
+        assert!(app.terminal_tabs().is_empty());
     }
     #[test]
     fn closing_a_clean_tab_removes_it() {
