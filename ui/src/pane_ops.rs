@@ -11,7 +11,8 @@ use crate::panes::{self, PaneId, Side, Zone};
 use crate::settings::ViewOptions;
 use crate::editor::model::Selection;
 use crate::preview_pane::PreviewPane;
-use crate::session::{Session, SessionPane, SessionPreview};
+use crate::session::{Session, SessionEntry, SessionPane, SessionPreview, SessionTerminal};
+use crate::tabs::TabRecord;
 use crate::tabs::{Tab, TabSet};
 use std::collections::HashMap;
 use crate::{Action, App, Document, Icon, LogKind, editor_id, find_input_id, flat_list, icons, language, no_hover_outline, syntax, tight_buttons};
@@ -76,7 +77,7 @@ impl App {
     }
 
     /// 窗格 `id` 的第 `i` 個分頁標籤：（檔名, 完整路徑, 有沒有未儲存的修改）。
-    fn pane_label(&self, id: PaneId, i: usize) -> (String, String, bool) {
+    pub(crate) fn pane_label(&self, id: PaneId, i: usize) -> (String, String, bool) {
         if id == self.layout.focus {
             self.tabs.label(&self.doc, i)
         } else {
@@ -287,19 +288,21 @@ impl App {
             if self.is_preview(id) {
                 continue;
             }
-            let entries = if id == self.layout.focus {
-                self.tabs.session_entries(Some((&self.doc, &self.editor)))
+            let records = if id == self.layout.focus {
+                self.tabs.session_records(Some((&self.doc, &self.editor)))
             } else {
-                self.layout.others.get(&id).map(|s| s.session_entries(None)).unwrap_or_default()
+                self.layout.others.get(&id).map(|s| s.session_records(None)).unwrap_or_default()
             };
-            let (mut files, mut active) = (Vec::new(), 0);
-            for (path, caret, is_active) in entries {
+            let (mut files, mut terminals, mut active) = (Vec::new(), Vec::new(), 0);
+            for (pos, (record, is_active)) in records.into_iter().enumerate() {
                 if is_active {
-                    active = files.len();
+                    active = pos;
                 }
-                files.push((path, caret));
-            }
-            panes.push(SessionPane { id, active, files });
+                match record {
+                    TabRecord::File(path, caret) => files.push((path, caret)),
+                    TabRecord::Terminal { number, name } => terminals.push(SessionTerminal { at: pos, number, name }),
+                }
+            }            panes.push(SessionPane { id, active, files, terminals });
         }
         let mut previews: Vec<SessionPreview> =
             self.previews.keys().map(|id| SessionPreview { id: *id, source: self.layout.focus }).collect();
@@ -319,7 +322,8 @@ impl App {
         let Some((mut root, leaves)) = session.layout.as_deref().and_then(panes::Node::from_spec) else {
             return false;
         };
-        if leaves.len() < 2 {
+        // 只有一個窗格而且沒有終端機：交給呼叫端用單一窗格的方式處理（開在目前的窗格）
+        if leaves.len() < 2 && session.panes.iter().all(|p| p.terminals.is_empty()) {
             return false;
         }
         // 1. 每個一般窗格的分頁
@@ -330,18 +334,37 @@ impl App {
             }
             let mut set: Option<TabSet> = None;
             let mut active = None;
-            for (i, (path, caret)) in pane.files.iter().enumerate() {
-                if !path.exists() {
-                    continue;
-                }
-                let Ok((doc, warnings)) = Document::open(path) else { continue };
-                for w in warnings {
-                    self.push(LogKind::Warn, w);
-                }
-                let mut editor = EditorState::default();
-                editor.sel = Selection::collapsed((*caret).min(doc.buffer.len_chars()));
-                editor.scroll_to_caret = true;
-                let tab = Tab { doc, editor };
+            // 終端機的起始資料夾：這個窗格第一個檔案所在的資料夾，沒有就是目前的工作資料夾
+            let terminal_dir = pane
+                .files
+                .first()
+                .and_then(|(p, _)| p.parent().map(|d| d.to_path_buf()))
+                .filter(|d| d.is_dir())
+                .or_else(|| std::env::current_dir().ok());
+            for (i, entry) in pane.entries().into_iter().enumerate() {
+                let tab = match entry {
+                    SessionEntry::File(path, caret) => {
+                        if !path.exists() {
+                            continue;
+                        }
+                        let Ok((doc, warnings)) = Document::open(path) else { continue };
+                        for w in warnings {
+                            self.push(LogKind::Warn, w);
+                        }
+                        let mut editor = EditorState::default();
+                        editor.sel = Selection::collapsed(caret.min(doc.buffer.len_chars()));
+                        editor.scroll_to_caret = true;
+                        Tab { doc, editor }
+                    }
+                    // 終端機：開一個新的 shell，放回同樣的位置、取同樣的名字
+                    SessionEntry::Terminal(t) => {
+                        let mut doc = Document::new_terminal(t.number, terminal_dir.clone());
+                        if let (Some(name), Some(terminal)) = (&t.name, doc.terminal.as_mut()) {
+                            terminal.set_custom_name(name);
+                        }
+                        Tab { doc, editor: EditorState::default() }
+                    }
+                };
                 match &mut set {
                     None => set = Some(TabSet::from_tab(tab)),
                     Some(s) => {

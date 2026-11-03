@@ -234,6 +234,25 @@ impl TabSet {
         self.label_with(None, i)
     }
 
+    /// 要記進工作階段的分頁，依分頁順序，附上「是不是作用中分頁」：存過檔的檔案與終端機（沒存過的空白文件略過）。
+    /// `live` 同 [`TabSet::session_entries`]。
+    pub fn session_records(&self, live: Option<(&Document, &EditorState)>) -> Vec<(TabRecord, bool)> {
+        (0..self.slots.len())
+            .filter_map(|i| {
+                let (d, e) = match live {
+                    Some(pair) if i == self.active => pair,
+                    _ => (&self.slots[i].doc, &self.slots[i].editor),
+                };
+                let record = if let Some(t) = &d.terminal {
+                    TabRecord::Terminal { number: t.number(), name: t.custom_name().map(str::to_owned) }
+                } else {
+                    TabRecord::File(d.path.clone()?, e.sel.head)
+                };
+                Some((record, i == self.active))
+            })
+            .collect()
+    }
+
     /// 這個分頁集裡有存過檔的分頁：（路徑, 游標位置, 是不是作用中分頁）。`live` 同 [`TabSet::doc_in`]。
     pub fn session_entries(&self, live: Option<(&Document, &EditorState)>) -> Vec<(std::path::PathBuf, usize, bool)> {
         (0..self.slots.len())
@@ -287,6 +306,13 @@ impl TabSet {
             .filter(|&i| self.slots[i].doc.dirty)
             .collect()
     }
+}
+
+/// 工作階段裡的一個分頁（見 [`TabSet::session_records`]）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TabRecord {
+    File(std::path::PathBuf, usize),
+    Terminal { number: usize, name: Option<String> },
 }
 
 /// 進行中的巨集錄製（見 `EditorState::recording`）。

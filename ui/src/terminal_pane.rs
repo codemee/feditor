@@ -84,6 +84,11 @@ impl TerminalPane {
         self.custom_name.clone().unwrap_or_else(|| self.default_title())
     }
 
+    /// 使用者自己取的名字（沒有就是 `None`）。
+    pub fn custom_name(&self) -> Option<&str> {
+        self.custom_name.as_deref()
+    }
+
     /// 沒有自訂名字時的名稱：「終端機 2」。
     pub fn default_title(&self) -> String {
         tf!("終端機 {n}", n = self.number)

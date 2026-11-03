@@ -1000,6 +1000,7 @@ impl App {
                     if let Some(terminal) = self.doc.terminal.as_mut() {
                         terminal.set_custom_name(&typed);
                     }
+                    self.save_session(); // 名字也要記進工作階段
                 }
             }
             Then::RenameFile => {
@@ -4544,6 +4545,66 @@ mod tests {
         app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("終端機 1".into()), &ctx);
         app.new_terminal();
         assert_eq!(app.doc.name(), "終端機 2");
+    }
+
+    #[test]
+    fn terminal_tabs_are_remembered_with_their_names_and_positions_and_come_back_as_new_shells() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "aaa").unwrap();
+        std::fs::write(&b, "bbb").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&a);
+        app.open_path(&b);
+        let editor_pane = app.layout.focus;
+        // 兩個終端機：「終端機 1」，和一個自己取名的「伺服器」，都拖進編輯窗格；位置是 a、終端機 1、b、伺服器
+        app.new_terminal();
+        app.new_terminal();
+        let ctx = egui::Context::default();
+        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("伺服器".into()), &ctx);
+        let second = app.layout.focus;
+        app.move_tab(second, 0, Target::Into(editor_pane));
+        let first = app.terminal_tabs().into_iter().find(|(p, _)| *p != editor_pane).expect("還有另一個終端機");
+        app.move_tab(first.0, first.1, Target::Into(editor_pane));
+        let names: Vec<String> = (0..app.tabs.len()).map(|i| app.pane_label(editor_pane, i).0).collect();
+        assert_eq!(app.tabs.len(), 4, "{names:?}");
+
+        let saved = session::Session::parse(&app.session_all().to_text());
+        assert_eq!(saved.panes.len(), 1);
+        assert_eq!(saved.panes[0].files.len(), 2);
+        assert_eq!(saved.panes[0].terminals.len(), 2);
+
+        // 重新執行：同樣的檔案與終端機分頁、同樣的名字與順序，每個終端機是新開的 shell
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&saved);
+        assert_eq!(fresh.tabs.len(), 4);
+        let order = |app: &App| -> Vec<String> {
+            let pane = app.layout.focus;
+            (0..app.tabs.len()).map(|i| app.pane_label(pane, i).0).collect()
+        };
+        assert_eq!(order(&fresh), order(&app));
+        assert_eq!(fresh.terminal_tabs().len(), 2);
+        assert_eq!(fresh.tabs.active(), app.tabs.active(), "作用中的分頁也一樣");
+        // 存檔再讀回來是同一份（還原沒有改變記錄的內容）
+        assert_eq!(session::Session::parse(&fresh.session_all().to_text()), saved);
+    }
+
+    #[test]
+    fn a_pane_with_only_a_terminal_comes_back_and_a_missing_file_does_not_block_the_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        std::fs::write(&a, "aaa").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&a);
+        app.new_terminal();
+        assert_eq!(app.layout.pane_count(), 2);
+        let saved = session::Session::parse(&app.session_all().to_text());
+        // 檔案被刪掉之後：終端機窗格還是會回來
+        std::fs::remove_file(&a).unwrap();
+        let mut fresh = App::new(None, Settings::default());
+        fresh.restore_from(&saved);
+        assert_eq!(fresh.terminal_tabs().len(), 1, "終端機還原了");
+        assert_eq!(fresh.doc.name(), "終端機 1");
     }
 
     #[test]
