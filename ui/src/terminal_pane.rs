@@ -40,6 +40,11 @@ impl TerminalPane {
         Self { term: None, error: None, dir, want_focus: true, scroll_acc: 0.0, preedit: String::new() }
     }
 
+    /// 下一個畫面把鍵盤焦點給這個終端機。
+    pub fn request_focus(&mut self) {
+        self.want_focus = true;
+    }
+
     fn title(&self) -> String {
         self.term.as_ref().and_then(Terminal::title).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| t("終端機").to_owned())
     }
@@ -234,6 +239,9 @@ impl App {
         // 互動：點一下取得焦點、拖曳選取、滾輪捲動
         let wid = widget_id(id);
         let resp = ui.interact(content, wid, egui::Sense::click_and_drag());
+        if resp.hovered() && ctx.input(|i| i.pointer.primary_pressed()) {
+            pane.want_focus = true;
+        }
         if std::mem::take(&mut pane.want_focus) {
             ctx.memory_mut(|m| m.request_focus(wid));
         }

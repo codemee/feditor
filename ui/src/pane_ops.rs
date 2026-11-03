@@ -660,6 +660,11 @@ impl App {
                         // 終端機窗格：它自己的元件會拿到鍵盤焦點；編輯區放掉焦點，縮放快捷鍵仍調編輯區字級
                         self.preview_focused = false;
                         ctx.memory_mut(|m| m.surrender_focus(editor_id(self.layout.focus)));
+                        // 點在窗格的任何地方（包含標題列）都把鍵盤焦點給終端機；
+                        // 只靠畫面元件自己搶焦點的話，切到別的窗格後就切不回來
+                        if let Some(p) = self.terminals.get_mut(&id) {
+                            p.request_focus();
+                        }
                     } else if self.is_preview(id) {
                         // 預覽窗格也能取得輸入焦點：編輯區放掉鍵盤焦點，縮放快捷鍵改調預覽的字級
                         self.preview_focused = true;
