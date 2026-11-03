@@ -1,4 +1,5 @@
-//! 終端機窗格：App 這一側的管理（開關、焦點、輸入）與畫面。shell 與跳脫序列的處理在 `terminal.rs`。
+//! 終端機窗格：App 這一側的管理（新增、關閉、焦點、輸入）與畫面。shell 與跳脫序列的處理在 `terminal.rs`。
+//! 可以同時開很多個，每個都是獨立的窗格（自己的 shell、自己的編號）。
 //!
 //! 終端機窗格和預覽窗格一樣不放分頁（[`App::is_preview`] 對兩者都回傳 `true`），可以拖到版面的任何位置。
 //! 鍵盤焦點用 egui 的焦點機制：點一下終端機畫面，它的元件拿到焦點，這一幀開頭把所有按鍵、文字、
@@ -18,10 +19,19 @@ use crate::panes::{PaneId, Side as PaneSide};
 use crate::terminal::{self, GridSize, Terminal};
 use crate::{App, LogKind};
 
-/// 開關終端機。不用 Ctrl+C／V／D 等 shell 要用的鍵。
+/// 在編輯區與各個終端機之間切換焦點（沒有終端機就開一個）。不用 Ctrl+C／V／D 等 shell 要用的鍵。
 pub const TOGGLE_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Backtick);
+/// 新增一個終端機。
+pub const NEW_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers { shift: true, ..egui::Modifiers::COMMAND },
+    egui::Key::Backtick,
+);
 
 pub struct TerminalPane {
+    /// 顯示在標題上的編號（目前沒人用的最小正整數）。
+    number: usize,
+    /// 最後一次有鍵盤焦點的時間：新增終端機時，切在最近用的那一個旁邊。
+    last_focused: Option<std::time::Instant>,
     /// 還沒開 shell（第一次畫的時候才知道有幾格）。開失敗時是錯誤訊息。
     term: Option<Terminal>,
     error: Option<String>,
@@ -36,8 +46,13 @@ pub struct TerminalPane {
 }
 
 impl TerminalPane {
-    pub fn new(dir: Option<std::path::PathBuf>) -> Self {
-        Self { term: None, error: None, dir, want_focus: true, scroll_acc: 0.0, preedit: String::new() }
+    pub fn new(dir: Option<std::path::PathBuf>, number: usize) -> Self {
+        Self { number, last_focused: None, term: None, error: None, dir, want_focus: true, scroll_acc: 0.0, preedit: String::new() }
+    }
+
+    #[cfg(test)]
+    pub fn number_for_test(&self) -> usize {
+        self.number
     }
 
     /// 下一個畫面把鍵盤焦點給這個終端機。
@@ -45,8 +60,13 @@ impl TerminalPane {
         self.want_focus = true;
     }
 
+    /// 標題列的文字：「終端機 2」，shell 有設標題（例如目前的指令）時接在後面。
     fn title(&self) -> String {
-        self.term.as_ref().and_then(Terminal::title).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| t("終端機").to_owned())
+        let number = self.number;
+        match self.term.as_ref().and_then(Terminal::title).filter(|s| !s.trim().is_empty()) {
+            Some(title) => tf!("終端機 {n}：{title}", n = number, title = title),
+            None => tf!("終端機 {n}", n = number),
+        }
     }
 }
 
@@ -54,27 +74,55 @@ pub(crate) fn widget_id(id: PaneId) -> egui::Id {
     egui::Id::unique(("terminal_widget", id))
 }
 
+/// 目前沒人用的最小正整數（編號跟著關掉的終端機回收）。
+fn lowest_free_number(used: impl IntoIterator<Item = usize>) -> usize {
+    let used: std::collections::HashSet<usize> = used.into_iter().collect();
+    (1..).find(|n| !used.contains(n)).expect("正整數用不完")
+}
+
+/// 在 `order`（畫面順序）裡，`current` 的下一個；`current` 是 `None`（焦點在編輯區）就是第一個。
+/// 回傳 `None` 表示繞完一圈、該回到編輯區。
+fn next_in_cycle(order: &[PaneId], current: Option<PaneId>) -> Option<PaneId> {
+    match current {
+        None => order.first().copied(),
+        Some(c) => order.iter().position(|id| *id == c).and_then(|i| order.get(i + 1).copied()),
+    }
+}
+
 impl App {
-    /// 終端機窗格的編號（目前只開一個）。
-    pub(crate) fn terminal_id(&self) -> Option<PaneId> {
-        self.terminals.keys().min().copied()
+    /// 所有終端機窗格，依畫面上的順序（左到右、上到下）。
+    pub(crate) fn terminals_in_order(&self) -> Vec<PaneId> {
+        self.layout.root.leaves().into_iter().filter(|id| self.terminals.contains_key(id)).collect()
     }
 
-    /// 在有焦點的窗格下方開一個終端機。窗格太小放不下就提示。
-    fn open_terminal(&mut self) {
-        let focus = self.layout.focus;
-        let rect = self.pane_rects.iter().find(|(id, _)| *id == focus).map(|(_, r)| *r);
-        if rect.is_some_and(|r| !crate::panes::can_split(r, PaneSide::Bottom)) {
+    /// 新增一個終端機：優先切在最近用的終端機下方；放不下就依序試其他終端機（大的先）、
+    /// 最後是有焦點的窗格。全都放不下才提示。
+    pub(crate) fn new_terminal(&mut self) {
+        let rect_of = |app: &App, id: PaneId| app.pane_rects.iter().find(|(p, _)| *p == id).map(|(_, r)| *r);
+        let mut candidates: Vec<PaneId> = Vec::new();
+        if let Some(recent) = self.terminals.iter().max_by_key(|(id, p)| (p.last_focused, p.number, **id)).map(|(id, _)| *id) {
+            candidates.push(recent);
+        }
+        let mut others: Vec<PaneId> = self.terminals.keys().copied().filter(|id| !candidates.contains(id)).collect();
+        others.sort_by(|a, b| {
+            let area = |id: &PaneId| rect_of(self, *id).map_or(0.0, |r| r.width() * r.height());
+            area(b).total_cmp(&area(a))
+        });
+        candidates.extend(others);
+        candidates.push(self.layout.focus);
+        // 還沒畫過（沒有範圍資料）時照樣允許，之後畫面會依最小窗格大小調整
+        let target = candidates.into_iter().find(|id| rect_of(self, *id).is_none_or(|r| crate::panes::can_split(r, PaneSide::Bottom)));
+        let Some(target) = target else {
             self.push(LogKind::Warn, t("窗格太小，放不下終端機"));
             return;
-        }
+        };
         let id = self.layout.alloc_id();
-        if self.layout.root.split(focus, PaneSide::Bottom, id) {
+        if self.layout.root.split(target, PaneSide::Bottom, id) {
             let dir = self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            self.terminals.insert(id, TerminalPane::new(dir.or_else(|| std::env::current_dir().ok())));
+            let number = lowest_free_number(self.terminals.values().map(|p| p.number));
+            self.terminals.insert(id, TerminalPane::new(dir.or_else(|| std::env::current_dir().ok()), number));
         }
     }
-
     pub(crate) fn close_terminal(&mut self, id: PaneId) {
         if self.terminals.remove(&id).is_some() {
             self.layout.root.remove(id);
@@ -82,24 +130,21 @@ impl App {
         }
     }
 
-    /// 工具列的終端機鈕：已經有就關掉（shell 跟著結束），沒有就開一個。
-    pub(crate) fn toggle_terminal(&mut self) {
-        match self.terminal_id() {
-            Some(id) => self.close_terminal(id),
-            None => self.open_terminal(),
-        }
-    }
-
-    /// 快捷鍵：沒有終端機就開；有的話在編輯區與終端機之間切換焦點。
+    /// 快捷鍵：沒有終端機就開一個；有的話，焦點依序在編輯區、各個終端機（畫面順序）之間循環。
     pub(crate) fn focus_terminal_shortcut(&mut self, ctx: &egui::Context) {
-        let Some(id) = self.terminal_id() else {
-            self.open_terminal();
+        let order = self.terminals_in_order();
+        if order.is_empty() {
+            self.new_terminal();
             return;
-        };
-        if ctx.memory(|m| m.has_focus(widget_id(id))) {
-            self.pending_editor_focus = true;
-        } else if let Some(p) = self.terminals.get_mut(&id) {
-            p.want_focus = true;
+        }
+        let current = order.iter().copied().find(|id| ctx.memory(|m| m.has_focus(widget_id(*id))));
+        match next_in_cycle(&order, current) {
+            Some(next) => {
+                if let Some(p) = self.terminals.get_mut(&next) {
+                    p.want_focus = true;
+                }
+            }
+            None => self.pending_editor_focus = true,
         }
     }
 
@@ -246,6 +291,9 @@ impl App {
             ctx.memory_mut(|m| m.request_focus(wid));
         }
         let focused = ctx.memory(|m| m.has_focus(wid));
+        if focused {
+            pane.last_focused = Some(std::time::Instant::now());
+        }
         if focused {
             // Tab、方向鍵、Esc 都是給 shell 的，不要讓 egui 拿去切換焦點
             ctx.memory_mut(|m| m.set_focus_lock_filter(wid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true }));
@@ -589,6 +637,21 @@ mod tests {
         for c in ['a', '中', '>', ' ', '→'] {
             assert!(!is_graphic_glyph(c), "{c}");
         }
+    }
+
+    #[test]
+    fn terminal_numbers_reuse_the_lowest_free_one_and_focus_cycles_through_editor_and_terminals() {
+        assert_eq!(lowest_free_number([]), 1);
+        assert_eq!(lowest_free_number([1, 2, 3]), 4);
+        assert_eq!(lowest_free_number([1, 3]), 2, "關掉 2 之後，下一個又是 2");
+        assert_eq!(lowest_free_number([2]), 1);
+        let order = [7, 9, 4];
+        assert_eq!(next_in_cycle(&order, None), Some(7), "從編輯區到第一個終端機");
+        assert_eq!(next_in_cycle(&order, Some(7)), Some(9));
+        assert_eq!(next_in_cycle(&order, Some(9)), Some(4));
+        assert_eq!(next_in_cycle(&order, Some(4)), None, "最後一個之後回到編輯區");
+        assert_eq!(next_in_cycle(&[], None), None);
+        assert_eq!(next_in_cycle(&order, Some(99)), None, "不在清單裡的當作繞完");
     }
 
     #[test]

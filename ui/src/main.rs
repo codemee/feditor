@@ -407,8 +407,8 @@ enum Action {
     ClosePane(panes::PaneId),
     /// 開啟或關閉有焦點的窗格的預覽。
     TogglePreview,
-    /// 開關終端機窗格。
-    ToggleTerminal,
+    /// 新增一個終端機窗格。
+    NewTerminal,
     CloseTerminal(panes::PaneId),
     /// 關閉一個預覽窗格。
     ClosePreview(panes::PaneId),
@@ -1501,7 +1501,7 @@ impl App {
             }
             Action::ClosePane(pane) => self.close_pane(pane),
             Action::TogglePreview => self.toggle_preview(),
-            Action::ToggleTerminal => self.toggle_terminal(),
+            Action::NewTerminal => self.new_terminal(),
             Action::CloseTerminal(id) => self.close_terminal(id),
             Action::ClosePreview(id) => self.close_preview(id),
             Action::OpenPreviewsDir => self.open_folder(preview::previews_dir()),
@@ -1587,9 +1587,9 @@ impl App {
 
             group_separator(ui);
 
-            let terminal_on = self.terminal_id().is_some();
-            if icons::toggle(ui, Icon::Terminal, t("終端機 (Ctrl+`)"), terminal_on).clicked() {
-                action = Some(Action::ToggleTerminal);
+            let terminal_on = !self.terminals.is_empty();
+            if icons::toggle(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), terminal_on).clicked() {
+                action = Some(Action::NewTerminal);
             }
 
             group_separator(ui);
@@ -3020,7 +3020,9 @@ impl eframe::App for App {
         // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
         self.terminal_input(&ctx);
         self.reap_terminals();
-        if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::TOGGLE_TERMINAL)) {
+        if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::NEW_TERMINAL)) {
+            self.new_terminal();
+        } else if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::TOGGLE_TERMINAL)) {
             self.focus_terminal_shortcut(&ctx);
         }
         self.capture_shortcut(&ctx);
@@ -4441,29 +4443,48 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_pane_opens_below_closes_and_is_left_out_of_the_session() {
+    fn terminal_panes_open_below_stack_up_close_independently_and_are_left_out_of_the_session() {
         let mut app = App::new(None, Settings::default());
-        app.toggle_terminal();
+        app.new_terminal();
         assert_eq!(app.layout.pane_count(), 2);
-        let id = app.terminal_id().expect("開了終端機窗格");
-        assert!(app.is_preview(id), "終端機和預覽一樣不放分頁");
+        let first = *app.terminals.keys().next().expect("開了終端機窗格");
+        assert!(app.is_preview(first), "終端機和預覽一樣不放分頁");
         assert_eq!(app.tab_pane_count(), 1);
-        assert_eq!(app.layout.root.leaves(), vec![app.layout.focus, id], "在有焦點的窗格下面");
+        assert_eq!(app.layout.root.leaves(), vec![app.layout.focus, first], "在有焦點的窗格下面");
+        // 再開一個、再一個：每個都是獨立的窗格，編號遞增，切在最近用的那一個下面
+        app.new_terminal();
+        app.new_terminal();
+        assert_eq!(app.terminals.len(), 3);
+        assert_eq!(app.tab_pane_count(), 1);
+        let mut numbers: Vec<usize> = app.terminals.values().map(|p| p.number_for_test()).collect();
+        numbers.sort();
+        assert_eq!(numbers, vec![1, 2, 3]);
         // 工作階段不記終端機窗格
         let spec = app.session_all().layout.unwrap();
         assert!(!spec.contains('W') && spec.matches('P').count() == 1, "{spec}");
         // 不能把分頁放進終端機窗格
         let focus = app.layout.focus;
-        app.move_tab(focus, 0, Target::Into(id));
+        app.move_tab(focus, 0, Target::Into(first));
         assert_eq!(app.tabs.len(), 1);
-        // 可以像預覽一樣被拖到別處；再按一次就關掉
-        app.move_preview(id, focus, Side::Right);
-        assert_eq!(app.layout.root.leaves(), vec![focus, id]);
-        app.toggle_terminal();
+        // 關掉其中一個，其他的還在；編號 2 空出來，下一個新的就是 2
+        let ids = app.terminals_in_order();
+        let second = ids[1];
+        let n2 = app.terminals[&second].number_for_test();
+        app.close_terminal(second);
+        assert_eq!(app.terminals.len(), 2);
+        app.new_terminal();
+        let mut numbers: Vec<usize> = app.terminals.values().map(|p| p.number_for_test()).collect();
+        numbers.sort();
+        assert_eq!(numbers, vec![1, 2, 3], "回收編號 {n2}");
+        // 可以像預覽一樣被拖到別處
+        app.move_preview(first, focus, Side::Right);
+        assert!(app.layout.root.leaves().contains(&first));
+        for id in app.terminals_in_order() {
+            app.close_terminal(id);
+        }
         assert_eq!(app.layout.pane_count(), 1);
         assert!(app.terminals.is_empty());
     }
-
     #[test]
     fn closing_a_clean_tab_removes_it() {
         let mut app = app_with("one");
