@@ -84,6 +84,24 @@ impl App {
         }
     }
 
+    /// 窗格 id 的第 i 個分頁標籤要顯示的文字：檔名，加上未儲存的 ●，檔案被刪或被改時再加註。
+    pub(crate) fn pane_tab_text(&self, id: PaneId, i: usize) -> String {
+        use crate::document::DiskState;
+        let (name, _, dirty) = self.pane_label(id, i);
+        let state = if id == self.layout.focus {
+            self.tabs.disk_state(Some(&self.doc), i)
+        } else {
+            self.layout.others[&id].disk_state(None, i)
+        };
+        let mut text = if dirty { format!("{name} ●") } else { name };
+        match state {
+            DiskState::Synced => {}
+            DiskState::Missing => text.push_str(t(" （已刪除）")),
+            DiskState::Stale => text.push_str(t(" （磁碟上已變更）")),
+        }
+        text
+    }
+
     // ── 焦點 ────────────────────────────────────────────────
 
     /// 換焦點的底層動作：目前有焦點的分頁集（內容已經收回）退到 `others`，`id` 那個成為有焦點的。
@@ -491,8 +509,7 @@ impl App {
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 flat_list(ui, |ui| {
                     for i in 0..self.pane_tab_count(pane) {
-                        let (name, _, dirty) = self.pane_label(pane, i);
-                        let text = if dirty { format!("{name} ●") } else { name };
+                        let text = self.pane_tab_text(pane, i);
                         if ui.selectable_label(i == self.pane_active(pane), text).clicked() {
                             *action = Some(Action::PaneTab(pane, TabCmd::Switch(i)));
                             ui.close();
@@ -506,8 +523,8 @@ impl App {
     ///（× 的位置一直保留，顯示與隱藏時分頁寬度不會跳動）。可以拖曳。
     fn tab_widget(&self, ui: &mut egui::Ui, pane: PaneId, i: usize) -> Option<Action> {
         let mut action = None;
-        let (name, full, dirty) = self.pane_label(pane, i);
-        let text = if dirty { format!("{name} ●") } else { name };
+        let (_, full, _) = self.pane_label(pane, i);
+        let text = self.pane_tab_text(pane, i);
         let active_here = i == self.pane_active(pane);
         let font = egui::TextStyle::Button.resolve(ui.style());
         let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);

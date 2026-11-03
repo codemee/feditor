@@ -24,6 +24,7 @@ mod session;
 mod settings;
 mod syntax;
 mod tabs;
+mod watcher;
 mod theme;
 
 use document::{Document, SaveDocError};
@@ -580,6 +581,8 @@ struct App {
     /// 上次檢查外部變更的時間，以及當時視窗有沒有焦點。
     last_disk_check: Instant,
     was_focused: bool,
+    /// 監看已開啟檔案所在的資料夾（第一次畫面更新時才建立，測試裡沒有）。
+    watcher: Option<watcher::FileWatcher>,
 }
 
 impl App {
@@ -622,6 +625,7 @@ impl App {
             session_enabled: false,
             last_disk_check: Instant::now(),
             was_focused: true,
+            watcher: None,
         };
         app.refresh_macros();
         app.refresh_schemes();
@@ -1102,7 +1106,47 @@ impl App {
         }
     }
 
+    /// 所有窗格裡所有有檔案的分頁，檔案的路徑。
+    fn open_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> =
+            self.tabs.session_entries(Some((&self.doc, &self.editor))).into_iter().map(|(p, ..)| p).collect();
+        for set in self.layout.others.values() {
+            paths.extend(set.session_entries(None).into_iter().map(|(p, ..)| p));
+        }
+        paths
+    }
+
+    /// 讓監看的資料夾跟著開著的檔案走，並回傳有沒有（穩定下來的）檔案系統事件。
+    fn watch_files(&mut self, ctx: &egui::Context) -> bool {
+        let paths = self.open_paths();
+        let w = self.watcher.get_or_insert_with(|| watcher::FileWatcher::new(ctx.clone()));
+        w.sync(watcher::watch_dirs(paths.iter().map(PathBuf::as_path)));
+        let changed = w.take_changes();
+        if w.pending() {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        changed
+    }
+
+    /// 沒有顯示在畫面上的分頁（其他窗格、同窗格的其他分頁）：檔案被刪了就標記；被改了，沒有未儲存的修改就直接重新載入，
+    /// 有的話標記起來，切換到那個分頁時再問（見 [App::check_external_changes]）。
+    fn check_background_docs(&mut self) {
+        let mut logs: Vec<(LogKind, String)> = Vec::new();
+        let tabs = self.tabs.background_mut(true);
+        let others = self.layout.others.values_mut().flat_map(|s| s.background_mut(false));
+        for tab in tabs.chain(others) {
+            watcher::refresh_background_tab(tab, &mut logs);
+        }
+        for (kind, msg) in logs {
+            self.push(kind, msg);
+        }
+    }
+
     fn check_external_changes(&mut self) {
+        if self.doc.poll_disk() == document::DiskChange::Gone {
+            let name = self.doc.name();
+            self.push(LogKind::Warn, tf!("{name} 已被刪除或移走，分頁裡的內容仍然保留；存檔會重新建立這個檔案", name = name));
+        }
         if self.modal.is_some() {
             return;
         }
@@ -2930,11 +2974,14 @@ impl eframe::App for App {
             self.save_session();
         }
 
-        // 檔案被別的程式改了？視窗拿回焦點時、以及每秒檢查一次
+        // 檔案被別的程式改了、刪了？資料夾監看一有事件、視窗拿回焦點時就檢查；
+        // 另外每 5 秒檢查一次當後備（網路磁碟、監看失效的情況）
         let focused = ctx.input(|i| i.focused);
-        if focused && (!self.was_focused || self.last_disk_check.elapsed() >= Duration::from_secs(1)) {
+        let changed = self.watch_files(&ctx);
+        if changed || (focused && !self.was_focused) || self.last_disk_check.elapsed() >= Duration::from_secs(5) {
             self.last_disk_check = Instant::now();
             self.check_external_changes();
+            self.check_background_docs();
         }
         self.was_focused = focused;
         ctx.request_repaint_after(Duration::from_secs(1));
@@ -4296,6 +4343,76 @@ mod tests {
         app.handle_external_change(|_| true);
         assert_eq!(app.doc.text(), "disk v3");
         assert!(!app.doc.dirty);
+    }
+
+    #[test]
+    fn background_tabs_in_every_pane_follow_external_changes_and_deletions() {
+        use crate::document::DiskState;
+        let dir = tempfile::tempdir().unwrap();
+        let [a, b, c] = ["a.txt", "b.txt", "c.txt"].map(|n| {
+            let p = dir.path().join(n);
+            std::fs::write(&p, format!("{n} v1")).unwrap();
+            p
+        });
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&a);
+        app.open_path(&b);
+        app.open_path(&c); // 作用中是 c；a、b 是同一個窗格的背景分頁
+        // 把 a 搬到新窗格，讓「其他窗格」也有一個背景分頁
+        let focus = app.layout.focus;
+        app.move_tab(focus, 0, pane_ops::Target::Split(focus, panes::Side::Right));
+        let other = *app.layout.others.keys().next().expect("應該有另一個窗格");
+        app.focus_pane(other);
+        app.focus_pane(focus);
+        let text_of = |app: &mut App, name: &str| -> Option<(String, DiskState)> {
+            let mut found = None;
+            let sets = std::iter::once(&mut app.tabs).chain(app.layout.others.values_mut());
+            for (n, set) in sets.enumerate() {
+                for tab in set.background_mut(n == 0) {
+                    if tab.doc.name() == name {
+                        found = Some((tab.doc.text().to_owned(), tab.doc.disk_state));
+                    }
+                }
+            }
+            found
+        };
+        let bump = |p: &std::path::Path, text: &str, secs: u64| {
+            std::fs::write(p, text).unwrap();
+            let t = std::time::SystemTime::now() + std::time::Duration::from_secs(secs);
+            std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+        };
+        // 乾淨的背景分頁：自動重新載入（兩個窗格都要）
+        bump(&a, "a.txt v2", 5);
+        bump(&b, "b.txt v2", 5);
+        app.check_background_docs();
+        assert_eq!(text_of(&mut app, "a.txt").unwrap().0, "a.txt v2", "其他窗格的背景分頁");
+        assert_eq!(text_of(&mut app, "b.txt").unwrap().0, "b.txt v2", "同窗格的背景分頁");
+        // 有未儲存修改的背景分頁：不動內容，只標記，而且只提醒一次
+        {
+            let tab = app.layout.others.values_mut().flat_map(|s| s.background_mut(false)).find(|t| t.doc.name() == "a.txt").unwrap();
+            tab.doc.buffer.insert(0, "mine ");
+            tab.doc.sync();
+        }
+        let logs_before = app.log.len();
+        bump(&a, "a.txt v3", 10);
+        app.check_background_docs();
+        app.check_background_docs();
+        let (text, state) = text_of(&mut app, "a.txt").unwrap();
+        assert_eq!(text, "mine a.txt v2");
+        assert_eq!(state, DiskState::Stale);
+        assert_eq!(app.log.len(), logs_before + 1, "只提醒一次");
+        // 被刪除：標記，內容還在
+        std::fs::remove_file(&b).unwrap();
+        app.check_background_docs();
+        assert_eq!(text_of(&mut app, "b.txt").unwrap(), ("b.txt v2".to_owned(), DiskState::Missing));
+        // 作用中的分頁被刪除也要標記
+        std::fs::remove_file(&c).unwrap();
+        app.check_external_changes();
+        assert_eq!(app.doc.disk_state, DiskState::Missing);
+        // 標籤上看得到
+        let id = app.layout.focus;
+        let active = app.tabs.active();
+        assert!(app.pane_tab_text(id, active).contains(t(" （已刪除）")));
     }
 
     #[test]

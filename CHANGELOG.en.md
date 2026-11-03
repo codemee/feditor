@@ -2,6 +2,14 @@
 
 # Changelog
 
+## Unreleased
+
+### Changed
+- **External change detection now uses a file-system watcher** (`notify`): instead of polling only the active file of the focused pane once a second, the folders of all open files are watched, covering every tab in every pane; a change is handled as soon as it settles (short debounce), with a re-check every 5 seconds and when the window regains focus as a fallback. A background tab without unsaved changes is reloaded automatically; otherwise its tab is marked "(changed on disk)" and you are asked when you switch to it.
+
+### Added
+- **Deleted or moved files**: the tab is marked "(deleted)" and a message is shown once in the output panel; the tab keeps its content, saving recreates the file, and it returns to normal if the file reappears.
+
 ## [0.1.5] - 2026-11-03
 
 ### Added

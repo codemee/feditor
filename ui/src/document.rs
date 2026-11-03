@@ -28,8 +28,32 @@ pub struct Document {
     format_changed: bool,
     /// 最後一次讀取或寫入這個檔案時，磁碟上的修改時間。用來發現別的程式改了檔案。
     disk_mtime: Option<std::time::SystemTime>,
+    /// 磁碟上的檔案和這個分頁的關係（被刪掉了、有尚未處理的外部修改…），分頁標籤會顯示。
+    pub disk_state: DiskState,
     /// 語法上色用的語言：自動（預設）、純文字、或手動指定。只屬於這個分頁，不寫進檔案或工作階段。
     pub lang: crate::syntax::LangChoice,
+}
+
+/// 磁碟上的檔案和分頁內容的關係。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DiskState {
+    /// 正常（或這個文件沒有對應的檔案）。
+    #[default]
+    Synced,
+    /// 檔案已經被刪除或移走；分頁裡的內容仍然保留。
+    Missing,
+    /// 檔案被其他程式改了，但分頁有未儲存的修改，等使用者決定要不要重新載入。
+    Stale,
+}
+
+/// [Document::poll_disk] 發現的變化。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiskChange {
+    None,
+    /// 修改時間和上次讀寫時不同（包含被刪除後又出現）。
+    Changed,
+    /// 檔案剛剛不見了（只會回報一次）。
+    Gone,
 }
 
 /// 緩衝區內容的指紋；只走過 rope 的各個區塊，不需要組出整份字串。
@@ -131,15 +155,46 @@ impl Document {
         }
     }
 
+    /// 看一下磁碟上的檔案：被刪掉、又出現、或被改過。刪除只回報一次（之後 [DiskState::Missing] 記著）；
+    /// 檔案重新出現時狀態回到 [DiskState::Synced]。不會改動 disk_mtime，所以「改過」會一直回報到
+    /// 使用者處理（重新載入或 [ccept_disk_version](Self::accept_disk_version)）為止。
+    pub fn poll_disk(&mut self) -> DiskChange {
+        let Some(path) = &self.path else { return DiskChange::None };
+        match std::fs::metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if self.disk_state == DiskState::Missing {
+                    DiskChange::None
+                } else {
+                    self.disk_state = DiskState::Missing;
+                    DiskChange::Gone
+                }
+            }
+            Err(_) => DiskChange::None,
+            Ok(meta) => {
+                if self.disk_state == DiskState::Missing {
+                    self.disk_state = DiskState::Synced;
+                }
+                match (meta.modified().ok(), self.disk_mtime) {
+                    (Some(now), Some(known)) if now != known => DiskChange::Changed,
+                    _ => DiskChange::None,
+                }
+            }
+        }
+    }
+
     /// 承認目前磁碟上的版本（使用者決定不重新載入時，不要一直再問）。
     pub fn accept_disk_version(&mut self) {
         if let Some(p) = &self.path {
             self.disk_mtime = mtime_of(p);
         }
+        if self.disk_state == DiskState::Stale {
+            self.disk_state = DiskState::Synced;
+        }
     }
 
     fn mark_saved(&mut self) {
         self.disk_mtime = self.path.as_deref().and_then(mtime_of);
+        self.disk_state = DiskState::Synced;
         self.saved = Some(fingerprint(&self.buffer));
         self.format_changed = false;
         self.dirty = false;
@@ -203,6 +258,7 @@ impl Document {
                 saved,
                 format_changed: false,
                 disk_mtime: mtime_of(path),
+                disk_state: DiskState::Synced,
                 lang: Default::default(),
                 buffer,
                 format: d.format,
@@ -391,6 +447,39 @@ mod tests {
         assert_eq!(doc.text(), "你好，世界");
         assert!(!doc.dirty);
         assert_eq!(doc.lang, crate::syntax::LangChoice::Plain, "重新載入要保留語言選擇");
+    }
+
+    #[test]
+    fn poll_disk_reports_changes_and_a_deletion_only_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(&dir, "w.txt", b"one");
+        let (mut doc, _) = Document::open(&p).unwrap();
+        assert_eq!(doc.poll_disk(), DiskChange::None);
+        // 被改過：一直回報到使用者處理
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+        assert_eq!(doc.poll_disk(), DiskChange::Changed);
+        assert_eq!(doc.poll_disk(), DiskChange::Changed);
+        doc.accept_disk_version();
+        assert_eq!(doc.poll_disk(), DiskChange::None);
+        // 被刪掉：只回報一次，內容還在
+        std::fs::remove_file(&p).unwrap();
+        assert_eq!(doc.poll_disk(), DiskChange::Gone);
+        assert_eq!(doc.disk_state, DiskState::Missing);
+        assert_eq!(doc.poll_disk(), DiskChange::None);
+        assert_eq!(doc.text(), "one");
+        // 又出現（內容不同、時間也不同）：狀態恢復、回報為被改過
+        std::fs::write(&p, "two").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(20);
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+        assert_eq!(doc.poll_disk(), DiskChange::Changed);
+        assert_eq!(doc.disk_state, DiskState::Synced);
+        // 存檔會把狀態清乾淨
+        std::fs::remove_file(&p).unwrap();
+        assert_eq!(doc.poll_disk(), DiskChange::Gone);
+        doc.save().unwrap();
+        assert_eq!(doc.disk_state, DiskState::Synced);
+        assert_eq!(doc.poll_disk(), DiskChange::None);
     }
 
     #[test]

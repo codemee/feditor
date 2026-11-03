@@ -247,6 +247,18 @@ impl TabSet {
             .collect()
     }
 
+    /// 內容在 slots 裡的分頁（可以直接改）。live 為 true 表示這是有焦點的分頁集，
+    /// 作用中分頁的內容在外面（App 的 doc／ditor），不在這裡面。
+    pub fn background_mut(&mut self, live: bool) -> impl Iterator<Item = &mut Tab> {
+        let active = self.active;
+        self.slots.iter_mut().enumerate().filter(move |(i, _)| !(live && *i == active)).map(|(_, t)| t)
+    }
+
+    /// 第 i 個分頁的磁碟狀態（live 同 [TabSet::doc_in]）。
+    pub fn disk_state(&self, live: Option<&Document>, i: usize) -> crate::document::DiskState {
+        self.doc_in(live, i).disk_state
+    }
+
     /// 有未儲存修改的分頁編號。
     pub fn dirty_tabs(&self, doc: &Document) -> Vec<usize> {
         (0..self.slots.len())
