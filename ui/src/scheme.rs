@@ -19,6 +19,11 @@ use feditor_core::i18n::t;
 use feditor_core::tf;
 use std::path::{Path, PathBuf};
 
+/// 內建配色手寫的顏色數（背景、文字、控制項、強調、語法）；後面接終端機的 16 色，由 [ill_terminal] 補上。
+const BASE_COUNT: usize = 25;
+/// 終端機的 16 色：黑、紅、綠、黃、藍、洋紅、青、白，再加上它們的亮色版本。
+pub const TERMINAL_COUNT: usize = 16;
+
 /// 一種顏色的用途。順序固定：內建配色的色票照這個順序排。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -47,6 +52,22 @@ pub enum Role {
     SynKeyword,
     SynType,
     SynFunction,
+    TermBlack,
+    TermRed,
+    TermGreen,
+    TermYellow,
+    TermBlue,
+    TermMagenta,
+    TermCyan,
+    TermWhite,
+    TermBrightBlack,
+    TermBrightRed,
+    TermBrightGreen,
+    TermBrightYellow,
+    TermBrightBlue,
+    TermBrightMagenta,
+    TermBrightCyan,
+    TermBrightWhite,
 }
 
 /// 編輯畫面上顏色分組的標題。
@@ -57,10 +78,11 @@ pub enum Group {
     Controls,
     Accent,
     Syntax,
+    Terminal,
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [Group::Background, Group::Text, Group::Controls, Group::Accent, Group::Syntax];
+    pub const ALL: [Group; 6] = [Group::Background, Group::Text, Group::Controls, Group::Accent, Group::Syntax, Group::Terminal];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -69,12 +91,13 @@ impl Group {
             Group::Controls => t("按鈕與邊線"),
             Group::Accent => t("強調與狀態"),
             Group::Syntax => t("語法上色"),
+            Group::Terminal => t("終端機"),
         }
     }
 }
 
 impl Role {
-    pub const COUNT: usize = 25;
+    pub const COUNT: usize = BASE_COUNT + TERMINAL_COUNT;
     pub const ALL: [Role; Role::COUNT] = [
         Role::EditorBg,
         Role::PanelBg,
@@ -101,6 +124,22 @@ impl Role {
         Role::SynKeyword,
         Role::SynType,
         Role::SynFunction,
+        Role::TermBlack,
+        Role::TermRed,
+        Role::TermGreen,
+        Role::TermYellow,
+        Role::TermBlue,
+        Role::TermMagenta,
+        Role::TermCyan,
+        Role::TermWhite,
+        Role::TermBrightBlack,
+        Role::TermBrightRed,
+        Role::TermBrightGreen,
+        Role::TermBrightYellow,
+        Role::TermBrightBlue,
+        Role::TermBrightMagenta,
+        Role::TermBrightCyan,
+        Role::TermBrightWhite,
     ];
 
     /// 設定檔裡的鍵。
@@ -131,6 +170,22 @@ impl Role {
             Role::SynKeyword => "syn_keyword",
             Role::SynType => "syn_type",
             Role::SynFunction => "syn_function",
+            Role::TermBlack => "term_black",
+            Role::TermRed => "term_red",
+            Role::TermGreen => "term_green",
+            Role::TermYellow => "term_yellow",
+            Role::TermBlue => "term_blue",
+            Role::TermMagenta => "term_magenta",
+            Role::TermCyan => "term_cyan",
+            Role::TermWhite => "term_white",
+            Role::TermBrightBlack => "term_bright_black",
+            Role::TermBrightRed => "term_bright_red",
+            Role::TermBrightGreen => "term_bright_green",
+            Role::TermBrightYellow => "term_bright_yellow",
+            Role::TermBrightBlue => "term_bright_blue",
+            Role::TermBrightMagenta => "term_bright_magenta",
+            Role::TermBrightCyan => "term_bright_cyan",
+            Role::TermBrightWhite => "term_bright_white",
         }
     }
 
@@ -162,6 +217,22 @@ impl Role {
             Role::SynKeyword => t("關鍵字"),
             Role::SynType => t("型別"),
             Role::SynFunction => t("函式"),
+            Role::TermBlack => t("終端機：黑"),
+            Role::TermRed => t("終端機：紅"),
+            Role::TermGreen => t("終端機：綠"),
+            Role::TermYellow => t("終端機：黃"),
+            Role::TermBlue => t("終端機：藍"),
+            Role::TermMagenta => t("終端機：洋紅"),
+            Role::TermCyan => t("終端機：青"),
+            Role::TermWhite => t("終端機：白"),
+            Role::TermBrightBlack => t("終端機：亮黑（灰）"),
+            Role::TermBrightRed => t("終端機：亮紅"),
+            Role::TermBrightGreen => t("終端機：亮綠"),
+            Role::TermBrightYellow => t("終端機：亮黃"),
+            Role::TermBrightBlue => t("終端機：亮藍"),
+            Role::TermBrightMagenta => t("終端機：亮洋紅"),
+            Role::TermBrightCyan => t("終端機：亮青"),
+            Role::TermBrightWhite => t("終端機：亮白"),
         }
     }
 
@@ -173,6 +244,9 @@ impl Role {
             Button | ButtonHover | ButtonActive | Selection | Line | LineHover => Group::Controls,
             Accent | Cursor | Link | Warning | Error => Group::Accent,
             SynComment | SynString | SynNumber | SynKeyword | SynType | SynFunction => Group::Syntax,
+            TermBlack | TermRed | TermGreen | TermYellow | TermBlue | TermMagenta | TermCyan | TermWhite | TermBrightBlack
+            | TermBrightRed | TermBrightGreen | TermBrightYellow | TermBrightBlue | TermBrightMagenta | TermBrightCyan
+            | TermBrightWhite => Group::Terminal,
         }
     }
 
@@ -214,6 +288,11 @@ impl Scheme {
             self.get(Role::SynType),
             self.get(Role::SynFunction),
         ]
+    }
+
+    /// 終端機的 16 色（黑、紅、綠、黃、藍、洋紅、青、白，再來是亮色版本），順序同 ANSI 色號 0–15。
+    pub fn terminal_colors(&self) -> [Color32; TERMINAL_COUNT] {
+        std::array::from_fn(|i| self.colors[BASE_COUNT + i])
     }
 
     /// 存成自訂配色檔的內容。
@@ -453,15 +532,60 @@ const fn hex(v: u32) -> Color32 {
     Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
-fn make(name: &str, dark: bool, h: [u32; Role::COUNT]) -> Scheme {
+fn make(name: &str, dark: bool, h: [u32; BASE_COUNT]) -> Scheme {
     let mut colors = [Color32::BLACK; Role::COUNT];
     for (c, v) in colors.iter_mut().zip(h) {
         *c = hex(v);
     }
+    fill_terminal(&mut colors, name, dark);
     Scheme { name: name.to_owned(), dark, colors, builtin: true, path: None }
 }
 
-/// 把（可能半透明的）顏色疊在 `bg` 上，得到不透明的等效色。egui 的顏色是預乘 alpha：結果 = 顏色 + 背景 × (1 − alpha)。
+/// 各內建配色的終端機 8 色（黑、紅、綠、黃、藍、洋紅、青、白）。多數取自各配色社群通用的終端機色票；
+/// 淺色配色的顏色比官方版略深，在淺色底上才有 3:1 的對比（測試會檢查）。沒列在這裡的名稱
+/// （自訂配色從 base 繼承，不會走到這裡）依深淺用 EVA／預設淺色的。
+fn terminal_normals(name: &str, dark: bool) -> [u32; 8] {
+    match name {
+        "Dracula" => [0x21222C, 0xFF5555, 0x50FA7B, 0xF1FA8C, 0xBD93F9, 0xFF79C6, 0x8BE9FD, 0xF8F8F2],
+        "Monokai" => [0x272822, 0xF92672, 0xA6E22E, 0xF4BF75, 0x66D9EF, 0xAE81FF, 0xA1EFE4, 0xF8F8F2],
+        "Solarized Dark" => [0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5],
+        "One Dark" => [0x282C34, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF],
+        "Nord" => [0x3B4252, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0xE5E9F0],
+        "Gruvbox Dark" => [0x282828, 0xFB4934, 0xB8BB26, 0xFABD2F, 0x83A598, 0xD3869B, 0x8EC07C, 0xEBDBB2],
+        "Tokyo Night" => [0x15161E, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xA9B1D6],
+        "Catppuccin Mocha" => [0x45475A, 0xF38BA8, 0xA6E3A1, 0xF9E2AF, 0x89B4FA, 0xF5C2E7, 0x94E2D5, 0xBAC2DE],
+        "Catppuccin Macchiato" => [0x494D64, 0xED8796, 0xA6DA95, 0xEED49F, 0x8AADF4, 0xF5BDE6, 0x8BD5CA, 0xB8C0E0],
+        "Catppuccin Frappé" => [0x51576D, 0xE78284, 0xA6D189, 0xE5C890, 0x8CAAEE, 0xF4B8E4, 0x81C8BE, 0xB5BFE2],
+        "Solarized Light" => [0x073642, 0xDC322F, 0x7A8C00, 0xA67C00, 0x268BD2, 0xD33682, 0x1F8A82, 0x586E75],
+        "GitHub Light" => [0x24292F, 0xCF222E, 0x116329, 0x9A6700, 0x0969DA, 0x8250DF, 0x1B7C83, 0x57606A],
+        "One Light" => [0x383A42, 0xE45649, 0x3E8E3D, 0xA66E00, 0x4078F2, 0xA626A4, 0x0184BC, 0x696C77],
+        "Gruvbox Light" => [0x3C3836, 0x9D0006, 0x79740E, 0xB57614, 0x076678, 0x8F3F71, 0x427B58, 0x7C6F64],
+        "VS Code Light+" => [0x000000, 0xCD3131, 0x008000, 0x795E26, 0x0451A5, 0xBC05BC, 0x0598BC, 0x555555],
+        "Catppuccin Latte" => [0x5C5F77, 0xD20F39, 0x3C9A28, 0xB8710F, 0x1E66F5, 0x8839EF, 0x179299, 0x6C6F85],
+        _ if dark => [0x150F24, 0xFF4D5E, 0x8FEA00, 0xFFCB6B, 0x82AAFF, 0xC792EA, 0x4DD0E1, 0xD9D3EA],
+        _ => [0x24292F, 0xCD3131, 0x0F7B0F, 0x8A6D00, 0x0451A5, 0xBC05BC, 0x0598BC, 0x57606A],
+    }
+}
+
+/// 把 c 往白色混 amount（0～1）。
+fn lighten(c: Color32, amount: f32) -> Color32 {
+    let mix = |v: u8| (v as f32 + (255.0 - v as f32) * amount).round() as u8;
+    Color32::from_rgb(mix(c.r()), mix(c.g()), mix(c.b()))
+}
+
+/// 補上終端機的 16 色：前 8 色查表；亮黑用次要文字色（保證看得見）、亮白用強調文字色；
+/// 其餘的亮色在深色配色是正常色提亮一點，淺色配色維持原色（淺色底上再提亮會看不清楚）。
+fn fill_terminal(colors: &mut [Color32; Role::COUNT], name: &str, dark: bool) {
+    let normal = terminal_normals(name, dark).map(hex);
+    colors[BASE_COUNT..BASE_COUNT + 8].copy_from_slice(&normal);
+    colors[BASE_COUNT + 8] = colors[Role::TextWeak as usize];
+    for i in 1..7 {
+        colors[BASE_COUNT + 8 + i] = if dark { lighten(normal[i], 0.25) } else { normal[i] };
+    }
+    colors[BASE_COUNT + 15] = colors[Role::TextStrong as usize];
+}
+
+/// 把（可能半透明的）顏色疊在`bg` 上，得到不透明的等效色。egui 的顏色是預乘 alpha：結果 = 顏色 + 背景 × (1 − alpha)。
 fn flatten(c: Color32, bg: Color32) -> Color32 {
     let keep = 255 - c.a() as u32;
     let mix = |top: u8, under: u8| (top as u32 + under as u32 * keep / 255).min(255) as u8;
@@ -473,7 +597,7 @@ fn flatten(c: Color32, bg: Color32) -> Color32 {
 fn default_light() -> Scheme {
     let v = Visuals::light();
     let w = &v.widgets;
-    let colors = [
+    let base = [
         v.extreme_bg_color,
         v.panel_fill,
         v.window_fill,
@@ -500,6 +624,9 @@ fn default_light() -> Scheme {
         hex(0x953800),
         hex(0x0550AE),
     ];
+    let mut colors = [Color32::BLACK; Role::COUNT];
+    colors[..BASE_COUNT].copy_from_slice(&base);
+    fill_terminal(&mut colors, DEFAULT_LIGHT, false);
     Scheme { name: DEFAULT_LIGHT.to_owned(), dark: false, colors, builtin: true, path: None }
 }
 
@@ -723,6 +850,41 @@ mod tests {
             check(c >= 2.0, "註解（要 2）".to_owned(), c);
         }
         assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn terminal_colors_are_visible_on_the_editor_background_in_every_builtin_scheme() {
+        let mut failures: Vec<String> = Vec::new();
+        for s in builtins() {
+            let bg = s.get(Role::EditorBg);
+            for (i, c) in s.terminal_colors().into_iter().enumerate() {
+                // 黑（0）在深色配色常拿來當底色，和編輯區底色接近是正常的；其餘都要看得見
+                if i == 0 && s.dark {
+                    continue;
+                }
+                let ratio = contrast(c, bg);
+                if ratio < 3.0 {
+                    failures.push(format!("{}：終端機色 {i} 只有 {ratio:.2}:1", s.name));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn terminal_colors_come_from_the_scheme_inherit_from_a_base_and_survive_a_file_round_trip() {
+        let all = builtins();
+        let dracula = all.iter().find(|s| s.name == "Dracula").unwrap();
+        assert_eq!(dracula.get(Role::TermRed), hex(0xFF5555));
+        assert_eq!(dracula.terminal_colors()[1], hex(0xFF5555));
+        assert_ne!(dracula.terminal_colors(), default_for(true).terminal_colors());
+        // 檔案裡可以只改其中一個，沒寫的從 base 繼承
+        let text = "name = T\nmode = dark\nbase = Dracula\nterm_red = #123456\n";
+        let custom = parse_scheme(text, |n| all.iter().find(|s| s.name == n).cloned()).unwrap();
+        assert_eq!(custom.get(Role::TermRed), hex(0x123456));
+        assert_eq!(custom.get(Role::TermGreen), dracula.get(Role::TermGreen));
+        let again = parse_scheme(&custom.to_text(), |_| None).unwrap();
+        assert_eq!(again.terminal_colors(), custom.terminal_colors());
     }
 
     #[test]

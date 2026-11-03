@@ -9,6 +9,7 @@
 
 ### Added
 - **Terminal pane** (experimental): the `>_` toolbar button or `` Ctrl+` `` opens a terminal below the focused pane, running the system's default shell. Colors, full-screen programs, IME, copy/paste and wheel scrolling are supported; it can be dragged anywhere like the preview pane.
+- **Terminal colors belong to the color scheme**: schemes gain 16 terminal colors (black, red, green, yellow, blue, magenta, cyan, white and their bright variants; the config keys are `term_*`). Each built-in dark and light scheme has its own set (Dracula, Nord, Catppuccin, Gruvbox, etc. use the palettes commonly used with them), custom schemes can adjust them, and unspecified ones are inherited from the base. The default text and background of the terminal also follow the scheme.
 - **Deleted or moved files**: the tab is marked "(deleted)" and a message is shown once in the output panel; the tab keeps its content, saving recreates the file, and it returns to normal if the file reappears.
 
 ## [0.1.5] - 2026-11-03

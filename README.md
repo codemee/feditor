@@ -98,7 +98,7 @@
   - 深色：EVA（預設，《新世紀福音戰士》的色票：帶紫調的近黑底、初號機紫、螢光綠、NERV 橘）、Dracula、Monokai、Solarized Dark、One Dark、Nord、Gruvbox Dark、Tokyo Night、Catppuccin Mocha／Macchiato／Frappé。
   - 淺色：預設淺色（沿用原本的外觀）、Solarized Light、GitHub Light、One Light、Gruvbox Light、VS Code Light+、Catppuccin Latte。
   - 內建配色是依這些知名配色的色票調整的，並確認文字與各種底色的對比（一般文字至少 4.5:1），所以不一定和原版逐字相同。
-- **自訂配色**：設定面板的「編輯目前配色…」會開啟編輯視窗，編輯的是**目前正在使用的主題**（深色或淺色，要編輯另一邊請先切換外觀）所選的那一套。每種顏色（背景、文字、按鈕與邊線、強調與狀態、語法上色，共 25 種）一個色塊，改了立刻預覽，「還原」放棄修改。內建配色不能覆寫，用「另存為…」取名存成自訂配色（會自動設為這個主題使用的配色）；自訂配色可以直接「儲存」。
+- **自訂配色**：設定面板的「編輯目前配色…」會開啟編輯視窗，編輯的是**目前正在使用的主題**（深色或淺色，要編輯另一邊請先切換外觀）所選的那一套。每種顏色（背景、文字、按鈕與邊線、強調與狀態、語法上色、終端機的 16 色，共 41 種）一個色塊，改了立刻預覽，「還原」放棄修改。內建配色不能覆寫，用「另存為…」取名存成自訂配色（會自動設為這個主題使用的配色）；自訂配色可以直接「儲存」。
   自訂配色存在設定資料夾下的 `themes` 資料夾（Windows `%APPDATA%\feditor\themes\`，設定面板的「配色資料夾」按鈕可以直接開啟），一個 `*.conf` 檔一套，**打開設定面板時會重新讀取**，所以也可以自己用文字編輯器寫、或從別人那裡拿來放進去。格式是 `key = value`（`#` 開頭的整行是註解，顏色後面可以接「  # 說明」）：
 
   | 設定 | 說明 |
@@ -111,6 +111,7 @@
   | `button`、`button_hover`、`button_active`、`selection`、`line`、`line_hover` | 按鈕（一般、滑鼠移過、按下）、選取範圍、邊線（一般、滑鼠移過） |
   | `accent`、`cursor`、`link`、`warning`、`error` | 強調色、游標、連結、警告（也用在搜尋結果的高亮）、錯誤 |
   | `syn_comment`、`syn_string`、`syn_number`、`syn_keyword`、`syn_type`、`syn_function` | 語法上色：註解、字串、數字、關鍵字、型別、函式 |
+  | `term_black`、`term_red`、`term_green`、`term_yellow`、`term_blue`、`term_magenta`、`term_cyan`、`term_white`，以及加上 `bright_` 的亮色版本（如 `term_bright_red`） | 終端機窗格的 16 色（ANSI 色號 0–15）；預設文字色用 `text`，底色用 `editor_bg` |
 
   顏色寫成 `#RRGGBB`（或 `#RGB`）。壞掉的檔案（缺 `name`、不認得的設定、顏色寫錯、`base` 找不到）會略過，並在輸出面板顯示原因。範例見 `examples/themes/midnight.conf`。設定檔裡記的配色不存在（例如檔案被刪了）時退回該主題的預設配色。
 - **字型**：只列出**等寬字型**。判斷方式是比對 `i`、`m`、`W`、`.` 等字元的字寬是否一致，不看字型檔裡常常標錯的等寬旗標。預設是**作業系統預設的等寬字型**（向系統查詢，不寫死名稱；Windows 上是 Consolas）。

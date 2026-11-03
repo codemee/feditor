@@ -6,6 +6,10 @@
 use crate::scheme::{self, Scheme};
 use eframe::egui::{self, Color32, Theme};
 
+fn terminal_id(dark: bool) -> egui::Id {
+    egui::Id::unique(if dark { "terminal_colors_dark" } else { "terminal_colors_light" })
+}
+
 fn syntax_id(dark: bool) -> egui::Id {
     egui::Id::unique(if dark { "syntax_colors_dark" } else { "syntax_colors_light" })
 }
@@ -18,6 +22,8 @@ pub fn apply(ctx: &egui::Context, light: &Scheme, dark: &Scheme) {
     ctx.data_mut(|d| {
         d.insert_temp(syntax_id(false), light.syntax_colors());
         d.insert_temp(syntax_id(true), dark.syntax_colors());
+        d.insert_temp(terminal_id(false), light.terminal_colors());
+        d.insert_temp(terminal_id(true), dark.terminal_colors());
     });
     ctx.request_repaint();
 }
@@ -27,6 +33,12 @@ pub fn apply(ctx: &egui::Context, light: &Scheme, dark: &Scheme) {
 pub fn syntax_colors(ctx: &egui::Context, dark: bool) -> [Color32; 7] {
     ctx.data(|d| d.get_temp(syntax_id(dark)))
         .unwrap_or_else(|| scheme::default_for(dark).syntax_colors())
+}
+
+/// 終端機的 16 色（ANSI 色號 0–15）。還沒套用過配色時用預設配色的。
+pub fn terminal_colors(ctx: &egui::Context, dark: bool) -> [Color32; scheme::TERMINAL_COUNT] {
+    ctx.data(|d| d.get_temp(terminal_id(dark)))
+        .unwrap_or_else(|| scheme::default_for(dark).terminal_colors())
 }
 
 #[cfg(test)]
@@ -45,6 +57,8 @@ mod tests {
         assert_eq!(ctx.style_of(Theme::Dark).visuals.panel_fill, dark.get(Role::PanelBg));
         assert_eq!(syntax_colors(&ctx, false), light.syntax_colors());
         assert_eq!(syntax_colors(&ctx, true), dark.syntax_colors());
+        assert_eq!(terminal_colors(&ctx, false), light.terminal_colors());
+        assert_eq!(terminal_colors(&ctx, true), dark.terminal_colors());
         // 只換深色：淺色那一邊原封不動
         let other_dark = all.iter().find(|s| s.name == "Nord").unwrap();
         apply(&ctx, light, other_dark);

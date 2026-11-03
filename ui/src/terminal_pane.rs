@@ -293,7 +293,7 @@ impl App {
 
         // 畫格子
         let painter = ui.painter_at(content);
-        let palette = Palette::new(dark, ui.visuals().text_color());
+        let palette = Palette::new(ui.visuals().text_color(), ui.visuals().extreme_bg_color, crate::theme::terminal_colors(&ctx, dark));
         let accent = ui.visuals().selection.bg_fill;
         let guard = term.term.lock();
         let rc = guard.renderable_content();
@@ -390,34 +390,23 @@ impl App {
     }
 }
 
-/// 終端機的顏色：16 色、256 色與預設前景。深色與淺色各一組 16 色，都要在各自的底色上看得清楚。
+/// 終端機的顏色：16 色來自配色方案，256 色的其餘部分（色立方與灰階）是標準色，真彩色原樣畫。
 struct Palette {
-    dark: bool,
     default_fg: Color32,
+    /// 預設背景（窗格的底色）。反相的格子，前景要用它。
+    default_bg: Color32,
+    /// ANSI 0–15，來自目前的配色方案（見 scheme::Scheme::terminal_colors）。
+    ansi: [Color32; 16],
 }
 
 impl Palette {
-    fn new(dark: bool, default_fg: Color32) -> Self {
-        Self { dark, default_fg }
+    fn new(default_fg: Color32, default_bg: Color32, ansi: [Color32; 16]) -> Self {
+        Self { default_fg, default_bg, ansi }
     }
 
     fn ansi(&self, i: usize) -> Color32 {
-        const DARK: [(u8, u8, u8); 16] = [
-            (0x1e, 0x1e, 0x1e), (0xcd, 0x31, 0x31), (0x0d, 0xbc, 0x79), (0xe5, 0xe5, 0x10),
-            (0x24, 0x72, 0xc8), (0xbc, 0x3f, 0xbc), (0x11, 0xa8, 0xcd), (0xe5, 0xe5, 0xe5),
-            (0x66, 0x66, 0x66), (0xf1, 0x4c, 0x4c), (0x23, 0xd1, 0x8b), (0xf5, 0xf5, 0x43),
-            (0x3b, 0x8e, 0xea), (0xd6, 0x70, 0xd6), (0x29, 0xb8, 0xdb), (0xff, 0xff, 0xff),
-        ];
-        const LIGHT: [(u8, u8, u8); 16] = [
-            (0x00, 0x00, 0x00), (0xcd, 0x31, 0x31), (0x00, 0xbc, 0x00), (0x94, 0x98, 0x00),
-            (0x04, 0x51, 0xa5), (0xbc, 0x05, 0xbc), (0x05, 0x98, 0xbc), (0x55, 0x55, 0x55),
-            (0x66, 0x66, 0x66), (0xcd, 0x31, 0x31), (0x14, 0xce, 0x14), (0xb5, 0xba, 0x00),
-            (0x04, 0x51, 0xa5), (0xbc, 0x05, 0xbc), (0x05, 0x98, 0xbc), (0xa5, 0xa5, 0xa5),
-        ];
-        let (r, g, b) = if self.dark { DARK[i] } else { LIGHT[i] };
-        Color32::from_rgb(r, g, b)
+        self.ansi[i]
     }
-
     fn indexed(&self, i: usize) -> Color32 {
         match i {
             0..=15 => self.ansi(i),
@@ -441,7 +430,7 @@ impl Palette {
             Color::Named(n) => match n {
                 NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::Cursor => self.default_fg,
                 NamedColor::DimForeground => self.default_fg.gamma_multiply(0.6),
-                NamedColor::Background => self.default_fg,
+                NamedColor::Background => self.default_bg,
                 other => {
                     let i = other as usize;
                     match i {
@@ -482,9 +471,10 @@ mod tests {
 
     #[test]
     fn palette_maps_named_indexed_and_true_colors() {
-        let p = Palette::new(true, Color32::WHITE);
+        let p = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors());
         assert_eq!(p.foreground(Color::Spec(Rgb { r: 1, g: 2, b: 3 }), false), Color32::from_rgb(1, 2, 3));
         assert_eq!(p.foreground(Color::Named(NamedColor::Foreground), false), Color32::WHITE);
+        assert_eq!(p.foreground(Color::Named(NamedColor::Background), false), Color32::BLACK, "反相後的前景是窗格底色");
         assert_eq!(p.foreground(Color::Named(NamedColor::Red), false), p.ansi(1));
         assert_eq!(p.foreground(Color::Named(NamedColor::Red), true), p.ansi(9), "粗體用亮色");
         assert_eq!(p.foreground(Color::Indexed(2), false), p.ansi(2));
@@ -508,12 +498,12 @@ mod tests {
         let mut term = alacritty_terminal::Term::new(Config::default(), &size, VoidListener);
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         parser.advance(&mut term, b"\x1b[31mR\x1b[0m\x1b[44;97mB\x1b[0m\x1b[38;2;255;128;0mT\x1b[0m\x1b[38;5;196mI\x1b[0m\x1b[1;32mG\x1b[0mN");
-        let p = Palette::new(false, Color32::BLACK);
+        let p = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors());
         let cell = |c: usize| term.grid()[Line(0)][Column(c)].clone();
         let (r, b, t, i, g, n) = (cell(0), cell(1), cell(2), cell(3), cell(4), cell(5));
         assert_ne!(p.foreground(r.fg, false), Color32::BLACK, "紅字 {:?}", r.fg);
         assert!(p.background(b.bg).is_some(), "藍底 {:?}", b.bg);
-        assert_ne!(p.foreground(b.fg, false), Color32::BLACK, "亮白字 {:?}", b.fg);
+        assert_eq!(p.foreground(b.fg, false), p.ansi(15), "亮白字 {:?}", b.fg);
         assert_eq!(p.foreground(t.fg, false), Color32::from_rgb(255, 128, 0), "真彩色 {:?}", t.fg);
         assert_eq!(p.foreground(i.fg, false), Color32::from_rgb(255, 0, 0), "256 色 {:?}", i.fg);
         assert_ne!(p.foreground(g.fg, g.flags.contains(Flags::BOLD)), Color32::BLACK, "粗體綠 {:?}", g.fg);
@@ -521,6 +511,8 @@ mod tests {
     }
     #[test]
     fn light_and_dark_palettes_differ() {
-        assert_ne!(Palette::new(true, Color32::WHITE).ansi(7), Palette::new(false, Color32::BLACK).ansi(7));
+        let dark = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors());
+        let light = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors());
+        assert_ne!(dark.ansi(7), light.ansi(7));
     }
 }

@@ -2,13 +2,15 @@
 # Terminal color and attribute test: run this file inside the FEditor terminal pane.
 #   pwsh -File examples\terminal-colors.ps1 [-Only 1,2]
 
-param([int[]]$Only)   # 只跑指定的段落，例如 -Only 1,4；不指定就全部 / run only these sections
+param([string[]]$Only)   # 只跑指定的段落，例如 -Only 1,4；不指定就全部 / run only these sections
 
 $e = [char]27
 $reset = "$e[0m"
 
 function Show-Title($text) { Write-Host ""; Write-Host "$e[1m$text$reset" }
-function Want($n) { -not $Only -or $Only -contains $n }
+# -File 模式下 1,2,3 會被當成一個字串，所以自己用逗號拆開 / with -File, "1,2,3" arrives as one string, so split it here
+$selected = @($Only | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
+function Want($n) { -not $selected -or $selected -contains $n }
 
 if (Want 1) {
   Show-Title '1. 16 色前景（30-37、90-97）／16 foreground colors'
