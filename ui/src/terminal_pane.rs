@@ -31,11 +31,13 @@ pub struct TerminalPane {
     want_focus: bool,
     /// 滑鼠滾輪累積的捲動量（行）。
     scroll_acc: f32,
+    /// 輸入法正在組的字（還沒確定，不送給 shell；畫在游標的位置）。
+    preedit: String,
 }
 
 impl TerminalPane {
     pub fn new(dir: Option<std::path::PathBuf>) -> Self {
-        Self { term: None, error: None, dir, want_focus: true, scroll_acc: 0.0 }
+        Self { term: None, error: None, dir, want_focus: true, scroll_acc: 0.0, preedit: String::new() }
     }
 
     fn title(&self) -> String {
@@ -125,6 +127,7 @@ impl App {
                 !mine
             });
         });
+        let mut preedit: Option<String> = None;
         let alt = ctx.input(|i| i.modifiers.alt && !i.modifiers.ctrl);
         let mode = term.mode();
         let mut out: Vec<u8> = Vec::new();
@@ -139,7 +142,11 @@ impl App {
                         }
                     }
                 }
-                egui::Event::Ime(egui::ImeEvent::Commit(text)) => out.extend(text.as_bytes()),
+                egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
+                    out.extend(text.as_bytes());
+                    preedit = Some(String::new());
+                }
+                egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => preedit = Some(text),
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
                     let clipboard_key = (modifiers.command || modifiers.ctrl) && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
                     let alt_gr = modifiers.ctrl && modifiers.alt;
@@ -164,6 +171,9 @@ impl App {
         if !out.is_empty() {
             term.term.lock().scroll_display(Scroll::Bottom);
             term.write(out);
+        }
+        if let (Some(p), Some(pane)) = (preedit, self.terminals.get_mut(&id)) {
+            pane.preedit = p;
         }
     }
 
@@ -217,6 +227,7 @@ impl App {
             });
             return action;
         }
+        let preedit = pane.preedit.clone();
         let Some(term) = pane.term.as_mut() else { return action };
         term.resize(size, (cw as u16, ch as u16));
 
@@ -230,14 +241,6 @@ impl App {
         if focused {
             // Tab、方向鍵、Esc 都是給 shell 的，不要讓 egui 拿去切換焦點
             ctx.memory_mut(|m| m.set_focus_lock_filter(wid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true }));
-            ui.output_mut(|o| {
-                o.ime = Some(egui::output::IMEOutput {
-                    purpose: egui::IMEPurpose::Terminal,
-                    rect: content,
-                    cursor_rect: egui::Rect::from_min_size(content.min, egui::vec2(cw, ch)),
-                    should_interrupt_composition: false,
-                });
-            });
         }
         let mode = term.mode();
         let display_offset = term.term.lock().grid().display_offset() as i32;
@@ -355,6 +358,26 @@ impl App {
                 painter.rect_stroke(r, 0.0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
             }
         }
+        // 輸入法：告訴系統候選字視窗要放在游標旁，組字中的字畫在游標位置（底線、蓋住底下的格子）
+        if focused {
+            let at = cell_rect(cur.point.column.0.min(size.cols - 1), cur_row.clamp(0, size.lines as i32 - 1), 1.0);
+            if !preedit.is_empty() {
+                let galley = painter.layout_no_wrap(preedit.clone(), font.clone(), ui.visuals().text_color());
+                let box_ = egui::Rect::from_min_size(at.min, egui::vec2(galley.size().x.max(cw), ch));
+                painter.rect_filled(box_, 0.0, ui.visuals().extreme_bg_color);
+                painter.galley(at.min, galley.clone(), ui.visuals().text_color());
+                let y = box_.max.y - 1.0;
+                painter.line_segment([egui::pos2(box_.min.x, y), egui::pos2(box_.min.x + galley.size().x, y)], egui::Stroke::new(1.0, ui.visuals().text_color()));
+            }
+            ui.output_mut(|o| {
+                o.ime = Some(egui::output::IMEOutput {
+                    purpose: egui::IMEPurpose::Terminal,
+                    rect: content,
+                    cursor_rect: at,
+                    should_interrupt_composition: false,
+                });
+            });
+        }
         action
     }
 }
@@ -468,6 +491,26 @@ mod tests {
         assert!(p.background(Color::Named(NamedColor::Blue)).is_some());
     }
 
+    #[test]
+    fn sgr_sequences_reach_the_grid_as_colors_the_palette_can_draw() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+        let size = GridSize { cols: 20, lines: 3 };
+        let mut term = alacritty_terminal::Term::new(Config::default(), &size, VoidListener);
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+        parser.advance(&mut term, b"\x1b[31mR\x1b[0m\x1b[44;97mB\x1b[0m\x1b[38;2;255;128;0mT\x1b[0m\x1b[38;5;196mI\x1b[0m\x1b[1;32mG\x1b[0mN");
+        let p = Palette::new(false, Color32::BLACK);
+        let cell = |c: usize| term.grid()[Line(0)][Column(c)].clone();
+        let (r, b, t, i, g, n) = (cell(0), cell(1), cell(2), cell(3), cell(4), cell(5));
+        assert_ne!(p.foreground(r.fg, false), Color32::BLACK, "紅字 {:?}", r.fg);
+        assert!(p.background(b.bg).is_some(), "藍底 {:?}", b.bg);
+        assert_ne!(p.foreground(b.fg, false), Color32::BLACK, "亮白字 {:?}", b.fg);
+        assert_eq!(p.foreground(t.fg, false), Color32::from_rgb(255, 128, 0), "真彩色 {:?}", t.fg);
+        assert_eq!(p.foreground(i.fg, false), Color32::from_rgb(255, 0, 0), "256 色 {:?}", i.fg);
+        assert_ne!(p.foreground(g.fg, g.flags.contains(Flags::BOLD)), Color32::BLACK, "粗體綠 {:?}", g.fg);
+        assert_eq!(p.foreground(n.fg, false), Color32::BLACK, "沒設顏色的字用預設前景");
+    }
     #[test]
     fn light_and_dark_palettes_differ() {
         assert_ne!(Palette::new(true, Color32::WHITE).ansi(7), Palette::new(false, Color32::BLACK).ansi(7));
