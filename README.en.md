@@ -2,257 +2,130 @@
 
 # FEditor
 
-A cross-platform text editor with scripting macros, modeled after EmEditor. Written in Rust.
+A cross-platform text editor with scripting macros, modeled after EmEditor and written in Rust.
 
-## Project layout
+- **Smooth with big files**: files of hundreds of MB and millions of lines open and edit directly.
+- **Tabs and freely splittable panes**: tabs can be dragged around, and the built-in **preview** (Markdown, CSV, JSON, ...) and **terminal** can be placed in any pane just like tabs.
+- **Friendly to CJK text**: Traditional Chinese IME support, aligned full-width characters, and automatic detection of Big5, GBK, Shift_JIS and other encodings.
+- **Extensible**: JavaScript macros (recordable), preview plugins, custom color schemes and syntax highlighting.
+- **Interface**: separate color schemes for light and dark (18 built in, including Dracula, Nord and Catppuccin), and the interface language can be Chinese or English.
 
-| Path | Description |
-|---|---|
-| `core/` | `feditor-core`: text buffer (ropey) with undo/redo, file encodings, search, line wrapping, search in files, and the interface language (Chinese/English table). Independent of the UI and macro engines |
-| `script/` | `feditor-script`: language-agnostic macro API (`EditorApi`, `ScriptEngine`) |
-| `script-js/` | `feditor-script-js`: JavaScript macro engine (QuickJS via rquickjs) |
-| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs and split panes (`panes.rs`, `pane_ops.rs`), preview (`preview*.rs`), macro library, syntax highlighting, and session restore |
-| `examples/` | Example macros (`macros/`) and test files in various encodings (`files/`) |
-| `proto/` | Standalone IME verification prototypes (egui, iced, Slint); not part of the main workspace |
+## Download and install
 
-## Features
+Download the archive for your platform from [Releases](https://github.com/codemee/feditor/releases):
 
-Operations are **toolbar buttons**; there are no menus. Buttons show icons only; the text description (with shortcut) is in the tooltip. The icons are drawn as vectors in `ui/src/icons.rs`, with no icon-font dependency, and follow the light/dark theme.
+- **Windows**: unzip and run `feditor.exe`.
+- **macOS** (Apple Silicon): download `feditor-macos.dmg`, open it, and drag `FEditor.app` onto the "Applications" shortcut next to it. It is not notarized, so the first time you open it, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
+- **Linux**: unpack and run `./feditor`.
+
+You can also open files from the command line (`feditor path/to/file`) or drag files from the file manager into the window (several at once, one tab each). Dropping a **folder** shows the "Open file" dialog starting in that folder. See the [changelog](CHANGELOG.en.md) for what changed in each version.
+
+## Basics
+
+Operations are driven by **toolbar buttons**; there are no menus. Buttons show only icons, with the text description (and shortcut) in the tooltip.
 
 | Button | Shortcut | Description |
 |---|---|---|
-| New / Open / Save / Save As | Ctrl+N / O / S / Shift+S | Basic file operations; unsaved changes prompt before closing or switching documents |
-| Find & Replace | Ctrl+F (replace: Ctrl+H), F3 / Shift+F3 | Opens the find bar with regular expression, case-sensitive, and whole-word options |
-| Find in Files | Ctrl+Shift+F | Search all text files under a folder; clicking a result opens it and selects the match (see below) |
-| Settings (⋯, far right) | | Interface language (follow system / 中文 / English), appearance (follow system / light / dark), a separate color scheme for light and for dark, font (monospace fonts only), font size, display options (line numbers, current line, whitespace, syntax coloring, word wrap) |
-| Font size | Ctrl +/−, Ctrl+wheel, Ctrl+0 | Adjusts the editor font size; synced with the settings panel. When the preview pane is clicked, it adjusts the preview font size instead (the "Preview font size" in the "Preview" group of the settings panel) |
-| Macro panel / Rerun | F5 (rerun) | The panel lists your macros: run, set a shortcut, edit, delete; all changes are rolled back if a macro fails |
-| Record Macro | | Start/stop recording: keys and typing are recorded into a macro that can be replayed |
-| Tab bar | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | Shown only when two or more files are open; click to switch, middle-click or × to close (the × only appears when the pointer is over the tab), **double-click a tab to rename the file**, **drag a tab to split the pane** (see below); unsaved tabs have a "●" after the name |
-| Preview (eye) | Ctrl+Shift+P | Opens a preview pane (only one in the whole program, shared by all documents); press again to close it (see below) |
-| When tabs do not fit (both sides and the right end of each pane's tab bar) | | No scrollbar: a thin-line `<` and `>` arrow on each side scrolls the tabs (the mouse wheel works too), and the `v` "Choose a tab" dropdown on the right lists every tab of the pane so you can pick one directly; switching tabs scrolls the bar to the active one |
-| Close pane (right end of each pane's tab bar) | | Only present when there are several panes; the pane's tabs move to the neighbouring pane |
-| Clear Output (top right of the output pane) | | Clear macro output and messages |
-| Language, Encoding (with BOM), Line ending (right side of the status bar) | | Shows and changes the save format. In the encoding list, "with BOM" for UTF-8 and UTF-16 is its own entry: UTF-8, UTF-8 BOM, Big5, GBK, Shift_JIS, EUC-KR, UTF-16LE BOM, UTF-16LE, UTF-16BE BOM, UTF-16BE |
-| Reload (right side of the status bar) | | Re-read the current file with a specific encoding when auto-detection is wrong |
-| Caret position, shown as "行 X，欄 Y" (line X, column Y; right side of the status bar, left of the language) | | Both start at 1. In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns; choose in the settings panel under "欄號" (column number) (default 1; a Tab counts as 1) |
+| New / Open / Save / Save As | Ctrl+N / O / S / Shift+S | Basic file operations; unsaved changes are asked about before closing or switching documents |
+| Find & Replace | Ctrl+F (replace Ctrl+H), F3 / Shift+F3 | Opens the find bar (see below) |
+| Find in Files | Ctrl+Shift+F | Searches all text files under a folder |
+| Terminal (`>_`) | Ctrl+Shift+` (new), Ctrl+` (cycle focus) | Adds a terminal tab (see below) |
+| Preview (eye) | Ctrl+Shift+P | Toggles the preview pane (see below) |
+| Macro panel / rerun | F5 (rerun) | Run, set a shortcut for, edit and delete macros; a failed macro rolls back all changes |
+| Record macro | | Starts / stops recording keys and input and saves them as a macro |
+| Settings (⋯, far right) | | Interface language, appearance, color scheme, font, font size, display options |
+| Font size | Ctrl +/-, Ctrl+wheel, Ctrl+0 | Adjusts the font size; when the preview pane has the focus it adjusts the preview's font size |
+| Tabs | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | See below |
 
-The left side of the status bar shows the file path and whether it is unsaved; the right side holds the format settings of this file. Together they make up the file status. You can also open a file from the command line, `feditor <path>`, or drag files from the file manager into the window (several at once, one tab each; a file that is already open is switched to). If you drop a **folder**, the Open File dialog is shown starting in that folder so you can pick which files to open (multi-select; cancel opens nothing).
+The left of the status bar shows the file path; the right shows this file's format settings: **language** (syntax highlighting), **encoding** (with BOM), **line ending**, and **reload** (re-read the file with a chosen encoding when auto-detection got it wrong), plus the caret position "Line X, Col Y" (whether a full-width character counts as 1 or 2 columns is a setting). Above the status bar is the **output panel** for messages about opened files, warnings, errors and macro output; it is collapsed to one line by default and pops open temporarily when an error appears.
 
-Above the status bar is the **output panel**, which holds file-opening messages, warnings, errors, and macro output. It is collapsed to a single line by default (showing only the latest message); use the arrow on the left to expand or collapse it. The expanded height can be dragged, and the expanded/collapsed state is remembered. If an error or macro output arrives while it is collapsed, the panel pops open temporarily so you do not miss it.
+## Tabs and panes
 
-### Tabs, session, and external changes
+- Each opened file is a tab with its own caret, selection and undo history. Opening a file that is already open switches to it instead of duplicating it. Unsaved tabs have a "●" after their name.
+- **Double-click a tab to rename the file**: only the base name is selected at first, and pressing Enter really renames the file on disk. An invalid name, an existing file with that name, or another tab already showing that file is explained in the dialog and nothing is overwritten. For a tab that was never saved, double-clicking opens "Save As".
+- **Split panes**: drag a tab to the left, right or bottom of the editor area to split off a new pane in that direction (the area is previewed while dragging); drop it in the middle of another pane to add it to that pane's tab bar. Panes can be split again and again in any combination, the gaps can be dragged to resize, and a pane never gets smaller than 240×140 points. Press Esc while dragging to cancel.
+- The pane with the accent-colored border has the **focus** (click to change it); find, save, macros and the status bar act on its current tab. Closing the last tab of a pane closes the pane; you can also press the button at the right end of the tab bar to close a pane, and its tabs (including unsaved changes) move to a neighboring pane.
+- When tabs do not fit there is no scroll bar: thin `<` `>` arrows on both sides scroll (the mouse wheel works too), and the `v` "Choose a tab" dropdown on the right picks one directly.
+- **Remembers where you left off**: after closing and reopening, all panes (their tabs, the active tab, carets, divider ratios, the preview pane and terminal tabs) are restored; files that no longer exist are skipped. Terminals come back as fresh shells.
+- **External change detection**: when another program changes a file, it is reloaded automatically if you have no unsaved changes (the caret is kept); otherwise you are asked, and a background tab is marked "(changed on disk)" and asks when you switch to it. When a file is deleted or moved, its tab is marked "(deleted)", the content is kept, and saving recreates the file.
 
-- New and Open create a new tab; if the current document is blank and unmodified it is reused, and a file that is already open is switched to instead of being opened twice. Each tab has its own caret, selection, and undo history. When closing the window, every unsaved tab is asked about in turn.
-- **Double-click a tab to rename the file**: a dialog opens with only the base name selected (the extension is not overwritten); Enter or "Rename" actually renames the file on disk (it stays in the same folder). If the name is invalid (empty, contains `\ / : * ? " < > |`, or is a reserved Windows name), the folder already has a file with that name, or another tab already has that file open, the dialog explains why and nothing is overwritten. A tab with unsaved changes can be renamed too; its content and unsaved state are unchanged. For a tab that is not saved to a file yet, a double-click opens "Save As".
-- **Split panes**: drag a tab to the **left, right, or bottom** edge of the editor area (a preview shows the area the new pane will take) and a new pane is split off in that direction with the tab moved into it. You can keep splitting, in any mix of side-by-side and stacked. Every pane has its own independent tab bar; drag a tab onto another pane's tab bar or the middle of its editor to move it into that pane. Panes are rounded cards with a gap between them; the gap is the divider and can be dragged to resize.
-  - **Minimum pane size**: a pane never gets smaller than 240×140 points (a divider cannot be dragged past that); on a side where splitting would leave two panes below the minimum, no split zone is offered.
-  - A tab is *moved*, not copied: the same document never appears in two panes; opening a file that is already open switches to the pane that holds it.
-  - The pane with an accent line on top has the **focus** (click in a pane to change it); find, save, macros, and the status bar all act on its current tab.
-  - Closing the last tab of a pane closes the pane too; you can also press the button at the right end of a pane's tab bar to close the pane, and its tabs (including unsaved changes) move to the neighbouring pane, so no document is closed.
-  - Press Esc while dragging to cancel. There is no "top" split for now, and tabs cannot be reordered by dragging within the same pane.
-- **Session**: when started without a file argument, the files that were open last time (and their caret positions) are reopened. It is stored in `session.conf` in the settings folder; blank never-saved documents are not recorded. **The pane layout is remembered too**: after closing and reopening, every pane (with its own tabs, active tab, caret positions, divider ratios, the focused pane, and preview panes) comes back; files that no longer exist are skipped, and a pane with no file left to open does not reappear.
-- **External change detection**: the folders of all open files are watched with the system file watcher (`notify`), covering every tab in every pane (also re-checked when the window regains focus and every 5 seconds as a fallback). When another program modifies a file, a document without unsaved changes is reloaded automatically with the caret kept; otherwise the active tab asks whether to reload (choosing to keep your version means you are not asked again), and a background tab is marked "(changed on disk)" and asks when you switch to it. When a file is deleted or moved, its tab is marked "(deleted)" and a message appears in the output panel; the content is kept, and saving recreates the file.
+## Preview
 
-### Preview
+The **eye** button on the toolbar opens a preview pane to the right of the current pane, showing a preview of the **document that currently has the focus**, updated as you type. There is only one preview pane in the whole program, shared by all documents.
 
-Some text files can be shown in a different form. The **eye** button on the toolbar (Ctrl+Shift+P) opens a **preview pane** to the right of the current pane, showing a preview of the **focused document**; it follows pane switches, tab switches, and edits (it re-renders 0.3 s after you stop typing, in the background, so the UI never freezes). Built in:
-
-| File | What you see |
+| File | What the preview looks like |
 |---|---|
-| Markdown (`.md`, `.markdown`) | Headings, bold / italic / strikethrough, inline code, links (URLs are clickable), lists (nested, with task checkboxes), quotes, code blocks, tables, rules, and local images (relative paths are resolved against the file's folder; nothing is fetched from the network). Of the raw HTML, only `<kbd>` (drawn as a key), `<picture>` / `<img>` (a `<picture>` picks the `<source media="(prefers-color-scheme: dark)">` or `light` image to match the current dark or light theme, like GitHub), and `<br>` are understood; other tags, `<script>`, `<style>`, and comments are skipped |
-| CSV, TSV | A table, the first row as the header, resizable columns; only the first 5000 rows are shown |
-| JSON, TOML, YAML | A collapsible tree with colors for strings, numbers, and booleans; on a syntax error, the line and column of the error |
-| SVG | The drawing itself, updating as you edit |
+| Markdown (`.md`) | Headings, bold / italic, links, lists, quotes, code blocks, tables, local images; of the HTML only `<kbd>`, `<picture>` / `<img>` (picking the image for the light or dark theme) and `<br>` are understood |
+| CSV, TSV | A table with draggable column widths |
+| JSON, TOML, YAML | A collapsible tree; on a syntax error, the line and column of the error |
+| SVG | The drawing itself, updated as you edit |
 
-- There is only **one** preview pane in the whole program, shared by all documents: it always shows the focused document, is not tied to any pane, and stays when other panes are closed. It is a rounded card like the others, with its own title bar and close button; it can be resized and **dragged anywhere in the layout**: drag its title to the left, right, or bottom of another pane; conversely, **drag a tab onto the preview pane**'s left, right, or bottom edge to split the preview pane (the tab becomes a new pane next to it), while dropping into the middle does nothing because the preview pane takes no tabs. A preview shows where it will land, and Esc cancels. **The preview pane can take the input focus too**: click it (its border turns to the accent color) and Ctrl + / −, Ctrl + wheel, and Ctrl + 0 adjust the preview font size (independent of the editor font size); click an editor pane or switch tabs and the focus returns to the editor. The file needs an extension (unsaved documents have no preview), files over 5 MB are not previewed, and a preview cannot be opened when the pane is too narrow to hold two minimum-size panes.
-- **Preview plugins**: to preview other file types, write a JavaScript plugin and put it in the `previews` folder under the config directory (Windows `%APPDATA%\feditor\previews\`; the "Preview folder" button in the "Preview" group of the settings panel opens it), one `*.js` file per plugin; they are **re-read whenever the settings panel opens**. See `examples/previews/` (a log-file table, an INI tree, a to-do list). Plugins run in the same sandbox as macros (time and memory limits, no file or network access, and no `editor`), so installing someone else's plugin is safe.
-  - The header is declared in `//` comments: `@name` (optional, defaults to the file name), `@extensions` (the extensions it handles, comma-separated, case-insensitive, required), and `@output` (how to show the result, required).
-  - A plugin defines a global function `preview(text, info)`: `text` is the whole file, and `info` is `{ path, name, ext }` (empty for unsaved documents). What it returns depends on `@output`:
+The preview pane can be dragged anywhere in the layout, and clicking it lets Ctrl +/- adjust its own font size. To preview other file types, write a JavaScript **preview plugin** (see [Preview plugins](docs/preview-plugins.en.md)).
 
-    | `@output` | Return | Shown as |
-    |---|---|---|
-    | `markdown` | a Markdown string | like the built-in Markdown preview |
-    | `table` | `{ header: [...], rows: [[...], ...] }` | a table |
-    | `tree` | any JSON value (object, array, ...) | a collapsible tree |
-    | `svg` | an SVG string | a drawing |
-    | `text` | a string | monospaced text |
+## Terminal
 
-  - When a plugin handles an extension, it takes priority over the built-in preview (so you can even replace the built-in Markdown preview). Plugin errors (no `preview` function, an exception, a timeout, a wrong return shape, ...) are shown in the preview pane; a plugin with a bad header is skipped and the reason is shown in the output panel.
-  - For now a plugin can only choose among these output forms, and calling external programs is not supported.
-### Terminal
+The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's default shell (`$SHELL` on Unix; on Windows PowerShell 7 first, then Windows PowerShell, then cmd).
 
-- The `>_` toolbar button (`` Ctrl+Shift+` ``) adds a terminal running the system's default shell (`$SHELL` on Unix; on Windows PowerShell 7 first, then Windows PowerShell, then cmd). It starts in the folder of the current document. **A terminal is a kind of tab**, labeled only with a name, "Terminal 1", "Terminal 2", ... by default (closed numbers are reused), and double-clicking the tab lets you name it yourself (leave it empty to go back to the default): a new one is split below the focused pane in its own pane, and its tab can be dragged like any text tab: drop it in the middle of another pane to join that pane's tab bar, or at a pane's side to split it into a new pane; while another tab is shown, the shell keeps running in the background. You can open as many as you like. `` Ctrl+` `` cycles focus through the terminals and returns to where you were after the last one (and adds one if there are none yet). The tab closes when its shell exits (type `exit`) or you press its ×; the others are not affected.
-- The pseudo-terminal and escape sequences (colors, cursor movement, full-screen programs) are handled by `alacritty_terminal`. **Terminal tabs are saved in the session**: after a restart each pane gets its files and terminal tabs back in their original order, the terminals keep their names, and the active tab is the same; but every terminal is a fresh shell (earlier output and running programs cannot be restored), starting in the folder of the pane's first file.
-- Input: ordinary keys, arrows and function keys, Ctrl+letter (Ctrl+C copies when text is selected, otherwise interrupts), paste (bracketed paste mode), and IME; mouse drag selects and the wheel scrolls (in full-screen programs the wheel sends arrow keys).
-- Colors come from the current color scheme (the 16 colors, default text and background). When text and its background have a contrast below 3:1 (for example dark gray text on a dark background, or pale yellow on a light one), the text is adjusted toward something readable; text that already has enough contrast is left alone, and graphic glyphs (blocks, box drawing, Powerline symbols) are never adjusted. `examples\terminal-colors.ps1` checks the colors and this guard (section 10).
-- Not yet: mouse reporting to programs, clickable links, search, several terminals as tabs, an independent font size (it uses the editor's monospace font).
+- **A terminal is a kind of tab**: its label is "Terminal 1", "Terminal 2", ..., and you can **double-click the label to name it yourself** (leave it empty to go back to the default). Drag the tab like a text tab: drop it in the middle of another pane to join that pane's tab bar, or at a pane's side to split it into a new pane. While another tab is shown, the shell keeps running in the background.
+- Ctrl+` cycles the focus through the terminals and returns to where you were after the last one. The tab closes when the shell exits (type `exit`) or you press its ×.
+- Supports colors, full-screen programs, IME, copy and paste (Ctrl+C copies when text is selected and interrupts otherwise), mouse-drag selection and wheel scrolling. Colors follow the current color scheme, and text whose contrast with its background is too low is adjusted until it is readable.
+- Not yet: mouse reporting to programs, clickable links, search inside the terminal.
 
-### Appearance
+## Editing
 
-The "⋯" button at the far right of the toolbar opens **Settings**: interface language, appearance and color schemes, font, and font size.
+- **A custom-drawn editor area** that draws only the visible lines, so it stays smooth however large the file is. Chinese and other full-width characters always take two columns so that letters and digits line up from row to row; the caret moves by "character" (combining marks and emoji count as one).
+- **Common operations**: arrow keys, Home / End, Ctrl+arrows (by word), Shift to select, Ctrl+Z / Y undo and redo, Ctrl+X / C / V. Enter keeps the previous line's indentation; double-click selects a word and triple-click a line.
+- **Line operations**: Alt+Up / Down move a line, Shift+Alt+Up / Down duplicate it, Ctrl+Shift+K deletes it, Ctrl+/ toggles a comment, Ctrl+] / Ctrl+[ indent and unindent.
+- **Multiple carets and rectangular selection**: Ctrl+click adds a caret, Ctrl+D selects the next occurrence of the same text, Alt+drag selects a rectangle, Esc returns to a single caret.
+- **Word wrap**, **syntax highlighting** (Rust, C/C++, Java/C#, JavaScript/TypeScript, Python, Go, Shell, SQL, CSS, Lua, JSON, TOML/INI/YAML, HTML/XML, Markdown and more; pick the language by hand in the status bar, or define your own), **line numbers** and **showing whitespace** can all be toggled in the settings panel.
+- **Undo** works in units of "one operation": continuous typing and continuous deletion count as one step each; a single replace, replace all, and a whole macro are one step each.
+- **IME**: composition text is drawn at the caret with an underline and does not pollute the undo history; the candidate window sits at the composition.
+- **File format**: the encoding is detected automatically (BOM → UTF-8 → Big5, etc.), the original line ending (CRLF / LF / CR) is remembered and restored on save; saving writes a temporary file and renames it, a character the target encoding cannot represent makes the save **fail** instead of being silently replaced, and overwriting is refused when the file had bytes that could not be decoded.
 
-The **interface language** is a three-state button in the settings panel: "Follow system" (globe), "中文" (Chinese, a "中" icon), or "English" (an "En" icon); each click cycles to the next one and takes effect immediately without a restart. "Follow system" decides by the operating system's language: Chinese on a Chinese system, English otherwise. It is stored as `language` (`system` / `zh` / `en`) in the settings file. What is translated is the interface text, tooltips, and messages; documents such as the README, and the comment inside recorded macro files, are not affected.
+## Find & Replace
 
-- **Appearance**: a single three-state button; its icon changes with the current state (◐ follow system, ☀ light, ☾ dark) and each click advances to the next one (follow system → light → dark → follow system).
-- **Color scheme**: **light and dark each get their own scheme**, independent of each other (for example GitHub Light for light and Dracula for dark); the one for the current appearance is used, also when following the system. Your choice is remembered. Built-in schemes:
-  - Dark: EVA (the default, the *Neon Genesis Evangelion* palette: purple-tinted near-black, Unit-01 purple, neon green, NERV orange), Dracula, Monokai, Solarized Dark, One Dark, Nord, Gruvbox Dark, Tokyo Night, Catppuccin Mocha / Macchiato / Frappé.
-  - Light: Default Light (the original look), Solarized Light, GitHub Light, One Light, Gruvbox Light, VS Code Light+, Catppuccin Latte.
-  - The built-in schemes are adapted from these well-known palettes, with the contrast between text and every background checked (at least 4.5:1 for body text), so they are not necessarily identical to the originals.
-- **Custom schemes**: "Edit current scheme…" in the settings panel opens an editor for the scheme selected for the **appearance currently in use** (dark or light; switch the appearance first to edit the other one). Every color (background, text, buttons and lines, accents and status, syntax coloring, the 16 terminal colors; 41 in all) has a swatch, changes preview immediately, and "Revert" discards them. Built-in schemes cannot be overwritten: use "Save as…" to give it a name and store it as a custom scheme (it is also selected for that appearance); a custom scheme can be saved in place.
-  Custom schemes live in the `themes` folder inside the settings folder (Windows `%APPDATA%\feditor\themes\`; the "Scheme folder" button in the settings panel opens it), one `*.conf` file per scheme, and **they are re-read whenever the settings panel opens**, so you can also write one in a text editor or drop in one from someone else. The format is `key = value` (whole lines starting with `#` are comments, and a color may be followed by `  # note`):
+- Tab in the search or replace box only moves between those two boxes; the other buttons are meant to be clicked with the mouse.
+- Three options: regular expression, match case (off by default), whole word; it searches as you type and shows "n / total", and wraps around when nothing is found. Hovering over the "regular expression" button shows a syntax cheat sheet.
+- Regular expressions use Rust `regex` syntax (guaranteed linear time, so a badly written pattern cannot hang the program); in the replacement `$1` and `${name}` insert groups, `\n` and `\t` stand for newline and tab, and a literal `$` is written `$$`.
+- Changes made by replacing can be undone with Ctrl+Z: a single replace and replace all are one step each.
+- **Find in Files** (Ctrl+Shift+F) searches all text files under a folder (with a file name filter such as `*.rs;*.toml`), runs in the background and can be stopped at any time; click a result to open it and select the match. It detects encodings automatically and skips binary files, files over 20 MiB, and `.git` / `target` / `node_modules`; at most 5000 results are listed.
 
-  | Key | Meaning |
-  |---|---|
-  | `name` | Scheme name (required). A custom scheme overrides a built-in one with the same name |
-  | `mode` | `dark` or `light`: which list the scheme appears in (default `dark`) |
-  | `base` | Optional: colors you leave out are inherited from this existing scheme (built-in or another custom one); without `base` the default scheme of that mode fills the gaps |
-  | `editor_bg`, `panel_bg`, `popup_bg`, `faint_bg`, `code_bg` | Backgrounds: editor, panels, popups, faint (striping), code |
-  | `text`, `text_strong`, `text_weak` | Normal, strong, and secondary text |
-  | `button`, `button_hover`, `button_active`, `selection`, `line`, `line_hover` | Buttons (normal, hovered, pressed), selection, lines (normal, hovered) |
-  | `accent`, `cursor`, `link`, `warning`, `error` | Accent, caret, hyperlinks, warnings (also search-result highlights), errors |
-  | `syn_comment`, `syn_string`, `syn_number`, `syn_keyword`, `syn_type`, `syn_function` | Syntax coloring: comments, strings, numbers, keywords, types, functions |
-  | `term_black`, `term_red`, `term_green`, `term_yellow`, `term_blue`, `term_magenta`, `term_cyan`, `term_white`, and the `bright_` variants (e.g. `term_bright_red`) | The 16 colors of the terminal pane (ANSI 0–15); its default text uses `text` and its background `editor_bg` |
+## Appearance and settings
 
-  Write colors as `#RRGGBB` (or `#RGB`). Broken files (missing `name`, unknown keys, bad colors, an unknown `base`) are skipped and the reason is shown in the output panel. See `examples/themes/midnight.conf`. If the scheme named in the settings no longer exists (for example the file was deleted), the default scheme of that mode is used.
-- **Font**: lists **monospace fonts only**. A font counts as monospace when `i`, `m`, `W`, `.`, etc. all have the same advance width; the monospace flag inside font files is not used because it is often wrong. The default is the **operating system's default monospace font** (queried from the OS, not hard-coded; Consolas on Windows).
-  Some old fonts (MingLiU, MS Gothic, Lucida Console, ...) have embedded *color bitmap* Latin glyphs, which egui does not tint with the text color and therefore draws invisibly, so such fonts are left out of the list; if the settings file names one, the editor falls back to the system default and the panel shows the font that is actually in effect.
-  Building the list means opening every font file, so it is scanned in the background; until it finishes the panel shows "Finding monospace fonts on the system…". Chinese glyphs come from Microsoft JhengHei. Fonts differ in ascent/descent proportions, which makes egui draw Latin letters and Chinese characters on different baselines by default, so at startup and whenever the font changes the gap is measured with egui's real layout and compensated; tests verify that every font in the list puts both on the same baseline.
-- **Font size**: the size field in the panel and the shortcuts share one setting, so they are always in sync. Shortcuts: **Ctrl +/−** to enlarge/shrink, **Ctrl+mouse wheel**, and **Ctrl+0** to reset (range 8–48 pt). This replaces egui's built-in "Ctrl +/− zooms the whole UI".
-- **Display options**: five toggle buttons in the settings panel (icon plus tooltip): line numbers, highlight the current line, show whitespace (dots for spaces, arrows for tabs, boxes for full-width spaces, ↵ at line ends), syntax coloring, and word wrap.
-- **Settings file** location: Windows `%APPDATA%\feditor\settings.conf`, macOS `~/Library/Application Support/feditor/settings.conf`, Linux `$XDG_CONFIG_HOME/feditor/settings.conf` (`~/.config/feditor/settings.conf` when unset). It is plain `key = value`: `theme` (`system`/`light`/`dark`), `font_family` (no line means the system default), `font_size`, and `show_line_numbers` / `highlight_line` / `show_whitespace` / `syntax` / `word_wrap` (`true`/`false`). A missing or corrupt file, or an unreasonable value, falls back to the default and never prevents startup. While the font size is changing continuously the file is written only after 0.4 s of inactivity, and always on close.
-- The unsaved marker is in the title bar (the "●" after the file name); it is not repeated in the status bar.
+The "⋯" at the far right of the toolbar is the **settings** panel:
 
-### Editor area
+- **Interface language**: a three-state button (follow system / Chinese / English), effective immediately.
+- **Appearance**: a three-state button (follow system / light / dark).
+- **Color scheme**: choose one for light and one for dark **independently**. 11 dark schemes are built in (EVA is the default, plus Dracula, Monokai, Solarized Dark, One Dark, Nord, Gruvbox Dark, Tokyo Night and three Catppuccin flavors) and 7 light ones (Default Light, Solarized Light, GitHub Light, One Light, Gruvbox Light, VS Code Light+, Catppuccin Latte). "Edit current scheme..." lets you adjust all 41 colors (including the terminal's 16) and save the result as a custom scheme.
+- **Font**: only monospace fonts are listed; the default is the operating system's default monospace font. Adjust the **font size** in the panel or with the shortcuts; the two stay in sync.
+- **Display options**: line numbers, highlighting the current line, showing whitespace, syntax highlighting, word wrap.
+- Settings live in the config folder (Windows `%APPDATA%\feditor\`, macOS `~/Library/Application Support/feditor/`, Linux `~/.config/feditor/`); the settings panel has buttons that open the scheme and preview plugin folders directly.
 
-The editor area is **custom-drawn** (`ui/src/editor/`) instead of using egui's built-in text box: the text lives in a rope buffer and each frame lays out and paints only the visible lines, so the cost depends on the window height, not the file size (verified with a 1,000,000-line document).
-
-- The line-number gutter is fixed on the left; the current line has a subtle background; tabs are displayed expanded to 4-column stops (the file still contains tab characters).
-- **Column-grid layout**: every character occupies exactly its column width × the half-width glyph width, so Chinese and full-width characters are always exactly two columns, whatever the advance width of the CJK font is, and Latin text on neighboring lines stays aligned (a monospace Latin font alone cannot guarantee this because the Chinese glyphs come from a different font). Runs of ASCII are laid out together; every other character is laid out individually and centered in its own cell.
-- The caret moves by user-perceived character: combining marks and emoji (including ZWJ sequences) count as one, and full-width CJK characters take two columns. Moving up/down remembers the original column.
-- Keys: arrows, Home/End (first press goes to the first non-blank character, the second to the line start), Ctrl+Home/End, Page Up/Down, Ctrl+arrows (by word), Shift with any of these (select), Ctrl+A, Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z), Ctrl+X/C/V, Tab/Shift+Tab. Enter keeps the previous line's indentation. Mouse: click, drag to select, double-click for a word, triple-click for a line, Shift+click to extend the selection.
-- **Line operations**: Alt+↑/↓ move lines, Shift+Alt+↑/↓ duplicate lines, Ctrl+Shift+K delete lines, Ctrl+/ toggle comment (the symbol depends on the extension; if every line is already commented they are uncommented), Ctrl+] / Ctrl+[ indent/unindent; with a multi-line selection Tab/Shift+Tab indent the whole block. Each is one undo step and the selection moves with the text.
-- **Multiple carets and rectangular selection**: Ctrl+click adds (or removes) a caret, Ctrl+Alt+↑/↓ adds a caret on the line above/below, Ctrl+D selects the word under the caret and then adds the next identical text each time, **Alt+drag** makes a rectangular selection (by display column; Chinese counts as two), and Esc returns to a single caret. Typing, deleting, Enter, paste, movement, copy, and cut apply to every caret, and one action is one undo step; when pasting, a clipboard with exactly as many lines as carets goes one line per caret. External changes such as undo, replace, and macros discard the extra carets.
-- **Word wrap**: a toggle in the settings panel. Lines wrap by display column (English words are not split, wrapping is allowed between CJK characters, and kinsoku punctuation never starts a row); line numbers appear only on the first row of each line, and Up/Down, Home/End, and the mouse all work on screen rows; at a wrap point the caret can sit at the end of the upper row or the start of the lower one (clicking at the end of a row or pressing End keeps it on the upper row). Files over 100,000 lines do not offer word wrap (every edit would have to recompute the row count of the whole document).
-- **Syntax coloring**: by file extension (Rust, C/C++, Java/C#, JavaScript/TypeScript, Python, Go, Shell, SQL, CSS, Lua, JSON, TOML/INI/YAML, HTML/XML, Markdown), coloring comments, strings, numbers, keywords, types, and function names; block comments, triple-quoted strings, and template strings can span lines. Embedded expressions inside strings are colored as code too: `${…}` in JavaScript/TypeScript template strings, `{…}` in Python f-strings (`{{` is an escape and does not count), and `${…}` in Shell double-quoted strings; strings and nested template strings inside an expression are matched, and an expression may span lines. Triple-quoted f-strings are not handled yet. It is a lightweight tokenizer, not a full parser. Files over 20,000 lines estimate the cross-line state by looking back only 1000 lines.
-- **Choosing the language**: the status bar (left of the encoding) has a "language" dropdown listing the built-in and custom languages, plus "Auto" and "Plain text". The choice belongs to this tab only, is not written to the file, and survives a reload. "Auto" works like this: with a file name it uses the extension; for an **unsaved document without a file name** it guesses from the beginning of the content: a `#!` interpreter line (Python, Node, Lua, various shells), `<?php`, `<!DOCTYPE html` / `<html` / `<?xml` / `<svg`, or JSON starting with `{` / `[`; if it cannot tell, nothing is colored (for example a pasted Rust snippet with no telltale start, which you pick from the list yourself). When you pick a language manually, the comment marker used by Ctrl+/ follows it.
-- **Custom languages**: put `*.conf` files in the `syntax` folder under the config directory (Windows `%APPDATA%\feditor\syntax\`), one language per file; they take effect after a restart and take priority over the built-in languages (so you can override a built-in keyword list). Broken files are skipped and the reason is shown in the output panel. See `examples/syntax/php.conf`. The format is `key = value`; whole lines starting with `#` are comments:
-
-  | Key | Meaning |
-  |---|---|
-  | `name` | Language name (required) |
-  | `extensions` | File extensions separated by commas or spaces; a full file name such as `makefile` also works (required) |
-  | `line_comment` | Line comment markers, possibly several, e.g. `//, #` |
-  | `block_comment` | Start and end of a block comment, e.g. `/*, */` |
-  | `quotes` | String quote characters, e.g. `", '` (default: `"` and `'`) |
-  | `keywords` | Keywords separated by commas or spaces; may appear on several lines (merged) |
-  | `capital_types` | `true` colors identifiers starting with a capital letter as types |
-  | `case_insensitive` | `true` makes keywords case-insensitive (SQL) |
-  | `triple_quotes` / `backtick_strings` | Triple-quoted strings (Python) and backtick strings (JavaScript); they can span lines |
-  | `interpolation` | Start and end of an embedded expression in a string, e.g. `${, }` (JavaScript), `#{, }` (Ruby), `{, }` (Python f-string) |
-  | `interpolation_in` | Which strings contain embedded expressions, comma-separated: `backtick` (backtick strings), `double` (double-quoted strings), `fstring` (strings with an `f` or `$` prefix; `{{` is an escape). Default: `backtick, double` |
-  | `mode` | `code` (default), `markup` (HTML/XML), `markdown`, `config` (`[section]` and `key =` in ini/toml) |
-- **Undo** works per operation: consecutive typing and consecutive deleting are one step each; a single replace, replace-all, and a whole macro run are one step each.
-- **Input method**: composition text is drawn at the caret with an underline and is **not in the buffer**, so composing never pollutes the undo history; the candidate window is placed at the composition. Arrow keys during composition belong to the IME (candidate selection), and clicking elsewhere in the editor ends the composition; clicking somewhere in the window that cannot take input (blank areas, buttons) keeps composing, and when another input box takes focus the composition text is written into the editor directly. The caret position is inferred from the IME's behavior (the built-in Windows Bopomofo IME only reports the highlighted clause, so the caret is derived from text changes and repeated events). If an IME misbehaves, start with the environment variable `FEDITOR_IME_LOG=<log file path>` and the editor appends the IME events with the caret and composition state to that file (nothing is written when it is not set).
-- Current limits: a single extremely long line (hundreds of thousands of characters) gets slow; vertical scroll positions beyond roughly 1,000,000 lines are limited by f32 precision (a measured 4,000,000-line, 346 MB file opens in about 4.5 s and uses about 840 MB; it is usable, but the spacing between rows visibly jitters); and while a Windows IME has focus, some Ctrl+Alt+letter combinations are swallowed by the IME and never reach the editor.
-### Find & Replace
-
-- **The keyboard only serves the two input fields**: pressing Tab (or Shift+Tab) in the search or replace field only switches between those two fields (and expands the replace row if it is collapsed); all the other buttons (options, previous / next, replace, close, ...) are mouse-only by default and are never reached by Tab.
-- Three options: regular expression, case-sensitive (off by default), and whole word. Search is live while you type and shows "n / total"; when nothing is left in one direction it wraps around and shows "wrapped".
-- Hovering the "regular expression" button shows a syntax cheat sheet and a link to the full documentation (<https://docs.rs/regex/latest/regex/#syntax>); the tooltip stays open when the pointer moves onto it, so the link can be clicked.
-- **Regular expressions** use the Rust `regex` syntax (guaranteed linear time, so a badly written pattern cannot hang the editor); `^` and `$` work per line. In the replacement, `$1` and `${name}` insert capture groups, `\n` and `\t` mean newline and tab, and a literal `$` is written `$$`.
-- **Whole word**: the match must not be directly adjacent to a letter, digit, or underscore. Chinese has no spaces between words, so adjacent Han characters block each other; this option is usually not useful for Chinese words.
-- Changes made by replace and by macros can be undone with Ctrl+Z and redone with Ctrl+Y: a single replace, replace-all, and a whole macro run are one undo step each.
-- For files over 8 MiB the total count is not computed (shown as "—") so that typing does not rescan a huge file; the count is capped at 9999.
-- The found match becomes the editor selection (typing then replaces it); "next" continues from the end of the selection and "previous" from its start, so clicking somewhere yourself and pressing F3 continues from that caret. After closing the find bar with Esc the caret returns to the editor.
-
-### Find in Files
-
-Ctrl+Shift+F opens the panel (pre-filled with the selected text and the folder of the current file): search text, three options (case-sensitive, whole word, regular expression), the folder, and a file-name filter (for example `*.rs;*.toml`). The search runs in the background and can be stopped at any time; clicking a result opens the file (or switches to it if it is already open) and selects the match.
-
-- Files are decoded with automatic encoding detection (Big5, UTF-16, ... are searchable); binary files containing NUL, files over 20 MiB, and `.git` / `target` / `node_modules` folders are skipped.
-- Only the first match per line is listed; at most 5000 results, after which you are asked to narrow the scope.
-
-The application icon (a text document with a pencil) is generated by `ui/assets/make_icon.py`: `uv run ui/assets/make_icon.py`.
-
-- **Encoding detection**: BOM → strict UTF-8 → `chardetng` (biased toward Traditional Chinese Big5).
-- **Line endings**: the original CRLF/LF/CR is remembered and restored on save; mixed endings produce a warning and are unified.
-- **Save safety**: writes to a temp file, then renames; characters the target encoding cannot represent make the save **fail** instead of being silently replaced; if bytes failed to decode on load, overwriting the original file is blocked.
-
-## Design decisions
-
-- **Rust core**: performance, single-binary distribution, cross-platform builds.
-- **Custom-rendered UI with egui**: Traditional Chinese IME has been verified on egui (see `proto/IME-TEST.en.md`). The editor area does not use egui's `TextEdit`; it is custom-drawn (rope buffer plus painting only the visible lines) because `TextEdit` is not fast enough for large files and gives no fine control over undo and IME composition.
-- **JavaScript first for macros** (`rquickjs`): lightweight, statically linkable, and easy to cap in time and memory. It sits behind the `ScriptEngine` abstraction, so adding Python or another language later does not touch the core.
-- **File size target**: up to a few hundred MB. Buffer and rendering will be optimized later if larger files are needed.
+The formats of custom color scheme files, custom syntax definitions and the settings file are in [Customization and settings file](docs/customization.en.md).
 
 ## Macros
 
-### Library, recording, and shortcuts
+Macros are JavaScript files in the `macros` folder of the config directory, one `.js` file each.
 
-- Your macros live in the `macros` folder inside the settings folder (Windows `%APPDATA%\feditor\macros`), one `.js` file per macro. The toolbar macro button opens the macro panel: ▶ runs, the keyboard icon sets a shortcut, the pencil edits the source in a new tab, the I-beam icon renames (double-clicking the name works too), the trash can deletes; at the bottom you can run any file or open the macro folder.
-- Comments at the top of a file can carry tags: `// @name Display name`, `// @shortcut Ctrl+Alt+U`. When you set a shortcut by pressing the combination, the program rewrites the `@shortcut` in the header (Esc cancels, Delete clears). It needs Ctrl or Alt (function keys F1–F12 excepted); duplicates of built-in shortcuts or of another macro are rejected. Running a macro with its shortcut (for example Alt+M) does not type that letter. Renaming a macro rewrites the `@name` in the header; the file name stays and other tags such as the shortcut are kept.
-- **Recording**: press the record button on the toolbar to start; from then on **keys and typing** (typing, text committed by an IME, paste, arrows, deletion, line operations, ...) are recorded; press again to stop, and a dialog asks you to **name the macro** (the default is "錄製的巨集", numbered automatically if that name is taken; Enter or "Save" stores it in the `macros` folder with the name written as-is in the header's `@name` and the file name stripped of unusable characters; "Discard" does not save it, and Esc does not close the dialog, so a recording cannot be lost by accident). After saving, it becomes what F5 reruns. Mouse actions are not recorded. The result is editable JavaScript; consecutive typing is merged into one statement and repeated commands are written with a count:
+- The macro button on the toolbar opens the macro panel: run, set a shortcut (Alt/Ctrl combinations), edit the source, rename, delete. F5 reruns the last one.
+- **Recording**: after pressing the record button, the keys and input that follow are recorded; press it again to stop, name the macro, and it is saved as editable JavaScript (continuous typing is merged into one statement). Mouse actions are not recorded.
+- Running a macro is **one undo step**; when it fails, the text and selection are restored to how they were before. Macros run in a sandbox with time (5 s) and memory (64 MiB) limits and cannot read or write files or use the network.
 
-```js
-// 由錄製產生
-editor.run("docEnd");
-editor.paste(" world");
-editor.run("selectRight", 2);
-```
-
-- A macro run is **one undo step**; if it fails, both the text and the selection are restored.
-
-### Macro API (JavaScript)
-
-| API | Description |
-|---|---|
-| `editor.text()` | Full text |
-| `editor.length()` | Total number of characters |
-| `editor.lineCount()` | Number of lines |
-| `editor.line(i)` | Line `i` (including its newline); `undefined` if out of range |
-| `editor.slice(start, end)` | Text of `[start, end)` |
-| `editor.lineStart(i)` / `editor.lineOf(pos)` | Start of line `i` / which line position `pos` is on |
-| `editor.insert(at, text)` | Insert at position `at` (the selection moves with the text) |
-| `editor.remove(start, end)` | Delete `[start, end)` |
-| `editor.replace(start, end, text)` | Replace `[start, end)` |
-| `editor.selection()` | `[anchor, head]` |
-| `editor.setSelection(anchor, head)` | Set the selection |
-| `editor.selectedText()` | The selected text |
-| `editor.path()` | Full path of the current file; `undefined` if never saved |
-| `editor.run(name, count = 1)` | Run an editor command, same as the key; names below |
-| `editor.type(text)` / `editor.paste(text)` | Type / paste like a user (replaces the selection, caret follows) |
-| `editor.find(query, from = 0, opts)` | `[start, end]` if found, otherwise `undefined`; `opts`: `regex`, `caseSensitive`, `wholeWord`, `backward` |
-| `editor.alert(msg)` / `editor.confirm(msg)` | Dialogs; `confirm` returns whether "Yes" was pressed |
-| `console.log(...)` | Output |
-
-Editor commands (`editor.run`): `left` `right` `up` `down` `wordLeft` `wordRight` `pageUp` `pageDown` `home` `end` `docStart` `docEnd`, their `select`-prefixed variants (`selectLeft` ... `selectDocEnd`, `selectAll`); `backspace` `delete` `deleteWordLeft` `deleteWordRight` `enter` `tab` `shiftTab` `undo` `redo`; `moveLineUp` `moveLineDown` `duplicateLine` `deleteLine` `toggleComment` `indent` `unindent`; `addCaretUp` `addCaretDown` `selectNextOccurrence` `clearCarets`. An unknown name throws an error.
-
-- Positions are in **Unicode code points**, not JavaScript string UTF-16 units. `"😀".length` is 2, but `editor.length()` counts it as 1.
-- Positions must be non-negative integers; otherwise a `RangeError` is thrown.
-- Every run uses a fresh environment; macros do not share globals.
-- Default limits are 5 seconds of run time and 64 MiB of memory; infinite loops and memory bombs are aborted.
+The full API and the header markers are in [Macros](docs/macros.en.md); examples are in `examples/macros/`.
 
 ## Known issues
 
-- On the development machine, the wgpu **Vulkan backend crashes** (`0xC0000005`). On Windows the default is switched to DX12; override it with the `WGPU_BACKEND` environment variable.
-- IME has only been verified on Windows + DX12; macOS and Linux are untested.
-- The GitHub Actions configuration for cross-platform builds and releases is in `.github/workflows/` (tests and builds run on Windows, macOS, and Linux); the system packages Linux needs are listed in `ci.yml` and may need adjusting for other distributions.
-- The macOS `FEditor.app` is not notarized by Apple and has not been tried on a real Mac yet; "Open With" on a file in Finder does not open it (only command-line arguments are supported).
+- The IME has only been verified on Windows; macOS and Linux are untested.
+- The macOS `FEditor.app` is not notarized and has not been tried on a real Mac; "Open With" on a file in Finder does not open it yet (only command-line arguments are supported).
+- A single very long line (hundreds of thousands of characters) makes that line slow; above about 1,000,000 lines the vertical scroll position has limited precision (a 4-million-line, 346 MB file opens and can be edited, but the line spacing visibly jitters).
+- While the IME has the focus on Windows, some Ctrl+Alt+letter combinations are swallowed by the IME.
+- The terminal is experimental and is best tested on Windows so far.
 
-## Download
+## Documentation
 
-Get the archive for your platform from [Releases](https://github.com/codemee/feditor/releases):
-
-- **Windows**: extract and run `feditor.exe`.
-- **macOS** (Apple Silicon): download `feditor-macos.dmg`, open it, and drag `FEditor.app` onto the Applications shortcut next to it. It is not notarized, so the first time, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
-- **Linux**: extract and run `./feditor`.
-
-See the [changelog](CHANGELOG.en.md) for what changed in each version.
-
-## Development
-
-```powershell
-cargo test --workspace --exclude feditor       # unit tests (without the UI)
-cargo run --release -p feditor                 # launch the editor
-```
+- [Macros](docs/macros.en.md): the macro library, recording, and the full JavaScript API.
+- [Preview plugins](docs/preview-plugins.en.md): write plugins to preview more file types.
+- [Customization and settings file](docs/customization.en.md): custom color schemes, custom syntax, the settings file format, font details.
+- [How the editor works](docs/internals.en.md): design and implementation details of the editor area, IME, file watching, sessions, the terminal and more.
+- [Development guide](docs/development.en.md): project layout, design decisions, building, testing, releasing.
+- [Changelog](CHANGELOG.en.md).

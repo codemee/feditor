@@ -2,9 +2,10 @@
 
 # Changelog
 
-## Unreleased
+## [0.2.0] - 2026-11-03
 
 ### Changed
+- **Documentation reorganized**: the README now holds only what users need to know (download, operations, how each feature is used); what developers and advanced users need moved to `docs/`: [Macros](docs/macros.en.md), [Preview plugins](docs/preview-plugins.en.md), [Customization and settings file](docs/customization.en.md), [How the editor works](docs/internals.en.md), [Development guide](docs/development.en.md) (each with a Chinese version).
 - **External change detection now uses a file-system watcher** (`notify`): instead of polling only the active file of the focused pane once a second, the folders of all open files are watched, covering every tab in every pane; a change is handled as soon as it settles (short debounce), with a re-check every 5 seconds and when the window regains focus as a fallback. A background tab without unsaved changes is reloaded automatically; otherwise its tab is marked "(changed on disk)" and you are asked when you switch to it.
 
 ### Added
@@ -31,6 +32,7 @@
 - Code blocks, inline code, and `<kbd>` in the Markdown preview were much bigger than the body text: the preview drew monospaced text at the editor font size, which went out of balance as soon as the editor font size was raised. The preview's monospaced text is now derived from the body font size and no longer depends on the editor font size.
 
 ### Changed
+- **Documentation reorganized**: the README now holds only what users need to know (download, operations, how each feature is used); what developers and advanced users need moved to `docs/`: [Macros](docs/macros.en.md), [Preview plugins](docs/preview-plugins.en.md), [Customization and settings file](docs/customization.en.md), [How the editor works](docs/internals.en.md), [Development guide](docs/development.en.md) (each with a Chinese version).
 - In the find bar, Tab now only switches between the search and replace fields (and expands the replace row if it is collapsed); the other buttons (options, previous / next, replace, close, ...) are mouse-only and are never reached by Tab.
 - The separator line under the toolbar is gone (the border at the top of the panes already separates them), and the panes now sit right under the toolbar instead of leaving a big gap.
 - When tabs do not fit, the thick scrollbar is gone; thin-line `<` and `>` arrows on both sides scroll the tabs instead (the mouse wheel works too), and switching tabs scrolls the bar to the active one.
@@ -39,6 +41,7 @@
 ## [0.1.4] - 2026-11-02
 
 ### Changed
+- **Documentation reorganized**: the README now holds only what users need to know (download, operations, how each feature is used); what developers and advanced users need moved to `docs/`: [Macros](docs/macros.en.md), [Preview plugins](docs/preview-plugins.en.md), [Customization and settings file](docs/customization.en.md), [How the editor works](docs/internals.en.md), [Development guide](docs/development.en.md) (each with a Chinese version).
 - **Tabs now look like workbook tabs**: the active tab has the same color as the editor below it, rounded top corners, joins the editor at its lower edge, and has a thin accent line at its bottom edge (like a workbook sheet tab); the other tabs have no fill, only dimmer text, separated by thin lines, with a faint background appearing on hover. The leftmost tab lines up with the editor's text area (right of the line-number gutter).
 
 ### Fixed
@@ -52,6 +55,7 @@
 - The status bar shows the caret position as "行 X，欄 Y" (line X, column Y, starting at 1). In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns, chosen under "欄號" (column number) in the settings panel (default 1).
 
 ### Changed
+- **Documentation reorganized**: the README now holds only what users need to know (download, operations, how each feature is used); what developers and advanced users need moved to `docs/`: [Macros](docs/macros.en.md), [Preview plugins](docs/preview-plugins.en.md), [Customization and settings file](docs/customization.en.md), [How the editor works](docs/internals.en.md), [Development guide](docs/development.en.md) (each with a Chinese version).
 - The settings panel is split into four groups, "Interface", "Color schemes", "Editor", and "Status bar", with separators between them; every row has the same height and spacing.
 
 ### Fixed
@@ -101,6 +105,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0
 [0.1.5]: https://github.com/codemee/feditor/releases/tag/v0.1.5
 [0.1.4]: https://github.com/codemee/feditor/releases/tag/v0.1.4
 [0.1.3]: https://github.com/codemee/feditor/releases/tag/v0.1.3
