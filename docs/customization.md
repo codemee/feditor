@@ -44,7 +44,7 @@
 
 ## 設定檔
 
-- **設定檔**位置：Windows `%APPDATA%\feditor\settings.conf`、macOS `~/Library/Application Support/feditor/settings.conf`、Linux `$XDG_CONFIG_HOME/feditor/settings.conf`（沒設定時是 `~/.config/feditor/settings.conf`）。內容是簡單的 `key = value`：`theme`（`system`／`light`／`dark`）、`font_family`（沒有這行表示系統預設）、`font_size`、`show_line_numbers`／`highlight_line`／`show_whitespace`／`syntax`／`word_wrap`（`true`／`false`）。檔案不存在、壞掉、或值不合理時都退回預設，不會讓程式起不來。字級連續變動時會等停下來 0.4 秒才寫入，關閉視窗時一定會寫。
+- **設定檔**位置：Windows `%APPDATA%\feditor\settings.conf`、macOS `~/Library/Application Support/feditor/settings.conf`、Linux `$XDG_CONFIG_HOME/feditor/settings.conf`（沒設定時是 `~/.config/feditor/settings.conf`）。內容是簡單的 `key = value`：`theme`（`system`／`light`／`dark`）、`font_family`（沒有這行表示系統預設）、`font_size`（編輯區）、`preview_font_size`（預覽）、`terminal_font_size`（終端機）、`terminal_min_contrast`（終端機文字與底色的最低對比度，1 是不調整，最大 7，預設 3）、`terminal_shell`（新開的終端機要執行的程式與參數，例如 `pwsh -NoLogo`；路徑有空白要用雙引號包起來；沒有這行表示系統預設）、`show_line_numbers`／`highlight_line`／`show_whitespace`／`syntax`／`word_wrap`（`true`／`false`）。檔案不存在、壞掉、或值不合理時都退回預設，不會讓程式起不來。字級連續變動時會等停下來 0.4 秒才寫入，關閉視窗時一定會寫。
 
 ## 自訂語法
 

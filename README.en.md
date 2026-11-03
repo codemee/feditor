@@ -69,7 +69,8 @@ The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's defa
 - **A terminal is a kind of tab**: its label is "Terminal 1", "Terminal 2", ..., and you can **double-click the label to name it yourself** (leave it empty to go back to the default). Drag the tab like a text tab: drop it in the middle of another pane to join that pane's tab bar, or at a pane's side to split it into a new pane. While another tab is shown, the shell keeps running in the background.
 - Ctrl+` cycles the focus through the terminals and returns to where you were after the last one. The tab closes when the shell exits (type `exit`) or you press its ×.
 - Supports colors, full-screen programs, IME, copy and paste (Ctrl+C copies when text is selected and interrupts otherwise), mouse-drag selection and wheel scrolling. Colors follow the current color scheme, and text whose contrast with its background is too low is adjusted until it is readable.
-- Not yet: mouse reporting to programs, clickable links, search inside the terminal.
+- When a program asks for mouse reporting (vim, htop and the like), mouse events are sent to it; holding Shift still lets you select text.
+- Not yet: clickable links, search inside the terminal.
 
 ## Editing
 
@@ -99,6 +100,7 @@ The "⋯" at the far right of the toolbar is the **settings** panel:
 - **Color scheme**: choose one for light and one for dark **independently**. 11 dark schemes are built in (EVA is the default, plus Dracula, Monokai, Solarized Dark, One Dark, Nord, Gruvbox Dark, Tokyo Night and three Catppuccin flavors) and 7 light ones (Default Light, Solarized Light, GitHub Light, One Light, Gruvbox Light, VS Code Light+, Catppuccin Latte). "Edit current scheme..." lets you adjust all 41 colors (including the terminal's 16) and save the result as a custom scheme.
 - **Font**: only monospace fonts are listed; the default is the operating system's default monospace font. Adjust the **font size** in the panel or with the shortcuts; the two stay in sync.
 - **Display options**: line numbers, highlighting the current line, showing whitespace, syntax highlighting, word wrap.
+- **Terminal**: the font size (Ctrl +/- adjusts it when a terminal is clicked, independent of the editor and the preview), the minimum contrast between text and background (can be turned off), and the shell new terminals run (arguments allowed).
 - Settings live in the config folder (Windows `%APPDATA%\feditor\`, macOS `~/Library/Application Support/feditor/`, Linux `~/.config/feditor/`); the settings panel has buttons that open the scheme and preview plugin folders directly.
 
 The formats of custom color scheme files, custom syntax definitions and the settings file are in [Customization and settings file](docs/customization.en.md).

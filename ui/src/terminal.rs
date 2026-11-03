@@ -109,14 +109,53 @@ pub fn default_shell(env: &dyn Fn(&str) -> Option<String>, exists_in_path: &dyn 
     }
 }
 
+/// 把「程式 參數…」這樣一行字拆成程式與參數；用雙引號包起來的部分（例如有空白的路徑）算一個詞。
+pub fn split_command(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut started = false;
+    for c in line.chars() {
+        match c {
+            '"' => {
+                in_quotes = !in_quotes;
+                started = true;
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if started {
+                    words.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            c => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(current);
+    }
+    words
+}
+
+/// 要執行的 shell：使用者在設定裡指定了（程式加參數）就用它，沒有就用系統預設的。
+pub fn resolve_shell(custom: &str, env: &dyn Fn(&str) -> Option<String>, exists_in_path: &dyn Fn(&str) -> bool) -> ShellCommand {
+    let mut words = split_command(custom).into_iter();
+    match words.next() {
+        Some(program) => ShellCommand { program, args: words.collect() },
+        None => default_shell(env, exists_in_path),
+    }
+}
+
 fn exists_in_path(exe: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(exe).is_file()))
 }
 
 impl Terminal {
     /// 開一個 shell。`dir` 是起始資料夾；`cell` 是一格的大小（點），只用來告訴 shell 像素尺寸。
-    pub fn spawn(ctx: &egui::Context, size: GridSize, cell: (u16, u16), dir: Option<PathBuf>) -> std::io::Result<Self> {
-        let shell = default_shell(&|k| std::env::var(k).ok(), &exists_in_path);
+    pub fn spawn(ctx: &egui::Context, size: GridSize, cell: (u16, u16), dir: Option<PathBuf>, custom_shell: &str) -> std::io::Result<Self> {
+        let shell = resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path);
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program, shell.args)),
             working_directory: dir.filter(|d| d.is_dir()),
@@ -257,6 +296,38 @@ impl ModsExt for egui::Modifiers {
     }
 }
 
+/// 滑鼠事件要送給程式時的編碼（程式用 `ESC[?1000h` 這類序列要求了滑鼠回報）。
+/// `button` 是 0 左鍵、1 中鍵、2 右鍵、3 沒有按鍵（只有移動）、64 滾輪往上、65 滾輪往下；
+/// `col`、`row` 從 0 起算；`release` 是放開按鍵；`motion` 是移動中。
+/// 程式要求 SGR 格式（`ESC[?1006h`）就用 SGR，否則用傳統格式（座標超過 223 的格子送不出去，回傳 `None`）。
+pub fn encode_mouse(button: u8, col: usize, row: usize, release: bool, mods: egui::Modifiers, motion: bool, mode: TermMode) -> Option<Vec<u8>> {
+    let mut code = button;
+    if mods.shift {
+        code += 4;
+    }
+    if mods.alt {
+        code += 8;
+    }
+    if mods.ctrl {
+        code += 16;
+    }
+    if motion {
+        code += 32;
+    }
+    let (x, y) = (col + 1, row + 1);
+    if mode.contains(TermMode::SGR_MOUSE) {
+        let last = if release { 'm' } else { 'M' };
+        Some(format!("\x1b[<{code};{x};{y}{last}").into_bytes())
+    } else {
+        if x > 223 || y > 223 {
+            return None;
+        }
+        // 傳統格式的放開不分哪個鍵，一律是 3
+        let b = if release { 3 + (code & !3) } else { code };
+        Some(vec![0x1b, b'[', b'M', 32 + b, 32 + x as u8, 32 + y as u8])
+    }
+}
+
 /// Alt＋可列印字元：前面加 ESC（讓 shell 當成 Meta 鍵）。
 pub fn alt_text(text: &str) -> Vec<u8> {
     let mut out = vec![0x1b];
@@ -327,6 +398,37 @@ mod tests {
     }
 
     #[test]
+    fn commands_split_into_program_and_arguments_and_a_custom_shell_overrides_the_default() {
+        assert_eq!(split_command("pwsh -NoLogo"), vec!["pwsh", "-NoLogo"]);
+        assert_eq!(split_command("  bash   --login  -i "), vec!["bash", "--login", "-i"]);
+        assert_eq!(split_command(r#""C:\Program Files\Git\bin\bash.exe" --login"#), vec![r"C:\Program Files\Git\bin\bash.exe", "--login"]);
+        assert_eq!(split_command(""), Vec::<String>::new());
+        assert_eq!(split_command("   "), Vec::<String>::new());
+        assert_eq!(split_command(r#"x "" y"#), vec!["x", "", "y"], "空的引號是一個空的參數");
+        let env = |_: &str| None;
+        let any = |_: &str| true;
+        let custom = resolve_shell("nu --no-config", &env, &any);
+        assert_eq!((custom.program.as_str(), custom.args.as_slice()), ("nu", &["--no-config".to_owned()][..]));
+        assert_eq!(resolve_shell("", &env, &any), default_shell(&env, &any), "沒指定就用系統預設的");
+    }
+
+    #[test]
+    fn mouse_reports_use_sgr_when_asked_and_the_legacy_format_otherwise() {
+        let none = egui::Modifiers::NONE;
+        let sgr = TermMode::SGR_MOUSE;
+        assert_eq!(encode_mouse(0, 4, 9, false, none, false, sgr), Some(b"\x1b[<0;5;10M".to_vec()));
+        assert_eq!(encode_mouse(0, 4, 9, true, none, false, sgr), Some(b"\x1b[<0;5;10m".to_vec()), "放開用小寫 m，保留原本的按鍵");
+        assert_eq!(encode_mouse(2, 0, 0, false, egui::Modifiers { ctrl: true, shift: true, ..none }, false, sgr), Some(b"\x1b[<22;1;1M".to_vec()), "Shift 4 ＋ Ctrl 16");
+        assert_eq!(encode_mouse(3, 7, 2, false, none, true, sgr), Some(b"\x1b[<35;8;3M".to_vec()), "只有移動：按鍵 3 加動作 32");
+        assert_eq!(encode_mouse(64, 1, 1, false, none, false, sgr), Some(b"\x1b[<64;2;2M".to_vec()), "滾輪往上");
+        let legacy = TermMode::NONE;
+        assert_eq!(encode_mouse(0, 0, 0, false, none, false, legacy), Some(vec![0x1b, b'[', b'M', 32, 33, 33]));
+        assert_eq!(encode_mouse(1, 4, 9, true, none, false, legacy), Some(vec![0x1b, b'[', b'M', 35, 37, 42]), "傳統格式放開一律是 3");
+        assert_eq!(encode_mouse(0, 300, 0, false, none, false, legacy), None, "座標超過 223 送不出去");
+        assert!(encode_mouse(0, 300, 0, false, none, false, sgr).is_some(), "SGR 沒有這個限制");
+    }
+
+    #[test]
     fn paste_normalizes_newlines_and_honors_bracketed_paste() {
         assert_eq!(paste_bytes("a\r\nb\nc", TermMode::NONE), b"a\rb\rc");
         let bracketed = paste_bytes("x\x1b[201~y", TermMode::BRACKETED_PASTE);
@@ -355,7 +457,7 @@ mod tests {
     fn a_real_shell_runs_a_command_and_its_output_reaches_the_grid() {
         let ctx = egui::Context::default();
         let size = GridSize { cols: 80, lines: 24 };
-        let mut t = Terminal::spawn(&ctx, size, (8, 16), None).expect("開不了 shell");
+        let mut t = Terminal::spawn(&ctx, size, (8, 16), None, "").expect("開不了 shell");
         let command: &[u8] = if cfg!(windows) { b"echo feditor-terminal-ok\r\n" } else { b"echo feditor-terminal-ok\n" };
         t.write(command);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);

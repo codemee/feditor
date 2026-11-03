@@ -800,7 +800,7 @@ impl App {
                 let options = settings.view;
                 if id == layout.focus {
                     if let Some(terminal) = doc.terminal.as_mut() {
-                        crate::terminal_pane::draw_body(ui, terminal, body);
+                        crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
                     } else {
                         let reveal = std::mem::take(&mut find.reveal);
                         let highlight = find.current_chars.clone();
@@ -812,7 +812,7 @@ impl App {
                 } else if let Some(set) = layout.others.get_mut(&id) {
                     let (d, e) = set.active_slot_mut();
                     if let Some(terminal) = d.terminal.as_mut() {
-                        crate::terminal_pane::draw_body(ui, terminal, body);
+                        crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
                     } else {
                         show_pane_editor(ui, id, d, e, options, None, false);
                     }

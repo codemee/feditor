@@ -63,6 +63,13 @@ pub const MAX_FONT_SIZE: f32 = 48.0;
 pub const DEFAULT_FONT_SIZE: f32 = 13.0;
 /// 預覽窗格內文的預設字級（預覽的字級和編輯區分開調整）。
 pub const DEFAULT_PREVIEW_FONT_SIZE: f32 = 14.0;
+/// 終端機的字級（點）。
+pub const DEFAULT_TERMINAL_FONT_SIZE: f32 = DEFAULT_FONT_SIZE;
+/// 終端機文字和底色的最低對比度（WCAG 比值）；低於它的文字會被調整到看得清楚。
+pub const DEFAULT_TERMINAL_MIN_CONTRAST: f32 = 3.0;
+/// 對比度的範圍：1 是不調整（關閉），7 是 WCAG AAA 的一般文字標準。
+pub const MIN_TERMINAL_CONTRAST: f32 = 1.0;
+pub const MAX_TERMINAL_CONTRAST: f32 = 7.0;
 
 /// 把字級限制在合理範圍內；不是有限數字（NaN、無限大）時退回預設值。
 pub fn clamp_font_size(size: f32) -> f32 {
@@ -139,6 +146,12 @@ pub struct Settings {
     pub font_size: f32,
     /// 預覽窗格內文的字級（點在預覽窗格上時，縮放快捷鍵調的是它）。
     pub preview_font_size: f32,
+    /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
+    pub terminal_font_size: f32,
+    /// 終端機文字和底色的最低對比度；1 表示不調整。
+    pub terminal_min_contrast: f32,
+    /// 新開的終端機要執行的 shell（程式加參數，例如 `pwsh -NoLogo`）；空字串表示系統預設的 shell。
+    pub terminal_shell: String,
     pub view: ViewOptions,
     /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
     pub show_output: bool,
@@ -159,6 +172,9 @@ impl Default for Settings {
             font_family: None,
             font_size: DEFAULT_FONT_SIZE,
             preview_font_size: DEFAULT_PREVIEW_FONT_SIZE,
+            terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
+            terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
+            terminal_shell: String::new(),
             view: ViewOptions::default(),
             show_output: false,
             light_scheme: String::new(),
@@ -221,6 +237,22 @@ impl Settings {
                         };
                     }
                 }
+                "terminal_font_size" => {
+                    if let Ok(size) = value.parse::<f32>() {
+                        settings.terminal_font_size =
+                            if size.is_finite() { size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE) } else { DEFAULT_TERMINAL_FONT_SIZE };
+                    }
+                }
+                "terminal_min_contrast" => {
+                    if let Ok(ratio) = value.parse::<f32>() {
+                        settings.terminal_min_contrast = if ratio.is_finite() {
+                            ratio.clamp(MIN_TERMINAL_CONTRAST, MAX_TERMINAL_CONTRAST)
+                        } else {
+                            DEFAULT_TERMINAL_MIN_CONTRAST
+                        };
+                    }
+                }
+                "terminal_shell" => settings.terminal_shell = value.trim_matches('"').trim().to_owned(),
                 "light_scheme" => settings.light_scheme = value.trim_matches('"').trim().to_owned(),
                 "dark_scheme" => settings.dark_scheme = value.trim_matches('"').trim().to_owned(),
                 "language" => {
@@ -261,6 +293,11 @@ impl Settings {
         }
         text.push_str(&format!("font_size = {}\n", self.font_size));
         text.push_str(&format!("preview_font_size = {}\n", self.preview_font_size));
+        text.push_str(&format!("terminal_font_size = {}\n", self.terminal_font_size));
+        text.push_str(&format!("terminal_min_contrast = {}\n", self.terminal_min_contrast));
+        if !self.terminal_shell.is_empty() {
+            text.push_str(&format!("terminal_shell = {}\n", self.terminal_shell.replace(['\r', '\n'], " ")));
+        }
         let v = self.view;
         text.push_str(&format!(
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
@@ -438,6 +475,31 @@ mod tests {
         assert_eq!(zoom_steps(&mut acc, 0.0), 0);
         assert_eq!(zoom_steps(&mut acc, -1.0), 0);
         assert_eq!(acc, 0.0, "無效的輸入不可汙染累積量");
+    }
+
+    #[test]
+    fn terminal_settings_are_validated_and_round_trip() {
+        let d = Settings::default();
+        assert_eq!((d.terminal_font_size, d.terminal_min_contrast, d.terminal_shell.as_str()), (DEFAULT_TERMINAL_FONT_SIZE, 3.0, ""));
+        let s = Settings::parse("terminal_font_size = 18\nterminal_min_contrast = 4.5\nterminal_shell = \"pwsh -NoLogo\"\n");
+        assert_eq!((s.terminal_font_size, s.terminal_min_contrast, s.terminal_shell.as_str()), (18.0, 4.5, "pwsh -NoLogo"));
+        // 超出範圍的拉回範圍；不是數字就用預設；對比度 1 是關閉
+        assert_eq!(Settings::parse("terminal_font_size = 999").terminal_font_size, MAX_FONT_SIZE);
+        assert_eq!(Settings::parse("terminal_font_size = nan").terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE);
+        assert_eq!(Settings::parse("terminal_min_contrast = 0").terminal_min_contrast, MIN_TERMINAL_CONTRAST);
+        assert_eq!(Settings::parse("terminal_min_contrast = 99").terminal_min_contrast, MAX_TERMINAL_CONTRAST);
+        assert_eq!(Settings::parse("terminal_min_contrast = inf").terminal_min_contrast, DEFAULT_TERMINAL_MIN_CONTRAST);
+        assert_eq!(Settings::parse("terminal_min_contrast = 1").terminal_min_contrast, 1.0);
+        // 存檔再讀回來（shell 是空的就不寫）
+        let mut custom = Settings::default();
+        custom.terminal_font_size = 11.5;
+        custom.terminal_min_contrast = 1.0;
+        custom.terminal_shell = "bash\n--login".to_owned();
+        let text = custom.to_text();
+        assert_eq!(text.lines().filter(|l| l.starts_with("terminal_shell")).count(), 1, "換行不會破壞設定檔");
+        let back = Settings::parse(&text);
+        assert_eq!((back.terminal_font_size, back.terminal_min_contrast, back.terminal_shell.as_str()), (11.5, 1.0, "bash --login"));
+        assert!(!Settings::default().to_text().contains("terminal_shell"));
     }
 
     #[test]

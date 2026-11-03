@@ -35,6 +35,20 @@ pub const NEW_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
 /// 每個終端機一個編號，畫面元件的 id 用它（分頁搬到別的窗格，焦點與 id 都不變）。
 static NEXT_UID: AtomicU64 = AtomicU64::new(1);
 
+/// 畫終端機時用到的設定（來自設定檔）。
+pub struct TerminalOptions<'a> {
+    pub font_size: f32,
+    pub min_contrast: f32,
+    /// 新開的 shell：空字串是系統預設。
+    pub shell: &'a str,
+}
+
+impl<'a> TerminalOptions<'a> {
+    pub fn from_settings(s: &'a crate::settings::Settings) -> Self {
+        Self { font_size: s.terminal_font_size, min_contrast: s.terminal_min_contrast, shell: &s.terminal_shell }
+    }
+}
+
 pub struct TerminalPane {
     uid: u64,
     /// 顯示在標題上的編號（目前沒人用的最小正整數）。
@@ -52,6 +66,9 @@ pub struct TerminalPane {
     scroll_acc: f32,
     /// 輸入法正在組的字（還沒確定，不送給 shell；畫在游標的位置）。
     preedit: String,
+    /// 程式要求滑鼠回報時，目前按著哪個鍵（0 左、1 中、2 右），以及最後回報的格子（避免同一格重複回報移動）。
+    mouse_button: Option<u8>,
+    last_mouse_cell: Option<(usize, usize)>,
 }
 
 impl std::fmt::Debug for TerminalPane {
@@ -72,6 +89,8 @@ impl TerminalPane {
             want_focus: true,
             scroll_acc: 0.0,
             preedit: String::new(),
+            mouse_button: None,
+            last_mouse_cell: None,
         }
     }
 
@@ -110,7 +129,7 @@ impl TerminalPane {
         self.want_focus = true;
     }
 
-    fn has_focus(&self, ctx: &egui::Context) -> bool {
+    pub(crate) fn has_focus(&self, ctx: &egui::Context) -> bool {
         ctx.memory(|m| m.has_focus(widget_id(self.uid)))
     }
 }
@@ -304,20 +323,20 @@ impl App {
 }
 
 /// 畫終端機的畫面（分頁列下面那一塊）；第一次畫的時候才開 shell。
-pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::Rect) {
+pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::Rect, opts: &TerminalOptions<'_>) {
     let ctx = ui.ctx().clone();
     let dark = ui.visuals().dark_mode;
     let bg = ui.visuals().extreme_bg_color;
     ui.painter().rect_filled(body, egui::CornerRadius::same(4), bg);
     let content = body.shrink(6.0);
     ui.set_clip_rect(content.intersect(ui.clip_rect()));
-        // 一格的大小：用編輯區的等寬字
-        let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
+        // 一格的大小：用終端機自己的字級（設定裡調整）
+        let font = egui::FontId::monospace(opts.font_size);
         let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
         let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
 
         if pane.term.is_none() && pane.error.is_none() {
-            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone()) {
+            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), opts.shell) {
                 Ok(t) => pane.term = Some(t),
                 Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
             }
@@ -347,6 +366,8 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             ctx.memory_mut(|m| m.set_focus_lock_filter(wid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true }));
         }
         let mode = term.mode();
+        // 程式要求滑鼠回報（vim、htop 這類）時，滑鼠事件送給程式；按住 Shift 則照一般終端機的做法，仍然可以選取文字
+        let report = mode.intersects(TermMode::MOUSE_MODE) && !ctx.input(|i| i.modifiers.shift);
         let display_offset = term.term.lock().grid().display_offset() as i32;
         let point_at = |pos: egui::Pos2| -> (Point, Side) {
             let x = (pos.x - content.min.x) / cw;
@@ -355,7 +376,7 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             let side = if x.fract() < 0.5 { Side::Left } else { Side::Right };
             (Point::new(Line(row - display_offset), Column(col)), side)
         };
-        if let Some(pos) = resp.interact_pointer_pos() {
+        if let Some(pos) = resp.interact_pointer_pos().filter(|_| !report) {
             if resp.drag_started_by(egui::PointerButton::Primary) {
                 let (p, side) = point_at(pos);
                 term.term.lock().selection = Some(Selection::new(SelectionType::Simple, p, side));
@@ -366,10 +387,10 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                 }
             }
         }
-        if resp.clicked() {
+        if resp.clicked() && !report {
             term.term.lock().selection = None;
         }
-        if resp.hovered() {
+        if resp.hovered() && !report {
             let dy = ctx.input(|i| i.smooth_scroll_delta.y);
             pane.scroll_acc += dy / ch;
             let lines = pane.scroll_acc.trunc() as i32;
@@ -387,9 +408,80 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             }
         }
 
+        // 滑鼠回報：按下、放開、拖曳（依程式要求的模式）與滾輪，換算成格子座標送給程式
+        if report {
+            let (events, mods, hover) = ctx.input(|i| (i.events.clone(), i.modifiers, i.pointer.hover_pos()));
+            let cell_at = |pos: egui::Pos2| {
+                let col = ((pos.x - content.min.x) / cw).floor().max(0.0) as usize;
+                let row = ((pos.y - content.min.y) / ch).floor().max(0.0) as usize;
+                (col.min(size.cols - 1), row.min(size.lines - 1))
+            };
+            let mut out: Vec<u8> = Vec::new();
+            for e in events {
+                match e {
+                    egui::Event::PointerButton { pos, button, pressed, modifiers } => {
+                        let code = match button {
+                            egui::PointerButton::Primary => 0,
+                            egui::PointerButton::Middle => 1,
+                            egui::PointerButton::Secondary => 2,
+                            _ => continue,
+                        };
+                        if pressed {
+                            if !content.contains(pos) {
+                                continue;
+                            }
+                            pane.mouse_button = Some(code);
+                        } else if pane.mouse_button == Some(code) {
+                            pane.mouse_button = None;
+                        } else {
+                            continue;
+                        }
+                        let (col, row) = cell_at(pos);
+                        pane.last_mouse_cell = Some((col, row));
+                        if let Some(bytes) = terminal::encode_mouse(code, col, row, !pressed, modifiers, false, mode) {
+                            out.extend(bytes);
+                        }
+                    }
+                    egui::Event::PointerMoved(pos) => {
+                        let wants = mode.contains(TermMode::MOUSE_MOTION) || (mode.contains(TermMode::MOUSE_DRAG) && pane.mouse_button.is_some());
+                        if !wants || !(content.contains(pos) || pane.mouse_button.is_some()) {
+                            continue;
+                        }
+                        let cell = cell_at(pos);
+                        if pane.last_mouse_cell == Some(cell) {
+                            continue;
+                        }
+                        pane.last_mouse_cell = Some(cell);
+                        if let Some(bytes) = terminal::encode_mouse(pane.mouse_button.unwrap_or(3), cell.0, cell.1, false, mods, true, mode) {
+                            out.extend(bytes);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if resp.hovered() {
+                pane.scroll_acc += ctx.input(|i| i.smooth_scroll_delta.y) / ch;
+                let lines = pane.scroll_acc.trunc() as i32;
+                if lines != 0 {
+                    pane.scroll_acc -= lines as f32;
+                    let (col, row) = hover.map_or((0, 0), cell_at);
+                    for _ in 0..lines.abs().min(10) {
+                        if let Some(bytes) = terminal::encode_mouse(if lines > 0 { 64 } else { 65 }, col, row, false, mods, false, mode) {
+                            out.extend(bytes);
+                        }
+                    }
+                }
+            }
+            if !out.is_empty() {
+                term.write(out);
+            }
+        } else {
+            pane.mouse_button = None;
+        }
+
         // 畫格子
         let painter = ui.painter_at(content);
-        let palette = Palette::new(ui.visuals().text_color(), ui.visuals().extreme_bg_color, crate::theme::terminal_colors(&ctx, dark));
+        let palette = Palette::new(ui.visuals().text_color(), ui.visuals().extreme_bg_color, crate::theme::terminal_colors(&ctx, dark), opts.min_contrast);
         let accent = ui.visuals().selection.bg_fill;
         let guard = term.term.lock();
         let rc = guard.renderable_content();
@@ -489,9 +581,6 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         }
 }
 
-/// 文字和底色的最低對比度（WCAG 比值）。程式輸出的顏色低於它就會被調整到看得清楚為止。
-/// 3:1 是 WCAG 對大字與圖形的下限，比 4.5 寬鬆，不會把程式刻意用的淡色（例如註解的灰）全部拉黑。
-const MIN_CONTRAST: f32 = 3.0;
 
 /// WCAG 相對亮度。
 fn luminance(c: Color32) -> f32 {
@@ -521,11 +610,13 @@ struct Palette {
     default_bg: Color32,
     /// ANSI 0–15，來自目前的配色方案（見 scheme::Scheme::terminal_colors）。
     ansi: [Color32; 16],
+    /// 文字和底色的最低對比度；1 以下表示不調整。
+    min_contrast: f32,
 }
 
 impl Palette {
-    fn new(default_fg: Color32, default_bg: Color32, ansi: [Color32; 16]) -> Self {
-        Self { default_fg, default_bg, ansi }
+    fn new(default_fg: Color32, default_bg: Color32, ansi: [Color32; 16], min_contrast: f32) -> Self {
+        Self { default_fg, default_bg, ansi, min_contrast }
     }
 
     fn ansi(&self, i: usize) -> Color32 {
@@ -536,7 +627,7 @@ impl Palette {
     /// 底色暗就往白）一步步調整，直到夠為止；調不到（例如前景和底色一樣）就直接用黑或白。
     /// 對比夠的顏色原封不動，所以多數輸出不受影響。
     fn readable(&self, fg: Color32, bg: Color32) -> Color32 {
-        if contrast(fg, bg) >= MIN_CONTRAST {
+        if self.min_contrast <= 1.0 || contrast(fg, bg) >= self.min_contrast {
             return fg;
         }
         let target = if luminance(bg) > 0.5 { Color32::BLACK } else { Color32::WHITE };
@@ -544,7 +635,7 @@ impl Palette {
             let t = step as f32 / 10.0;
             let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
             let c = Color32::from_rgb(mix(fg.r(), target.r()), mix(fg.g(), target.g()), mix(fg.b(), target.b()));
-            if contrast(c, bg) >= MIN_CONTRAST {
+            if contrast(c, bg) >= self.min_contrast {
                 return c;
             }
         }
@@ -611,10 +702,11 @@ impl Palette {
 mod tests {
     use super::*;
     use alacritty_terminal::vte::ansi::Rgb;
+    use crate::settings::DEFAULT_TERMINAL_MIN_CONTRAST as MIN_CONTRAST;
 
     #[test]
     fn palette_maps_named_indexed_and_true_colors() {
-        let p = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors());
+        let p = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors(), MIN_CONTRAST);
         assert_eq!(p.foreground(Color::Spec(Rgb { r: 1, g: 2, b: 3 }), false), Color32::from_rgb(1, 2, 3));
         assert_eq!(p.foreground(Color::Named(NamedColor::Foreground), false), Color32::WHITE);
         assert_eq!(p.foreground(Color::Named(NamedColor::Background), false), Color32::BLACK, "反相後的前景是窗格底色");
@@ -627,6 +719,10 @@ mod tests {
         assert_eq!(p.indexed(196), Color32::from_rgb(255, 0, 0));
         assert_eq!(p.indexed(232), Color32::from_gray(8));
         assert_eq!(p.indexed(255), Color32::from_gray(238));
+        // 最低對比度可以關掉（1 以下）：低對比的文字就原樣畫
+        let off = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors(), 1.0);
+        let dim = Color32::from_rgb(0x20, 0x20, 0x20);
+        assert_eq!(off.readable(dim, Color32::BLACK), dim);
         // 預設背景不畫
         assert_eq!(p.background(Color::Named(NamedColor::Background)), None);
         assert!(p.background(Color::Named(NamedColor::Blue)).is_some());
@@ -641,7 +737,7 @@ mod tests {
         let mut term = alacritty_terminal::Term::new(Config::default(), &size, VoidListener);
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         parser.advance(&mut term, b"\x1b[31mR\x1b[0m\x1b[44;97mB\x1b[0m\x1b[38;2;255;128;0mT\x1b[0m\x1b[38;5;196mI\x1b[0m\x1b[1;32mG\x1b[0mN");
-        let p = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors());
+        let p = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors(), MIN_CONTRAST);
         let cell = |c: usize| term.grid()[Line(0)][Column(c)].clone();
         let (r, b, t, i, g, n) = (cell(0), cell(1), cell(2), cell(3), cell(4), cell(5));
         assert_ne!(p.foreground(r.fg, false), Color32::BLACK, "紅字 {:?}", r.fg);
@@ -656,8 +752,8 @@ mod tests {
     fn low_contrast_text_is_pushed_toward_readable_and_good_text_is_untouched() {
         let dark_bg = Color32::from_rgb(0x1e, 0x1e, 0x1e);
         let light_bg = Color32::from_rgb(0xfa, 0xfa, 0xfa);
-        let dark = Palette::new(Color32::WHITE, dark_bg, crate::scheme::default_for(true).terminal_colors());
-        let light = Palette::new(Color32::BLACK, light_bg, crate::scheme::default_for(false).terminal_colors());
+        let dark = Palette::new(Color32::WHITE, dark_bg, crate::scheme::default_for(true).terminal_colors(), MIN_CONTRAST);
+        let light = Palette::new(Color32::BLACK, light_bg, crate::scheme::default_for(false).terminal_colors(), MIN_CONTRAST);
         // 對比夠的原封不動
         let fine = Color32::from_rgb(0xdd, 0xdd, 0xdd);
         assert_eq!(dark.readable(fine, dark_bg), fine);
@@ -702,8 +798,8 @@ mod tests {
 
     #[test]
     fn light_and_dark_palettes_differ() {
-        let dark = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors());
-        let light = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors());
+        let dark = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors(), MIN_CONTRAST);
+        let light = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors(), MIN_CONTRAST);
         assert_ne!(dark.ansi(7), light.ansi(7));
     }
 }

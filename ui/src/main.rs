@@ -41,7 +41,7 @@ use feditor_core::fileio::{LineEnding, common_encodings, format_choices, format_
 use find::{FindState, Summary};
 use icons::Icon;
 use settings::{
-    DEFAULT_FONT_SIZE, DEFAULT_PREVIEW_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, ThemeChoice, adjust_font_size,
+    DEFAULT_FONT_SIZE, DEFAULT_PREVIEW_FONT_SIZE, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_TERMINAL_MIN_CONTRAST, MAX_FONT_SIZE, MAX_TERMINAL_CONTRAST, MIN_FONT_SIZE, MIN_TERMINAL_CONTRAST, Settings, ThemeChoice, adjust_font_size,
     clamp_font_size, zoom_steps,
 };
 use std::ops::Range;
@@ -392,6 +392,9 @@ enum Action {
     SetFontSize(f32),
     /// 設定預覽窗格的字級（點）。
     SetPreviewFontSize(f32),
+    SetTerminalFontSize(f32),
+    SetTerminalMinContrast(f32),
+    SetTerminalShell(String),
     /// 設定編輯區的字型家族；`None` 表示作業系統預設的等寬字型。
     SetFontFamily(Option<String>),
     /// 編輯區的顯示選項（空白字元、行號、目前行、自動換行）。
@@ -1567,6 +1570,28 @@ impl App {
                     self.mark_settings_dirty();
                 }
             }
+            Action::SetTerminalFontSize(size) => {
+                let size = if size.is_finite() { clamp_font_size(size) } else { DEFAULT_TERMINAL_FONT_SIZE };
+                if size != self.settings.terminal_font_size {
+                    self.settings.terminal_font_size = size;
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetTerminalMinContrast(ratio) => {
+                let ratio = if ratio.is_finite() { ratio.clamp(MIN_TERMINAL_CONTRAST, MAX_TERMINAL_CONTRAST) } else { DEFAULT_TERMINAL_MIN_CONTRAST };
+                if ratio != self.settings.terminal_min_contrast {
+                    self.settings.terminal_min_contrast = ratio;
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetTerminalShell(shell) => {
+                // 不去掉前後空白：使用者正在輸入框裡打字，空白是下一個詞的開頭（用到的時候才會忽略）
+                let shell = shell.replace(['\r', '\n'], " ");
+                if shell != self.settings.terminal_shell {
+                    self.settings.terminal_shell = shell;
+                    self.mark_settings_dirty();
+                }
+            }
             Action::SetPreviewFontSize(size) => {
                 let size = if size.is_finite() { clamp_font_size(size) } else { DEFAULT_PREVIEW_FONT_SIZE };
                 if size != self.settings.preview_font_size {
@@ -2512,7 +2537,7 @@ impl App {
         });
         ui.add_space(2.0);
         ui.label(
-            egui::RichText::new(t("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設（點在預覽窗格上時，調的是預覽的字級）"))
+            egui::RichText::new(t("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設（點在預覽窗格或終端機上時，調的是它們各自的字級）"))
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
@@ -2543,6 +2568,46 @@ impl App {
                 );
                 if response.changed() {
                     action = Some(Action::SetPreviewFontSize(size));
+                }
+            });
+        });
+        group_gap(ui);
+
+        // ── 終端機 ──
+        group_title(ui, t("終端機"));
+        settings_grid(ui, "settings_terminal", |ui| {
+            // 終端機字級：點在終端機上時，縮放快捷鍵調的也是它
+            form_row(ui, t("終端機字級"), |ui| {
+                let mut size = self.settings.terminal_font_size;
+                let response = ui.add(
+                    egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1).suffix(" pt"),
+                );
+                if response.changed() {
+                    action = Some(Action::SetTerminalFontSize(size));
+                }
+            });
+            form_row(ui, t("最低對比度"), |ui| {
+                let mut ratio = self.settings.terminal_min_contrast;
+                let response = ui
+                    .add(
+                        egui::DragValue::new(&mut ratio)
+                            .range(MIN_TERMINAL_CONTRAST..=MAX_TERMINAL_CONTRAST)
+                            .speed(0.05)
+                            .max_decimals(1)
+                            .custom_formatter(|v, _| if v <= 1.0 { t("不調整").to_owned() } else { format!("{v:.1} : 1") }),
+                    )
+                    .on_hover_text(t("終端機文字和底色的對比低於這個值時，自動把文字調整到看得清楚；拉到最小就是不調整"));
+                if response.changed() {
+                    action = Some(Action::SetTerminalMinContrast(ratio));
+                }
+            });
+            form_row(ui, t("Shell"), |ui| {
+                let mut shell = self.settings.terminal_shell.clone();
+                let response = ui
+                    .add(egui::TextEdit::singleline(&mut shell).hint_text(t("留空使用系統預設")).desired_width(250.0))
+                    .on_hover_text(t("新開的終端機要執行的程式，可以加參數（例如 pwsh -NoLogo）；路徑有空白要用雙引號包起來。已經開著的終端機不受影響"));
+                if response.changed() {
+                    action = Some(Action::SetTerminalShell(shell));
                 }
             });
         });
@@ -3074,12 +3139,24 @@ impl eframe::App for App {
         let font_size = self.settings.font_size;
         // 點了預覽窗格之後，縮放調的是預覽的字級；否則調編輯區的
         let preview_zoom = self.preview_focused && self.preview_id().is_some();
-        let (zoom_base, zoom_default) = if preview_zoom {
+        // 點了終端機之後（它有鍵盤焦點），縮放調的是終端機的字級
+        let terminal_zoom = self.doc.terminal.as_ref().is_some_and(|t| t.has_focus(&ctx));
+        let (zoom_base, zoom_default) = if terminal_zoom {
+            (self.settings.terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE)
+        } else if preview_zoom {
             (self.settings.preview_font_size, DEFAULT_PREVIEW_FONT_SIZE)
         } else {
             (font_size, DEFAULT_FONT_SIZE)
         };
-        let zoom_action = |size: f32| if preview_zoom { Action::SetPreviewFontSize(size) } else { Action::SetFontSize(size) };
+        let zoom_action = |size: f32| {
+            if terminal_zoom {
+                Action::SetTerminalFontSize(size)
+            } else if preview_zoom {
+                Action::SetPreviewFontSize(size)
+            } else {
+                Action::SetFontSize(size)
+            }
+        };
         let zoom_delta = ctx.input(|i| i.zoom_delta());
         // 沒有任何輸入框有焦點時，Ctrl+Z／Y 由我們負責（有焦點時由該輸入框自己處理）
         let nothing_focused = ctx.memory(|m| m.focused().is_none());
@@ -3823,6 +3900,31 @@ mod tests {
         let mut fresh = App::new(None, Settings::default());
         fresh.restore_from(&broken);
         assert_eq!((fresh.layout.pane_count(), fresh.doc.name().as_str()), (1, "a.md"));
+    }
+
+    #[test]
+    fn terminal_settings_change_through_actions_are_clamped_and_leave_the_other_font_sizes_alone() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        let (editor_size, preview_size) = (app.settings.font_size, app.settings.preview_font_size);
+        app.handle(Action::SetTerminalFontSize(20.0), &ctx);
+        assert_eq!(app.settings.terminal_font_size, 20.0);
+        app.handle(Action::SetTerminalFontSize(9999.0), &ctx);
+        assert_eq!(app.settings.terminal_font_size, settings::MAX_FONT_SIZE);
+        app.handle(Action::SetTerminalFontSize(f32::NAN), &ctx);
+        assert_eq!(app.settings.terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE);
+        assert_eq!((app.settings.font_size, app.settings.preview_font_size), (editor_size, preview_size), "各自獨立");
+        app.handle(Action::SetTerminalMinContrast(4.5), &ctx);
+        assert_eq!(app.settings.terminal_min_contrast, 4.5);
+        app.handle(Action::SetTerminalMinContrast(0.0), &ctx);
+        assert_eq!(app.settings.terminal_min_contrast, MIN_TERMINAL_CONTRAST, "拉回範圍內，最小是不調整");
+        app.handle(Action::SetTerminalMinContrast(f32::INFINITY), &ctx);
+        assert_eq!(app.settings.terminal_min_contrast, DEFAULT_TERMINAL_MIN_CONTRAST);
+        // shell：邊打字邊存，所以前後的空白保留（下一個詞的開頭）；換行會被換成空白
+        app.handle(Action::SetTerminalShell("pwsh ".into()), &ctx);
+        assert_eq!(app.settings.terminal_shell, "pwsh ");
+        app.handle(Action::SetTerminalShell("a\nb".into()), &ctx);
+        assert_eq!(app.settings.terminal_shell, "a b");
     }
 
     #[test]
