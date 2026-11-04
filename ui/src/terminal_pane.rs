@@ -328,9 +328,9 @@ impl App {
         None
     }
 
-    /// 在終端機執行 `program args… file`：用上次「執行」用的那個終端機（還在的話），沒有就開一個新的。
+    /// 在終端機執行 `program args… file extra_args`（`extra_args` 是使用者寫的命令列參數，原樣交給 shell）：用上次「執行」用的那個終端機（還在的話），沒有就開一個新的。
     /// 重用時先送 Ctrl+C 中斷上次還沒跑完的程式、再切到檔案所在的資料夾。
-    pub(crate) fn run_in_terminal(&mut self, program: &str, args: &[String], file: &std::path::Path) {
+    pub(crate) fn run_in_terminal(&mut self, program: &str, args: &[String], file: &std::path::Path, extra_args: &str) {
         let reused = self.run_terminal.and_then(|uid| self.find_terminal_by_uid(uid));
         match reused {
             Some((pane, idx)) => self.show_terminal_tab(pane, idx),
@@ -358,7 +358,7 @@ impl App {
                 text.push('\r');
             }
         }
-        text.push_str(&kind.run_line(program, args, &file.to_string_lossy()));
+        text.push_str(&kind.run_line(program, args, &file.to_string_lossy(), extra_args));
         text.push('\r');
         terminal.queue_input(&text);
         self.run_terminal = Some(terminal.uid());

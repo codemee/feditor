@@ -172,6 +172,8 @@ pub struct Settings {
     /// 手動選的執行環境：鍵是專案資料夾（[`crate::runtime_env::project_root`]），值是直譯器（[`crate::runtime_env::Candidate::key`]）。
     /// 沒有的就自動搜尋。
     pub runtime_choices: std::collections::BTreeMap<String, String>,
+    /// 「執行目前檔案」的命令列參數：鍵是檔案的完整路徑，值是原樣接在檔案後面的文字。沒有的就沒有參數。
+    pub run_args: std::collections::BTreeMap<String, String>,
     /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
     pub tab_spaces: bool,
     /// 按 Enter 時依語言自動加深／減淺縮排（預設開）。
@@ -210,6 +212,7 @@ impl Default for Settings {
             tab_widths: Default::default(),
             wrap_styles: Default::default(),
             runtime_choices: Default::default(),
+            run_args: Default::default(),
             tab_spaces: false,
             auto_indent: true,
             shell_menu: false,
@@ -299,6 +302,13 @@ impl Settings {
                     let name = key["tab_width.".len()..].trim();
                     if let (false, Ok(n)) = (name.is_empty(), value.parse::<u32>()) {
                         settings.tab_widths.insert(name.to_owned(), n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8);
+                    }
+                }
+                // run_args.檔案路徑 = 參數：這個檔案「執行」時的命令列參數
+                key if key.starts_with("run_args.") => {
+                    let file = key["run_args.".len()..].trim();
+                    if !file.is_empty() && !value.is_empty() {
+                        settings.run_args.insert(file.to_owned(), value.to_owned());
                     }
                 }
                 // runtime.專案資料夾 = 直譯器：這個專案手動選的執行環境
@@ -417,6 +427,11 @@ impl Settings {
             // 專案資料夾與直譯器都是單行文字；資料夾含等號會被當成鍵值的分隔，那種就不記
             if !project.is_empty() && !project.contains(['\r', '\n', '=']) && !program.contains(['\r', '\n']) {
                 text.push_str(&format!("runtime.{project} = {program}\n"));
+            }
+        }
+        for (file, args) in &self.run_args {
+            if !file.is_empty() && !file.contains(['\r', '\n', '=']) && !args.contains(['\r', '\n']) && !args.trim().is_empty() {
+                text.push_str(&format!("run_args.{file} = {}\n", args.trim()));
             }
         }
         for (name, style) in &self.wrap_styles {
@@ -668,6 +683,21 @@ mod tests {
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
         assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
+    #[test]
+    fn run_arguments_are_remembered_per_file() {
+        assert!(Settings::default().run_args.is_empty());
+        let s = Settings::parse("run_args.C:\\code\\app.py = --port=8080 \"a b\"\nrun_args. = x\nrun_args.empty.py =\n");
+        assert_eq!(s.run_args.len(), 1);
+        assert_eq!(s.run_args["C:\\code\\app.py"], "--port=8080 \"a b\"", "值裡面的等號與引號原樣保留");
+        let mut t = Settings::default();
+        t.run_args.insert("/home/me/a.py".to_owned(), "  -v  ".to_owned());
+        t.run_args.insert("blank.py".to_owned(), "   ".to_owned());
+        t.run_args.insert("bad=name.py".to_owned(), "x".to_owned());
+        let back = Settings::parse(&t.to_text());
+        assert_eq!(back.run_args.get("/home/me/a.py").map(String::as_str), Some("-v"));
+        assert_eq!(back.run_args.len(), 1, "空白與含等號的路徑不寫進設定檔");
     }
 
     #[test]

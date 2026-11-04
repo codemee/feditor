@@ -473,6 +473,8 @@ enum Action {
     RefreshRuntime(PathBuf),
     /// 在終端機執行目前的檔案（用偵測到的執行環境）。
     RunFile,
+    /// 設定這個檔案（完整路徑）執行時的命令列參數；空白就是沒有參數。
+    SetRunArgs(String, String),
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
@@ -1237,7 +1239,8 @@ impl App {
             return;
         };
         let candidate = item.candidate.clone();
-        self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path);
+        let extra = self.settings.run_args.get(&path.display().to_string()).cloned().unwrap_or_default();
+        self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path, &extra);
     }
 
     /// 設定裡有開 feditor 指令時，把它更新成目前的執行檔位置（程式搬了位置也會跟上）。
@@ -1854,6 +1857,14 @@ impl App {
             }
             Action::RefreshRuntime(dir) => self.runtime.refresh(Some(&dir)),
             Action::RunFile => self.run_current_file(ctx),
+            Action::SetRunArgs(file, args) => {
+                if args.trim().is_empty() {
+                    self.settings.run_args.remove(&file);
+                } else {
+                    self.settings.run_args.insert(file, args);
+                }
+                self.mark_settings_dirty();
+            }
             Action::SetCliCommand(on) => {
                 if on != self.settings.cli_command {
                     match (self.cli_backend)(on) {
@@ -2039,6 +2050,33 @@ impl App {
             if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
                 action = Some(Action::RunFile);
             }
+            // 旁邊的下拉清單：這個檔案執行時的命令列參數（依檔案記住）
+            let args_button = icons::dropdown_button(ui, Icon::ChevronDown, t("設定執行時的命令列參數"), can_run);
+            let file_key = self.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+            let current_args = self.settings.run_args.get(&file_key).cloned().unwrap_or_default();
+            egui::Popup::menu(&args_button).show(|ui| {
+                no_hover_outline(ui);
+                ui.label(t("命令列參數（接在檔案後面，交給終端機的 shell 解析）"));
+                let mut text = current_args.clone();
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .desired_width(320.0)
+                        .hint_text(t("例如 --port 8080 \"a b\"")),
+                );
+                if field.changed() {
+                    action = Some(Action::SetRunArgs(file_key.clone(), text));
+                }
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.horizontal(|ui| {
+                    if ui.button(t("執行")).clicked() || enter {
+                        action = Some(Action::RunFile);
+                        ui.close();
+                    }
+                    if ui.add_enabled(!current_args.is_empty(), egui::Button::new(t("清除"))).clicked() {
+                        action = Some(Action::SetRunArgs(file_key.clone(), String::new()));
+                    }
+                });
+            });
 
             group_separator(ui);
 
@@ -4684,19 +4722,29 @@ mod tests {
         let mut app = App::new(None, Settings::default());
         app.open_path(&py);
         assert!(app.run_rule().is_some(), "存成檔案的 .py 可以執行");
-        app.run_in_terminal("/venv/bin/python", &[], &py);
+        app.run_in_terminal("/venv/bin/python", &[], &py, "--port 8080");
         assert_eq!(app.terminal_tabs().len(), 1, "第一次：開一個終端機");
         let first = app.doc.terminal.as_ref().expect("終端機成為作用中的分頁").pending_text();
-        assert!(first.contains("/venv/bin/python") && first.contains("a.py") && first.ends_with('\r'), "{first:?}");
+        assert!(first.contains("/venv/bin/python") && first.contains("a.py") && first.ends_with("--port 8080\r"), "{first:?}");
         assert!(!first.contains('\u{3}'), "新開的終端機不用先中斷");
         // 回到檔案再執行一次：還是同一個終端機（不會多開），先中斷上一次再切到檔案的資料夾
         app.open_path(&py);
         assert!(app.doc.terminal.is_none(), "回到檔案的分頁");
-        app.run_in_terminal("/venv/bin/python", &[], &py);
+        app.run_in_terminal("/venv/bin/python", &[], &py, "");
         assert_eq!(app.terminal_tabs().len(), 1, "不會多開");
         let second = app.doc.terminal.as_ref().unwrap().pending_text();
         assert!(second.starts_with(&first) && second[first.len()..].starts_with('\u{3}'), "{second:?}");
     }
+    #[test]
+    fn run_arguments_are_set_and_cleared_per_file_through_actions() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.handle(Action::SetRunArgs("/a/x.py".to_owned(), "--debug".to_owned()), &ctx);
+        assert_eq!(app.settings.run_args.get("/a/x.py").map(String::as_str), Some("--debug"));
+        app.handle(Action::SetRunArgs("/a/x.py".to_owned(), "   ".to_owned()), &ctx);
+        assert!(app.settings.run_args.is_empty(), "空白就是沒有參數");
+    }
+
     #[test]
     fn running_needs_a_saved_file_with_a_language_that_has_a_runtime_rule() {
         let dir = tempfile::tempdir().unwrap();

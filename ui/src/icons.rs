@@ -68,7 +68,7 @@ pub enum Icon {
     ClosePane,
     /// 終端機（提示字元 >_）。
     Terminal,
-    /// 在終端機執行目前的檔案（終端機視窗框裡一個播放三角形）。
+    /// 在終端機執行目前的檔案（終端機的提示字元，右下角一個播放三角形）。
     RunFile,
     /// 預覽（眼睛）。
     Preview,
@@ -349,9 +349,10 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             line(&[(8.8, 12.0), (13.0, 12.0)]);
         }
         Icon::RunFile => {
-            // 終端機視窗的外框，裡面是向右的播放三角形：在終端機執行
-            painter.rect_stroke(rect_of(1.5, 2.5, 14.5, 13.5), CornerRadius::same(2), stroke, StrokeKind::Inside);
-            closed(&[(6.2, 5.3), (6.2, 10.7), (10.8, 8.0)]);
+            // 終端機的提示字元（> 加底線，和「新增終端機」的圖示一樣），右下角加一個實心的播放三角形：在終端機執行
+            line(&[(2.0, 3.2), (6.0, 6.7), (2.0, 10.2)]);
+            line(&[(2.0, 13.2), (6.2, 13.2)]);
+            painter.add(Shape::convex_polygon(vec![p(8.6, 8.2), p(8.6, 14.6), p(14.6, 11.4)], color, Stroke::NONE));
         }
         Icon::Preview => {
             // 眼睛：上下眼瞼的弧線加瞳孔

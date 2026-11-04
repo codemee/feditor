@@ -259,11 +259,16 @@ impl ShellKind {
         }
     }
 
-    /// 執行 `program args… file` 的一行指令（不含換行）。
-    pub fn run_line(self, program: &str, args: &[String], file: &str) -> String {
+    /// 執行 `program args… file extra` 的一行指令（不含換行）。`extra` 是使用者寫的命令列參數，
+    /// 原樣接在最後，交給 shell 自己解析（所以引號、變數、萬用字元都照那個 shell 的規則）。
+    pub fn run_line(self, program: &str, args: &[String], file: &str, extra: &str) -> String {
         let mut words = vec![self.quote(program)];
         words.extend(args.iter().map(|a| self.quote(a)));
         words.push(self.quote(file));
+        let extra = extra.trim();
+        if !extra.is_empty() {
+            words.push(extra.to_owned());
+        }
         let line = words.join(" ");
         // PowerShell 的字串開頭的指令要加呼叫運算子 &
         if self == ShellKind::PowerShell { format!("& {line}") } else { line }
@@ -550,12 +555,15 @@ mod tests {
     #[test]
     fn run_and_cd_lines_are_quoted_for_each_shell() {
         let args = vec!["-3".to_owned()];
-        assert_eq!(ShellKind::Posix.run_line("/my dir/python", &args, "/p/it's.py"), r"'/my dir/python' '-3' '/p/it'\''s.py'");
+        assert_eq!(ShellKind::Posix.run_line("/my dir/python", &args, "/p/it's.py", ""), r"'/my dir/python' '-3' '/p/it'\''s.py'");
         assert_eq!(
-            ShellKind::PowerShell.run_line(r"C:\Program Files\py.exe", &args, r"C:\it's\a.py"),
+            ShellKind::PowerShell.run_line(r"C:\Program Files\py.exe", &args, r"C:\it's\a.py", ""),
             r"& 'C:\Program Files\py.exe' '-3' 'C:\it''s\a.py'"
         );
-        assert_eq!(ShellKind::Cmd.run_line(r"C:\py.exe", &[], r"C:\a b\a.py"), r#""C:\py.exe" "C:\a b\a.py""#);
+        assert_eq!(ShellKind::Cmd.run_line(r"C:\py.exe", &[], r"C:\a b\a.py", ""), r#""C:\py.exe" "C:\a b\a.py""#);
+        // 命令列參數原樣接在最後（前後空白去掉），交給 shell 解析
+        assert_eq!(ShellKind::Posix.run_line("python", &[], "a.py", "  --port 8080 \"x y\"  "), r#"'python' 'a.py' --port 8080 "x y""#);
+        assert_eq!(ShellKind::Posix.run_line("python", &[], "a.py", "   "), "'python' 'a.py'", "只有空白就當沒有");
         assert_eq!(ShellKind::Posix.cd_line("/a b"), "cd '/a b'");
         assert_eq!(ShellKind::PowerShell.cd_line(r"C:\a b"), r"Set-Location -LiteralPath 'C:\a b'");
         assert_eq!(ShellKind::Cmd.cd_line(r"D:\a b"), r#"cd /d "D:\a b""#);
