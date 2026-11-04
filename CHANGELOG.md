@@ -2,7 +2,10 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.5.0] - 2026-11-04
+
+### 新增
+- **macOS：Finder「打開檔案的應用程式」**：`FEditor.app` 宣告能開文字類檔案，Finder 的「打開檔案的應用程式」選單會列出它；也能接收 Finder「打開方式」與拖到 Dock 圖示的開啟文件事件（冷啟動與已在執行時都可以）。
 
 ### 變更
 - **用路徑啟動時沿用已經開著的 FEditor**：從檔案總管、Finder 的右鍵選單（或命令列）帶路徑啟動時，如果已經有 FEditor 在執行，就把路徑交給它開並把視窗叫到前面，不再另開新視窗；沒有才自己啟動。在檔案總管一次選好幾個檔案也只會有一個視窗。不帶路徑啟動仍然開新視窗。
@@ -154,6 +157,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
 [0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
 [0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0

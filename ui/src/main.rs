@@ -23,6 +23,8 @@ mod scheme;
 mod session;
 mod settings;
 mod shell_integration;
+#[cfg(target_os = "macos")]
+mod macos_open;
 mod single_instance;
 mod syntax;
 mod tabs;
@@ -3408,6 +3410,16 @@ impl eframe::App for App {
         #[cfg(windows)]
         win_icon::apply_once();
 
+        // macOS：Finder 的「打開方式」送來的路徑
+        #[cfg(target_os = "macos")]
+        {
+            let paths = macos_open::take();
+            if !paths.is_empty() {
+                self.startup_paths.extend(paths);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
         // 別的 FEditor 轉交來的路徑：加進待開清單，並把視窗叫到前面
         if let Some(rx) = &self.incoming {
             let mut any = false;
@@ -5252,6 +5264,10 @@ fn main() -> eframe::Result {
         unsafe { std::env::set_var("WGPU_BACKEND", "dx12") };
     }
 
+    // macOS：Finder 的「打開方式」是送 Apple Event，要在事件迴圈開始之前就註冊好處理器
+    #[cfg(target_os = "macos")]
+    macos_open::install();
+
     // 用命令列的路徑啟動：已經有 FEditor 在執行就交給它開，這個行程直接結束（見 single_instance）
     let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let listener = match single_instance::claim(&paths) {
@@ -5289,6 +5305,11 @@ fn main() -> eframe::Result {
             if let Some(listener) = listener {
                 let ctx = cc.egui_ctx.clone();
                 app.incoming = Some(single_instance::serve(listener, move || ctx.request_repaint()));
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let ctx = cc.egui_ctx.clone();
+                macos_open::set_wake(move || ctx.request_repaint());
             }
             app.sync_shell_menu();
             for m in syntax_msgs {

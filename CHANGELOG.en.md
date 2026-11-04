@@ -2,7 +2,10 @@
 
 # Changelog
 
-## Unreleased
+## [0.5.0] - 2026-11-04
+
+### Added
+- **macOS: Finder "Open With" list**: `FEditor.app` declares that it can open text-like files, so Finder's "Open With" menu lists it; it also handles the open-document events from "Open With" and from dropping files on the Dock icon (both when launching and when already running).
 
 ### Changed
 - **Starting with paths reuses a running FEditor**: when started with paths from the File Explorer / Finder context menu (or the command line) while a FEditor is already running, the paths are handed to it and its window is brought to the front instead of opening a new window; otherwise it starts itself. Selecting several files in File Explorer also yields a single window. Starting without paths still opens a new window.
@@ -154,6 +157,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
 [0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
 [0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0

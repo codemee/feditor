@@ -124,7 +124,7 @@ The full API and the header markers are in [Macros](docs/macros.en.md); examples
 ## Known issues
 
 - The IME has only been verified on Windows; macOS and Linux are untested.
-- The macOS `FEditor.app` is not notarized and has not been tried on a real Mac; "Open With" on a file in Finder does not open it yet (only command-line arguments are supported).
+- The macOS `FEditor.app` is not notarized and has not been fully tested. Right-click a file in Finder → "Open With" lists FEditor (declared as an Alternate editor for text-like files, so it does not take over the default app) and opens the file; dropping files on the Dock icon works too.
 - A single very long line (hundreds of thousands of characters) makes that line slow; above about 1,000,000 lines the vertical scroll position has limited precision (a 4-million-line, 346 MB file opens and can be edited, but the line spacing visibly jitters).
 - While the IME has the focus on Windows, some Ctrl+Alt+letter combinations are swallowed by the IME.
 - The terminal is experimental and is best tested on Windows so far.
