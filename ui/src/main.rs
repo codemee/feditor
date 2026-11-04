@@ -2018,9 +2018,16 @@ impl App {
 
             // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式；
             // 按下去用設定裡的預設終端機，旁邊的下拉清單可以改選別的 shell 來新增
+            // 主按鈕和下拉箭頭之間不留縫（間距是放在每個元件「後面」的，所以主按鈕放之前先設成 0、
+            // 放完再還原），看起來才是同一組
+            let gap = ui.spacing().item_spacing.x;
+            if !self.shells.is_empty() {
+                ui.spacing_mut().item_spacing.x = 0.0;
+            }
             if icons::button(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), true).clicked() {
                 action = Some(Action::NewTerminal);
             }
+            ui.spacing_mut().item_spacing.x = gap;
             if !self.shells.is_empty() {
                 // 下拉箭頭的高度和其他工具按鈕一樣（灰底對齊），每一項前面是那個 shell 的圖示
                 let choose = icons::dropdown_button(ui, Icon::ChevronDown, t("選擇 shell 來新增終端機"), true);
@@ -2047,14 +2054,17 @@ impl App {
             } else {
                 t("在終端機執行目前的檔案（要先儲存成檔案，而且目前只支援 Python）")
             };
+            ui.spacing_mut().item_spacing.x = 0.0; // 和下拉箭頭同一組：中間不留縫
             if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
                 action = Some(Action::RunFile);
             }
+            ui.spacing_mut().item_spacing.x = gap;
             // 旁邊的下拉清單：這個檔案執行時的命令列參數（依檔案記住）
             let args_button = icons::dropdown_button(ui, Icon::ChevronDown, t("設定執行時的命令列參數"), can_run);
             let file_key = self.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
             let current_args = self.settings.run_args.get(&file_key).cloned().unwrap_or_default();
-            egui::Popup::menu(&args_button).show(|ui| {
+            // 裡面有文字欄：點在欄位上不能收合，只有點到外面（或按 Esc、按「執行」）才關
+            egui::Popup::menu(&args_button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                 no_hover_outline(ui);
                 ui.label(t("命令列參數（接在檔案後面，交給終端機的 shell 解析）"));
                 let mut text = current_args.clone();
