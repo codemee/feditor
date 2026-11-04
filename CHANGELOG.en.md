@@ -2,6 +2,11 @@
 
 # Changelog
 
+## Unreleased
+
+### Changed
+- **Starting with paths reuses a running FEditor**: when started with paths from the File Explorer / Finder context menu (or the command line) while a FEditor is already running, the paths are handed to it and its window is brought to the front instead of opening a new window; otherwise it starts itself. Selecting several files in File Explorer also yields a single window. Starting without paths still opens a new window.
+
 ## [0.4.1] - 2026-11-04
 
 ### Fixed

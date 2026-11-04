@@ -23,6 +23,7 @@ mod scheme;
 mod session;
 mod settings;
 mod shell_integration;
+mod single_instance;
 mod syntax;
 mod tabs;
 mod terminal;
@@ -619,6 +620,8 @@ struct App {
     /// 命令列給的路徑（從檔案總管、Finder 的右鍵選單或「開啟檔案」帶進來的）：第一個畫面才開，
     /// 這樣資料夾的「開啟檔案」交談窗出現時主視窗已經在了。
     startup_paths: Vec<PathBuf>,
+    /// 別的 FEditor 啟動時轉交過來的路徑（從檔案總管、Finder 的右鍵選單開檔案時，已經開著就不另開新視窗）。
+    incoming: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
     /// 加入／移除右鍵選單（測試時換成不碰系統的替身）。
     shell_menu_backend: fn(bool, &shell_integration::Labels) -> Result<(), String>,
     allow_close: bool,
@@ -688,6 +691,7 @@ impl App {
             log: Vec::new(),
             last_title: String::new(),
             startup_paths: Vec::new(),
+            incoming: None,
             shell_menu_backend: apply_shell_menu,
             allow_close: false,
             modal: None,
@@ -3404,7 +3408,20 @@ impl eframe::App for App {
         #[cfg(windows)]
         win_icon::apply_once();
 
-        if !self.startup_paths.is_empty() {
+        // 別的 FEditor 轉交來的路徑：加進待開清單，並把視窗叫到前面
+        if let Some(rx) = &self.incoming {
+            let mut any = false;
+            while let Ok(paths) = rx.try_recv() {
+                self.startup_paths.extend(paths);
+                any = true;
+            }
+            if any {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
+        // 有對話框在等回答時先不開（資料夾的選檔交談窗不能疊上去），等對話框關了再處理
+        if !self.startup_paths.is_empty() && self.modal.is_none() {
             let paths = std::mem::take(&mut self.startup_paths);
             self.open_dropped(paths);
         }
@@ -5235,6 +5252,14 @@ fn main() -> eframe::Result {
         unsafe { std::env::set_var("WGPU_BACKEND", "dx12") };
     }
 
+    // 用命令列的路徑啟動：已經有 FEditor 在執行就交給它開，這個行程直接結束（見 single_instance）
+    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let listener = match single_instance::claim(&paths) {
+        single_instance::Claim::Forwarded => return Ok(()),
+        single_instance::Claim::Primary(listener) => Some(listener),
+        single_instance::Claim::Standalone => None,
+    };
+
     let settings = Settings::load();
     feditor_core::i18n::apply(settings.language); // 之後產生的所有介面字串都用這個語言
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
@@ -5255,13 +5280,16 @@ fn main() -> eframe::Result {
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             apply_font_size(&cc.egui_ctx, settings.font_size);
             // 命令列參數都視為要開啟的路徑（檔案直接開；資料夾顯示選檔交談窗）：右鍵選單選了好幾個檔案時一起帶進來
-            let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
             let initial = None;
             let restore = paths.is_empty();
             // 先載入自訂語言，這樣還原的分頁一開始就有顏色
             let syntax_msgs = syntax::load_user_languages(syntax::syntax_dir().as_deref());
             let mut app = App::new(initial, settings);
             app.startup_paths = paths;
+            if let Some(listener) = listener {
+                let ctx = cc.egui_ctx.clone();
+                app.incoming = Some(single_instance::serve(listener, move || ctx.request_repaint()));
+            }
             app.sync_shell_menu();
             for m in syntax_msgs {
                 app.push(LogKind::Warn, m);
