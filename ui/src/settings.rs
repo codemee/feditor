@@ -175,6 +175,8 @@ pub struct Settings {
     pub auto_indent: bool,
     /// 在檔案總管（Windows）、Finder（macOS）的右鍵選單加入 FEditor。
     pub shell_menu: bool,
+    /// 在 `~/.local/bin` 加入 `feditor` 指令（macOS、Linux）。
+    pub cli_command: bool,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
     pub terminal_font_size: f32,
     /// 終端機文字和底色的最低對比度；1 表示不調整。
@@ -207,6 +209,7 @@ impl Default for Settings {
             tab_spaces: false,
             auto_indent: true,
             shell_menu: false,
+            cli_command: false,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
@@ -306,6 +309,11 @@ impl Settings {
                         settings.shell_menu = on;
                     }
                 }
+                "cli_command" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.cli_command = on;
+                    }
+                }
                 "tab_spaces" => {
                     if let Some(on) = parse_bool(value) {
                         settings.tab_spaces = on;
@@ -386,6 +394,7 @@ impl Settings {
         text.push_str(&format!("tab_width = {}\ntab_spaces = {}\n", self.tab_width, self.tab_spaces));
         text.push_str(&format!("auto_indent = {}\n", self.auto_indent));
         text.push_str(&format!("shell_menu = {}\n", self.shell_menu));
+        text.push_str(&format!("cli_command = {}\n", self.cli_command));
         for (name, width) in &self.tab_widths {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
             if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
@@ -641,6 +650,16 @@ mod tests {
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
         assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
+    #[test]
+    fn the_cli_command_switch_is_off_by_default_and_round_trips() {
+        assert!(!Settings::default().cli_command);
+        assert!(Settings::parse("cli_command = true").cli_command);
+        assert!(!Settings::parse("cli_command = maybe").cli_command);
+        let mut s = Settings::default();
+        s.cli_command = true;
+        assert!(Settings::parse(&s.to_text()).cli_command);
     }
 
     #[test]

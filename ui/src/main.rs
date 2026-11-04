@@ -22,6 +22,7 @@ mod preview_ui;
 mod scheme;
 mod session;
 mod settings;
+mod cli_command;
 mod shell_integration;
 #[cfg(target_os = "macos")]
 mod macos_open;
@@ -162,6 +163,8 @@ fn theme_label(choice: ThemeChoice) -> &'static str {
 
 /// 確認對話框回答之後要接著做的事。
 enum Then {
+    /// 只是告知：按了按鈕就關掉，沒有後續動作。
+    Notice,
     CloseTab,
     CloseWindow,
     Reload(&'static Encoding),
@@ -450,6 +453,8 @@ enum Action {
     SetTabSpaces(bool),
     /// 在檔案總管／Finder 的右鍵選單加入或移除 FEditor。
     SetShellMenu(bool),
+    /// 在 `~/.local/bin` 加入或移除 `feditor` 指令。
+    SetCliCommand(bool),
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
@@ -632,6 +637,8 @@ struct App {
     incoming: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
     /// 加入／移除右鍵選單（測試時換成不碰系統的替身）。
     shell_menu_backend: fn(bool, &shell_integration::Labels) -> Result<(), String>,
+    /// 在 `~/.local/bin` 加入／移除 `feditor` 指令（測試時換成不碰系統的替身）。
+    cli_backend: fn(bool) -> Result<(), String>,
     allow_close: bool,
     /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
     modal: Option<Pending>,
@@ -701,6 +708,7 @@ impl App {
             startup_paths: Vec::new(),
             incoming: None,
             shell_menu_backend: apply_shell_menu,
+            cli_backend: cli_command::apply,
             allow_close: false,
             modal: None,
             close_skipped: Vec::new(),
@@ -921,6 +929,12 @@ impl App {
         self.ask_save_with(then, before, false);
     }
 
+    /// 顯示一個只有「知道了」的告知對話框。
+    fn show_notice(&mut self, title: &str, message: String) {
+        let spec = modal::Spec::new(title, message).button(t("知道了"), modal::Answer::Yes);
+        self.modal = Some(Pending::new(spec, Then::Notice));
+    }
+
     /// 同 [`App::ask_save`]；`discard_all` 時多一個「全部不儲存」鈕（關閉視窗而且還有別的文件也沒存）。
     fn ask_save_with(&mut self, then: Then, before: &str, discard_all: bool) {
         let spec = modal::Spec::new(
@@ -1056,6 +1070,7 @@ impl App {
         use modal::Answer::{No, Yes};
         let typed = text.as_deref().map(str::trim).unwrap_or_default().to_owned();
         match then {
+            Then::Notice => {}
             Then::SaveRecording(source) => match answer {
                 Yes if typed.is_empty() => {
                     self.ask_recording_name(source, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
@@ -1156,6 +1171,15 @@ impl App {
         self.close_skipped.clear();
         self.allow_close = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// 設定裡有開 feditor 指令時，把它更新成目前的執行檔位置（程式搬了位置也會跟上）。
+    fn sync_cli_command(&mut self) {
+        if self.settings.cli_command
+            && let Err(e) = (self.cli_backend)(true)
+        {
+            self.push(LogKind::Warn, tf!("無法更新 feditor 指令：{}", e));
+        }
     }
 
     /// 設定裡有開右鍵選單時，把它更新成目前的執行檔位置與介面語言（程式搬了位置、換了語言都會跟上）。
@@ -1748,6 +1772,27 @@ impl App {
                 if width != self.settings.tab_width {
                     self.settings.tab_width = width;
                     self.mark_settings_dirty();
+                }
+            }
+            Action::SetCliCommand(on) => {
+                if on != self.settings.cli_command {
+                    match (self.cli_backend)(on) {
+                        Ok(()) => {
+                            self.settings.cli_command = on;
+                            self.mark_settings_dirty();
+                            if on {
+                                let dir = cli_command::bin_dir().map(|d| d.display().to_string()).unwrap_or_else(|| "~/.local/bin".to_owned());
+                                self.show_notice(
+                                    t("已加入 feditor 指令"),
+                                    tf!(
+                                        "已在 {} 建立 feditor 指令。\n\n請確認這個資料夾在 PATH 裡，否則終端機找不到指令。如果還沒有，把下面這行加到 ~/.zshrc（bash 用 ~/.bashrc）之後重開終端機：\n\nexport PATH=\"$HOME/.local/bin:$PATH\"\n\n之後在終端機輸入 feditor 檔案 就能開啟檔案。",
+                                        dir
+                                    ),
+                                );
+                            }
+                        }
+                        Err(e) => self.push(LogKind::Error, tf!("無法更新 feditor 指令：{}", e)),
+                    }
                 }
             }
             Action::SetShellMenu(on) => {
@@ -2711,6 +2756,18 @@ impl App {
                         .on_hover_text(tf!("在{}的右鍵選單加入「{}」（檔案）與「{}」（資料夾）；取消勾選就移除", file_manager_name(), labels.open, labels.pick));
                     if response.changed() {
                         action = Some(Action::SetShellMenu(on));
+                    }
+                });
+            }
+            // 終端機指令（macOS、Linux）：在 ~/.local/bin 放一個 feditor 指令
+            if cli_command::supported() {
+                form_row(ui, t("終端機指令"), |ui| {
+                    let mut on = self.settings.cli_command;
+                    let response = ui
+                        .checkbox(&mut on, t("加入 feditor 指令"))
+                        .on_hover_text(t("在 ~/.local/bin 建立 feditor 指令，之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就移除（需要把 ~/.local/bin 加入 PATH）"));
+                    if response.changed() {
+                        action = Some(Action::SetCliCommand(on));
                     }
                 });
             }
@@ -4472,6 +4529,29 @@ mod tests {
     }
 
     #[test]
+    fn the_cli_command_switch_calls_the_backend_reminds_about_path_and_only_sticks_when_it_works() {
+        fn works(_: bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn fails(_: bool) -> Result<(), String> {
+            Err("不行".to_owned())
+        }
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.cli_backend = works;
+        app.handle(Action::SetCliCommand(true), &ctx);
+        assert!(app.settings.cli_command);
+        let message = &app.modal.as_ref().expect("加入時要顯示提醒").spec.message;
+        assert!(message.contains("PATH") && message.contains("export PATH"), "{message}");
+        app.modal = None;
+        app.handle(Action::SetCliCommand(false), &ctx);
+        assert!(!app.settings.cli_command && app.modal.is_none(), "移除時不用提醒");
+        app.cli_backend = fails;
+        app.handle(Action::SetCliCommand(true), &ctx);
+        assert!(!app.settings.cli_command && app.modal.is_none(), "加入失敗：不記成已開啟，也不顯示提醒");
+    }
+
+    #[test]
     fn the_shell_menu_switch_calls_the_backend_and_only_sticks_when_it_works() {
         use std::sync::atomic::{AtomicI32, Ordering};
         // 0：沒呼叫過；1：最後一次要加入；-1：最後一次要移除
@@ -5478,6 +5558,7 @@ fn main() -> eframe::Result {
                 macos_open::set_wake(move || ctx.request_repaint());
             }
             app.sync_shell_menu();
+            app.sync_cli_command();
             for m in syntax_msgs {
                 app.push(LogKind::Warn, m);
             }
