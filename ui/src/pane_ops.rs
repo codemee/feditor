@@ -26,6 +26,8 @@ const CARD_RADIUS: u8 = 8;
 pub(crate) const CARD_INSET: f32 = 4.0;
 /// 編輯區（窗格卡片）離中央面板左右邊緣的空隙。狀態列等貼在下方的面板要和卡片的外緣對齊，會用到它。
 pub(crate) const AREA_INSET_X: f32 = 6.0;
+/// 終端機分頁標籤上 shell 圖示的大小。
+const TAB_ICON: f32 = 14.0;
 /// 分頁的高度與上緣圓角。分頁列下緣沒有留白，作用中的分頁才能和編輯區接在一起。
 pub(crate) const TAB_HEIGHT: f32 = 26.0;
 /// 按一下箭頭，分頁列捲動多少。
@@ -144,6 +146,12 @@ impl App {
         self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
         self.pending_editor_focus = true;
         self.tab_changed();
+    }
+
+    /// 窗格 `id` 的第 `i` 個分頁如果是終端機，它執行的 shell（空字串是系統預設）；文字分頁回傳 `None`。
+    pub(crate) fn pane_tab_terminal_shell(&self, id: PaneId, i: usize) -> Option<String> {
+        let live = (id == self.layout.focus).then_some(&self.doc);
+        self.set_ref(id).and_then(|s| s.terminal_shell(live, i))
     }
 
     /// 窗格 `id` 的第 `i` 個分頁是不是終端機。
@@ -569,12 +577,15 @@ impl App {
         let mut action = None;
         let (_, full, _) = self.pane_label(pane, i);
         let is_terminal = self.pane_tab_is_terminal(pane, i);
+        // 終端機分頁：名稱前面放它執行的 shell 的圖示，一眼分得出是哪種 shell
+        let shell = self.pane_tab_terminal_shell(pane, i);
+        let icon_w = if shell.is_some() { TAB_ICON + 4.0 } else { 0.0 };
         let text = self.pane_tab_text(pane, i);
         let active_here = i == self.pane_active(pane);
         let font = egui::TextStyle::Button.resolve(ui.style());
         let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);
         let (pad, close_w) = (8.0, 14.0);
-        let size = egui::vec2(pad + galley.size().x + 6.0 + close_w + 4.0, TAB_HEIGHT);
+        let size = egui::vec2(pad + icon_w + galley.size().x + 6.0 + close_w + 4.0, TAB_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let close = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 4.0 - close_w / 2.0, rect.center().y),
@@ -643,8 +654,15 @@ impl App {
                 );
             }
         }
-        let text_pos = egui::pos2(rect.left() + pad, rect.center().y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(rect.left() + pad + icon_w, rect.center().y - galley.size().y / 2.0);
         ui.painter().galley_with_override_text_color(text_pos, galley, text_color);
+        if let Some(shell) = &shell {
+            let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + pad + TAB_ICON / 2.0, rect.center().y), egui::vec2(TAB_ICON, TAB_ICON));
+            let texture = self.shell_icons.get_by_command(ui.ctx(), shell);
+            // 沒有作用中的分頁圖示調淡一點，和文字一樣退到背景
+            let tint = if active_here { egui::Color32::WHITE } else { egui::Color32::WHITE.gamma_multiply(0.7) };
+            crate::shell_icons::paint_icon(ui, texture.as_ref(), icon_rect, tint, text_color);
+        }
         if over {
             if close_resp.hovered() {
                 ui.painter().rect_filled(close, egui::CornerRadius::same(3), ui.visuals().widgets.hovered.bg_fill);

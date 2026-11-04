@@ -23,21 +23,38 @@ pub struct ShellIcons {
 }
 
 impl ShellIcons {
+    /// 清單裡某一項的圖示。
     pub fn get(&self, ctx: &egui::Context, option: &ShellOption) -> Option<TextureHandle> {
-        self.textures.borrow_mut().entry(option.command.clone()).or_insert_with(|| load(ctx, option)).clone()
+        self.get_by_command(ctx, &option.command)
+    }
+
+    /// 執行這個指令的 shell 的圖示；指令是空字串時用系統預設 shell 的（終端機分頁的標籤用）。
+    pub fn get_by_command(&self, ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
+        self.textures.borrow_mut().entry(command.to_owned()).or_insert_with(|| load(ctx, command)).clone()
     }
 }
 
 #[cfg(windows)]
-fn load(ctx: &egui::Context, option: &ShellOption) -> Option<TextureHandle> {
-    let path = terminal::program_path(&option.command)?;
+fn load(ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
+    let effective = if command.trim().is_empty() { terminal::system_default_shell().program } else { command.to_owned() };
+    let path = terminal::program_path(&effective)?;
     let image = exe_icon(&path)?;
-    Some(ctx.load_texture(format!("shell-icon:{}", option.command), image, TextureOptions::LINEAR))
+    Some(ctx.load_texture(format!("shell-icon:{command}"), image, TextureOptions::LINEAR))
 }
 
 #[cfg(not(windows))]
-fn load(_ctx: &egui::Context, _option: &ShellOption) -> Option<TextureHandle> {
+fn load(_ctx: &egui::Context, _command: &str) -> Option<TextureHandle> {
     None
+}
+
+/// 在 `rect` 畫 shell 的圖示：有材質就畫它（`tint` 可以調淡），沒有就畫程式自己的終端機圖示（顏色用 `fallback`）。
+pub fn paint_icon(ui: &Ui, texture: Option<&TextureHandle>, rect: egui::Rect, tint: Color32, fallback: Color32) {
+    match texture {
+        Some(texture) => {
+            ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+        }
+        None => icons::paint(ui, Icon::Terminal, rect, fallback),
+    }
 }
 
 /// 清單上的一列：圖示加名稱，`selected` 時有選取的底色（和 `selectable_label` 的樣子一致）。
@@ -53,12 +70,7 @@ pub fn shell_row(ui: &mut Ui, texture: Option<&TextureHandle>, label: &str, sele
             ui.painter().rect_filled(rect, egui::CornerRadius::same(3), visuals.weak_bg_fill);
         }
         let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + PAD + ICON_SIZE / 2.0, rect.center().y), vec2(ICON_SIZE, ICON_SIZE));
-        match texture {
-            Some(texture) => {
-                ui.painter().image(texture.id(), icon_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
-            }
-            None => icons::paint(ui, Icon::Terminal, icon_rect, visuals.fg_stroke.color),
-        }
+        paint_icon(ui, texture, icon_rect, Color32::WHITE, visuals.fg_stroke.color);
         let text_pos = egui::pos2(rect.left() + PAD * 2.0 + ICON_SIZE, rect.center().y - galley.size().y / 2.0);
         ui.painter().galley_with_override_text_color(text_pos, galley, visuals.fg_stroke.color);
     }

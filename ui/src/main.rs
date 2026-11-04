@@ -4045,6 +4045,12 @@ mod tests {
         assert_eq!(app.settings.terminal_shell, "pwsh -NoLogo", "預設沒有被改掉");
         app.handle(Action::NewTerminal, &ctx);
         assert_eq!(shell_of(&app).as_deref(), Some("pwsh -NoLogo"), "下一次按鈕還是用預設的");
+        // 標籤上的 shell 圖示要知道這個分頁跑的是哪個 shell；文字分頁沒有
+        let (pane, idx) = app.terminal_tabs()[0];
+        assert_eq!(app.pane_tab_terminal_shell(pane, idx).as_deref(), Some(""));
+        assert_eq!(app.pane_tab_terminal_shell(app.layout.focus, app.tabs.active()).as_deref(), Some("pwsh -NoLogo"));
+        let text_pane = app.layout.root.leaves()[0];
+        assert_eq!(app.pane_tab_terminal_shell(text_pane, 0), None, "文字分頁沒有 shell");
         // 開著的終端機不受之後改的設定影響
         let first = app.terminal_tabs()[0];
         app.focus_pane(first.0);

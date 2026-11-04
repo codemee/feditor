@@ -278,6 +278,11 @@ impl TabSet {
         self.doc_in(live, i).disk_state
     }
 
+    /// 第 `i` 個分頁如果是終端機，它執行的 shell（程式加參數，空字串是系統預設）；不是終端機回傳 `None`。
+    pub fn terminal_shell(&self, live: Option<&Document>, i: usize) -> Option<String> {
+        self.doc_in(live, i).terminal.as_ref().map(|t| t.shell().to_owned())
+    }
+
     /// 終端機分頁的編號（`live` 同 [`TabSet::doc_in`]）。
     pub fn terminal_tabs(&self, live: Option<&Document>) -> Vec<usize> {
         (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.is_some()).collect()
