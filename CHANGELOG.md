@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.4.1] - 2026-11-04
 
 ### 修正
 - **Windows 工作列圖示**：工作列按鈕原本顯示成預設的空白視窗圖示。現在視窗出現後會明確把 exe 內嵌的圖示設成大圖示與小圖示（依螢幕縮放比例選大小）。
@@ -149,6 +149,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
 [0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1

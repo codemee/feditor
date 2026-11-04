@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## [0.4.1] - 2026-11-04
 
 ### Fixed
 - **Windows taskbar icon**: the taskbar button showed the generic blank-window icon. Once the window appears, the icon embedded in the exe is now explicitly set as both the large and the small window icon (sized for the screen scaling).
@@ -149,6 +149,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
 [0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
