@@ -77,17 +77,20 @@ pub enum Icon {
 enum Size {
     Normal,
     Small,
+    /// 工具列上附在別的按鈕旁邊的下拉箭頭：和一般按鈕一樣高（灰底才會對齊），但比較窄。
+    Dropdown,
 }
 
 /// 一般按鈕的外框高度；表單列裡要讓文字標籤和按鈕垂直置中時用。
 pub const BUTTON_HEIGHT: f32 = 30.0;
 
 impl Size {
-    /// （按鈕外框, 圖示本體）邏輯像素。
-    fn px(self) -> (f32, f32) {
+    /// （按鈕外框的寬與高, 圖示本體）邏輯像素。
+    fn px(self) -> (Vec2, f32) {
         match self {
-            Size::Normal => (BUTTON_HEIGHT, 18.0),
-            Size::Small => (22.0, 14.0),
+            Size::Normal => (Vec2::splat(BUTTON_HEIGHT), 18.0),
+            Size::Small => (Vec2::splat(22.0), 14.0),
+            Size::Dropdown => (vec2(18.0, BUTTON_HEIGHT), 14.0),
         }
     }
 }
@@ -105,6 +108,16 @@ pub fn toggle(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> Response {
 /// 緊湊版按鈕（狀態列用）。
 pub fn small_button(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool) -> Response {
     widget(ui, icon, tip, enabled, false, Size::Small).on_hover_text(tip)
+}
+
+/// 工具列上附在別的按鈕旁邊的下拉箭頭：高度和一般按鈕一樣（滑鼠移過的灰底才會對齊），寬度比較窄。
+pub fn dropdown_button(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool) -> Response {
+    widget(ui, icon, tip, enabled, false, Size::Dropdown).on_hover_text(tip)
+}
+
+/// 在指定的位置畫一個圖示（不是按鈕），例如清單裡文字前面的小圖示。
+pub fn paint(ui: &Ui, icon: Icon, rect: Rect, color: Color32) {
+    draw(ui, icon, rect, color, ui.visuals().panel_fill);
 }
 
 /// 緊湊版開關按鈕，`on` 為 true 時以選取色顯示。`enabled` 為 false 時變灰且不可點。
@@ -147,14 +160,14 @@ fn widget(
     selected: bool,
     size: Size,
 ) -> Response {
-    let (button_px, icon_px) = size.px();
+    let (button_size, icon_px) = size.px();
     // `Sense::click()` 同時是「可以用 Tab 聚焦」的；只能用滑鼠點的按鈕改用 `Sense::CLICK`
     let sense = match (enabled, TAB_FOCUSABLE.get()) {
         (false, _) => Sense::hover(),
         (true, true) => Sense::click(),
         (true, false) => Sense::CLICK,
     };
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(button_px), sense);
+    let (rect, response) = ui.allocate_exact_size(button_size, sense);
     response.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, tip));
 
     if ui.is_rect_visible(rect) {

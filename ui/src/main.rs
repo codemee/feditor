@@ -27,6 +27,7 @@ mod tabs;
 mod terminal;
 mod terminal_pane;
 mod terminal_text;
+mod shell_icons;
 mod watcher;
 mod theme;
 
@@ -561,6 +562,8 @@ struct App {
     terminal_return: Option<(panes::PaneId, usize)>,
     /// 這台機器上偵測到的 shell（工具列的下拉清單與設定面板用）。
     shells: Vec<terminal::ShellOption>,
+    /// 每個 shell 的圖示材質（第一次畫的時候才讀）。
+    shell_icons: shell_icons::ShellIcons,
     /// 使用者的預覽外掛（設定資料夾的 `previews/*.js`）。
     preview_plugins: Vec<std::sync::Arc<preview::Plugin>>,
     /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
@@ -628,6 +631,7 @@ impl App {
             previews: Default::default(),
             terminal_return: None,
             shells: terminal::detect_shells(),
+            shell_icons: Default::default(),
             preview_plugins: Vec::new(),
             pane_rects: Vec::new(),
             last_macro: None,
@@ -1689,14 +1693,17 @@ impl App {
                 action = Some(Action::NewTerminal);
             }
             if !self.shells.is_empty() {
-                let choose = icons::small_button(ui, Icon::ChevronDown, t("選擇 shell 來新增終端機"), true);
+                // 下拉箭頭的高度和其他工具按鈕一樣（灰底對齊），每一項前面是那個 shell 的圖示
+                let choose = icons::dropdown_button(ui, Icon::ChevronDown, t("選擇 shell 來新增終端機"), true);
                 let (configured, system) = (self.settings.terminal_shell.clone(), terminal::system_default_shell());
+                let ctx = ui.ctx().clone();
                 egui::Popup::menu(&choose).show(|ui| {
                     no_hover_outline(ui);
                     flat_list(ui, |ui| {
                         for option in &self.shells {
-                            // 目前的預設終端機有選取的底色
-                            if ui.selectable_label(terminal::is_default_shell(option, &configured, &system), &option.label).clicked() {
+                            let selected = terminal::is_default_shell(option, &configured, &system); // 目前的預設終端機有選取的底色
+                            let texture = self.shell_icons.get(&ctx, option);
+                            if shell_icons::shell_row(ui, texture.as_ref(), &option.label, selected).clicked() {
                                 action = Some(Action::NewTerminalWith(option.command.clone()));
                                 ui.close();
                             }
@@ -2675,11 +2682,14 @@ impl App {
                     .selected_text(selected)
                     .show_ui(ui, |ui| {
                         flat_list(ui, |ui| {
-                            if ui.selectable_label(!in_use, t("系統預設")).clicked() {
+                            if shell_icons::shell_row(ui, None, t("系統預設"), !in_use).clicked() {
                                 action = Some(Action::SetTerminalShell(String::new()));
                             }
+                            let ctx = ui.ctx().clone();
                             for option in &self.shells {
-                                if ui.selectable_label(in_use && terminal::is_default_shell(option, &configured, &system), &option.label).clicked() {
+                                let selected = in_use && terminal::is_default_shell(option, &configured, &system);
+                                let texture = self.shell_icons.get(&ctx, option);
+                                if shell_icons::shell_row(ui, texture.as_ref(), &option.label, selected).clicked() {
                                     action = Some(Action::SetTerminalShell(option.command.clone()));
                                 }
                             }

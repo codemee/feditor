@@ -245,6 +245,24 @@ pub fn is_default_shell(option: &ShellOption, configured: &str, system: &ShellCo
     }
 }
 
+/// 指令（程式加參數）裡那個程式的實際檔案路徑：寫了路徑就用它，只有程式名稱就在 PATH 裡找（也試加上 `.exe`）。
+/// `path_var` 是 PATH 的內容，`is_file` 判斷檔案存不存在（測試時可以換掉）。
+pub fn program_path_in(command: &str, path_var: Option<&std::ffi::OsStr>, is_file: &dyn Fn(&std::path::Path) -> bool) -> Option<PathBuf> {
+    let program = split_command(command).into_iter().next()?;
+    let direct = std::path::Path::new(&program);
+    if direct.is_absolute() || direct.components().count() > 1 {
+        return is_file(direct).then(|| direct.to_path_buf());
+    }
+    std::env::split_paths(path_var?).find_map(|dir| {
+        [program.clone(), format!("{program}.exe")].into_iter().map(|name| dir.join(name)).find(|candidate| is_file(candidate))
+    })
+}
+
+/// 指令裡那個程式的實際檔案路徑（用目前的 PATH 找）。
+pub fn program_path(command: &str) -> Option<PathBuf> {
+    program_path_in(command, std::env::var_os("PATH").as_deref(), &|p| p.is_file())
+}
+
 fn exists_in_path(exe: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(exe).is_file()))
 }
@@ -575,6 +593,25 @@ mod tests {
         assert!(is_default_shell(&cmd, "cmd", &system));
         assert!(is_default_shell(&pwsh, "pwsh   -NoLogo", &system));
         assert!(!is_default_shell(&pwsh, "pwsh", &system), "參數不同就是不同的選項");
+    }
+
+    #[test]
+    fn a_commands_program_is_found_on_the_path_or_by_its_own_path() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let path = std::ffi::OsString::from(format!("{}{sep}{}", if cfg!(windows) { "C:\\a" } else { "/a" }, if cfg!(windows) { "C:\\b" } else { "/b" }));
+        let (a, b) = if cfg!(windows) { ("C:\\a", "C:\\b") } else { ("/a", "/b") };
+        let exists = |p: &std::path::Path| p == std::path::Path::new(b).join("pwsh.exe") || p == std::path::Path::new(a).join("git");
+        // 只有程式名稱：依序在 PATH 的每個資料夾找，也試加上 .exe
+        assert_eq!(program_path_in("pwsh -NoLogo", Some(&path), &exists), Some(std::path::Path::new(b).join("pwsh.exe")));
+        assert_eq!(program_path_in("git status", Some(&path), &exists), Some(std::path::Path::new(a).join("git")));
+        assert_eq!(program_path_in("nope", Some(&path), &exists), None);
+        assert_eq!(program_path_in("pwsh", None, &exists), None, "沒有 PATH 就找不到");
+        assert_eq!(program_path_in("", Some(&path), &exists), None);
+        // 寫了路徑（含引號與空白）：直接檢查那個檔案，不去 PATH 找
+        let full = if cfg!(windows) { "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i" } else { "\"/opt/my shell/bash\" --login" };
+        let target = if cfg!(windows) { "C:\\Program Files\\Git\\bin\\bash.exe" } else { "/opt/my shell/bash" };
+        assert_eq!(program_path_in(full, Some(&path), &|p| p == std::path::Path::new(target)), Some(PathBuf::from(target)));
+        assert_eq!(program_path_in(full, Some(&path), &|_| false), None);
     }
 
     #[test]
