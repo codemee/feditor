@@ -70,7 +70,8 @@ The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's defa
 - Ctrl+` cycles the focus through the terminals and returns to where you were after the last one. The tab closes when the shell exits (type `exit`) or you press its ×.
 - Supports colors, full-screen programs, IME, copy and paste (Ctrl+C copies when text is selected and interrupts otherwise), mouse-drag selection and wheel scrolling. Colors follow the current color scheme, and text whose contrast with its background is too low is adjusted until it is readable.
 - When a program asks for mouse reporting (vim, htop and the like), mouse events are sent to it; holding Shift still lets you select text.
-- Not yet: clickable links, search inside the terminal.
+- **URLs**: hold Ctrl and move the mouse over a URL (`http`, `https`, `ftp`, `file`) and the whole URL is underlined and the pointer becomes a hand; click to open it in the default browser. URLs that wrap over several rows work too.
+- **Search**: press Ctrl+Shift+F while a terminal has the focus and a search bar appears in its top-right corner (so Ctrl+Shift+F searches the terminal, not "Find in Files"). It searches as you type, ignoring case and including the history scrolled out of view; matches are highlighted, Enter finds the earlier match, Shift+Enter the later one, and Esc closes it.
 
 ## Editing
 

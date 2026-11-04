@@ -26,6 +26,7 @@ mod syntax;
 mod tabs;
 mod terminal;
 mod terminal_pane;
+mod terminal_text;
 mod watcher;
 mod theme;
 

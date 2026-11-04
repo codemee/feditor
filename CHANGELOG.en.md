@@ -2,6 +2,12 @@
 
 # Changelog
 
+## Unreleased
+
+### Added
+- **Terminal: clickable URLs**: hold Ctrl and hover a URL to underline it, and click to open it in the default browser (including URLs that wrap over several rows).
+- **Search inside the terminal**: press Ctrl+Shift+F while a terminal has the focus to open a search bar; it searches live, ignoring case and including the history scrolled out of view, highlights the matches, moves between them with Enter / Shift+Enter, and closes with Esc.
+
 ## [0.2.1] - 2026-11-03
 
 ### Changed

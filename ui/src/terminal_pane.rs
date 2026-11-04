@@ -7,11 +7,11 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::{Dimensions, Grid, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::TermMode;
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::vte::ansi::{Color, NamedColor};
 use eframe::egui::{self, Color32};
 use feditor_core::i18n::t;
@@ -22,6 +22,7 @@ use crate::editor::model::EditorState;
 use crate::panes::{PaneId, Side as PaneSide};
 use crate::tabs::Tab;
 use crate::terminal::{self, GridSize, Terminal};
+use crate::terminal_text::{self, Glyph, Segment};
 use crate::{App, LogKind};
 
 /// 在編輯區與各個終端機之間切換焦點（沒有終端機就開一個）。不用 Ctrl+C／V／D 等 shell 要用的鍵。
@@ -69,6 +70,114 @@ pub struct TerminalPane {
     /// 程式要求滑鼠回報時，目前按著哪個鍵（0 左、1 中、2 右），以及最後回報的格子（避免同一格重複回報移動）。
     mouse_button: Option<u8>,
     last_mouse_cell: Option<(usize, usize)>,
+    /// 終端機內的搜尋列（Ctrl+Shift+F）；`None` 是沒開。
+    search: Option<Search>,
+}
+
+/// 終端機內搜尋的狀態。
+struct Search {
+    query: String,
+    /// 每個符合項目是一串欄位範圍（跨越折行時不只一段），依畫面由上到下排。
+    matches: Vec<Vec<Segment>>,
+    /// 目前選的是第幾筆。
+    current: Option<usize>,
+    /// 上次掃描時的搜尋字串與時間：字串改了、或過了一小段時間（輸出會一直變），才重新掃描。
+    scanned_query: String,
+    scanned_at: Option<std::time::Instant>,
+    /// 下一個畫面把鍵盤焦點給搜尋框。
+    focus_input: bool,
+    /// 下一個畫面把畫面捲到目前這一筆。
+    jump: bool,
+}
+
+impl Default for Search {
+    fn default() -> Self {
+        Self { query: String::new(), matches: Vec::new(), current: None, scanned_query: String::new(), scanned_at: None, focus_input: true, jump: false }
+    }
+}
+
+impl Search {
+    /// 往較早（`older`）或較新的符合項目移動，繞完一圈接回另一頭。
+    fn step(&mut self, older: bool) {
+        let n = self.matches.len();
+        if n == 0 {
+            return;
+        }
+        self.current = Some(match (self.current, older) {
+            (None, true) => n - 1,
+            (None, false) => 0,
+            (Some(0), true) => n - 1,
+            (Some(c), true) => c - 1,
+            (Some(c), false) => (c + 1) % n,
+        });
+        self.jump = true;
+    }
+}
+
+const SEARCH_RESCAN: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// 格線上一列的字元。
+fn push_row(grid: &Grid<Cell>, line: i32, out: &mut Vec<Glyph>) {
+    let row = &grid[Line(line)];
+    for col in 0..grid.columns() {
+        let cell = &row[Column(col)];
+        if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+            continue;
+        }
+        out.push(Glyph { c: if cell.c == '\0' { ' ' } else { cell.c }, line, col, wide: cell.flags.contains(Flags::WIDE_CHAR) });
+    }
+}
+
+/// 這一列的行尾是不是折行（下一列接著它）。
+fn row_wraps(grid: &Grid<Cell>, line: i32) -> bool {
+    grid.columns() > 0 && grid[Line(line)][Column(grid.columns() - 1)].flags.contains(Flags::WRAPLINE)
+}
+
+/// 從第 `first` 列開始的邏輯行（沿著折行往下接），以及它之後下一列的列號。
+fn logical_from(grid: &Grid<Cell>, first: i32) -> (Vec<Glyph>, i32) {
+    let bottom = grid.bottommost_line().0;
+    let mut out = Vec::new();
+    let mut line = first;
+    loop {
+        push_row(grid, line, &mut out);
+        if line < bottom && row_wraps(grid, line) {
+            line += 1;
+        } else {
+            return (out, line + 1);
+        }
+    }
+}
+
+/// 包含第 `line` 列的邏輯行（先沿著折行往上找到開頭）。
+fn logical_containing(grid: &Grid<Cell>, line: i32) -> Vec<Glyph> {
+    let top = grid.topmost_line().0;
+    let mut start = line;
+    while start > top && row_wraps(grid, start - 1) {
+        start -= 1;
+    }
+    logical_from(grid, start).0
+}
+
+/// 掃描整個終端機（含往上捲出去的歷史），找出所有符合的項目。
+fn scan_matches(grid: &Grid<Cell>, query: &str) -> Vec<Vec<Segment>> {
+    let mut out = Vec::new();
+    if query.is_empty() {
+        return out;
+    }
+    let (top, bottom) = (grid.topmost_line().0, grid.bottommost_line().0);
+    let mut line = top;
+    while line <= bottom {
+        let (glyphs, next) = logical_from(grid, line);
+        for (start, end) in terminal_text::find_matches(&glyphs, query) {
+            out.push(terminal_text::segments(&glyphs, start, end));
+        }
+        line = next;
+    }
+    out
+}
+
+fn search_input_id(uid: u64) -> egui::Id {
+    egui::Id::unique(("terminal_search_input", uid))
 }
 
 impl std::fmt::Debug for TerminalPane {
@@ -91,6 +200,7 @@ impl TerminalPane {
             preedit: String::new(),
             mouse_button: None,
             last_mouse_cell: None,
+            search: None,
         }
     }
 
@@ -272,6 +382,7 @@ impl App {
             });
         });
         let mut preedit: Option<String> = None;
+        let mut open_search = false;
         let alt = ctx.input(|i| i.modifiers.alt && !i.modifiers.ctrl);
         let mode = term.mode();
         let mut out: Vec<u8> = Vec::new();
@@ -291,6 +402,9 @@ impl App {
                     preedit = Some(String::new());
                 }
                 egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => preedit = Some(text),
+                egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. } if modifiers.shift && (modifiers.ctrl || modifiers.command) => {
+                    open_search = true;
+                }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
                     let clipboard_key = (modifiers.command || modifiers.ctrl) && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
                     let alt_gr = modifiers.ctrl && modifiers.alt;
@@ -318,6 +432,9 @@ impl App {
         }
         if let Some(p) = preedit {
             pane.preedit = p;
+        }
+        if open_search {
+            pane.search.get_or_insert_with(Search::default).focus_input = true;
         }
     }
 }
@@ -479,6 +596,63 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             pane.mouse_button = None;
         }
 
+        // 搜尋：搜尋字串改了、或過了一小段時間就重新掃描整個終端機（含歷史）；要跳到目前這一筆時把畫面捲過去
+        if let Some(search) = pane.search.as_mut() {
+            let changed = search.query != search.scanned_query;
+            if changed || search.scanned_at.is_none_or(|t| t.elapsed() >= SEARCH_RESCAN) {
+                search.matches = scan_matches(term.term.lock().grid(), &search.query);
+                search.scanned_query = search.query.clone();
+                search.scanned_at = Some(std::time::Instant::now());
+                search.current = match (changed, search.current) {
+                    // 新的搜尋字串：從最新（最下面）的一筆開始
+                    (true, _) => search.matches.len().checked_sub(1),
+                    (false, Some(c)) => (!search.matches.is_empty()).then(|| c.min(search.matches.len() - 1)),
+                    (false, None) => None,
+                };
+                search.jump |= changed;
+            }
+            if std::mem::take(&mut search.jump) {
+                if let Some(seg) = search.current.and_then(|c| search.matches.get(c)).and_then(|m| m.first()) {
+                    term.term.lock().scroll_to_point(Point::new(Line(seg.line), Column(seg.start_col)));
+                }
+            }
+            ctx.request_repaint_after(SEARCH_RESCAN);
+        }
+        // 畫面上看得到的符合項目：列號 → （起欄, 迄欄, 是不是目前這一筆）
+        let display_offset = term.term.lock().grid().display_offset() as i32;
+        let mut highlights: std::collections::HashMap<i32, Vec<(usize, usize, bool)>> = std::collections::HashMap::new();
+        if let Some(search) = pane.search.as_ref() {
+            let (first, last) = (-display_offset, -display_offset + size.lines as i32 - 1);
+            for (i, segs) in search.matches.iter().enumerate() {
+                for s in segs.iter().filter(|s| s.line >= first && s.line <= last) {
+                    highlights.entry(s.line).or_default().push((s.start_col, s.end_col, search.current == Some(i)));
+                }
+            }
+        }
+        // 網址：按住 Ctrl 把滑鼠移到網址上，整段網址加底線、游標變成手指，按一下就用預設瀏覽器開啟。
+        // （程式要求滑鼠回報時，滑鼠事件歸程式；按住 Shift 取消回報之後，Ctrl＋Shift＋點擊一樣可以開網址）
+        let mut link_cells: std::collections::HashSet<(i32, usize)> = std::collections::HashSet::new();
+        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        if ctrl_held && !report {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()).filter(|p| content.contains(*p)) {
+                let (p, _) = point_at(pos);
+                let (line, col) = (p.line.0, p.column.0);
+                let glyphs = logical_containing(term.term.lock().grid(), line);
+                let hovered = glyphs.iter().position(|g| g.line == line && col >= g.col && col < g.col + g.width());
+                if let Some((start, end, url)) = hovered.and_then(|i| terminal_text::url_at(&glyphs, i)) {
+                    for g in &glyphs[start..end] {
+                        for k in 0..g.width() {
+                            link_cells.insert((g.line, g.col + k));
+                        }
+                    }
+                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                    if resp.clicked() {
+                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                    }
+                }
+            }
+        }
+
         // 畫格子
         let painter = ui.painter_at(content);
         let palette = Palette::new(ui.visuals().text_color(), ui.visuals().extreme_bg_color, crate::theme::terminal_colors(&ctx, dark), opts.min_contrast);
@@ -513,6 +687,14 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             } else if let Some(c) = palette.background(bgc) {
                 painter.rect_filled(r, 0.0, c);
             }
+            if let Some(spans) = highlights.get(&cell.point.line.0) {
+                for &(start, end, current) in spans {
+                    if col >= start && col < end {
+                        let warn = ui.visuals().warn_fg_color;
+                        painter.rect_filled(r, 0.0, warn.gamma_multiply(if current { 0.6 } else { 0.28 }));
+                    }
+                }
+            }
             let ch_ = cell.cell.c;
             if ch_ != ' ' && ch_ != '\0' && !flags.contains(Flags::HIDDEN) {
                 let mut color = palette.foreground(fg, flags.contains(Flags::BOLD));
@@ -531,6 +713,10 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             if flags.contains(Flags::STRIKEOUT) {
                 let y = r.center().y;
                 painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.0, palette.foreground(fg, false)));
+            }
+            if link_cells.contains(&(cell.point.line.0, col)) {
+                let y = r.max.y - 1.0;
+                painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.5, ui.visuals().hyperlink_color));
             }
         }
         // 游標
@@ -578,6 +764,58 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                     should_interrupt_composition: false,
                 });
             });
+        }
+        // 搜尋列
+        let uid = pane.uid;
+        let mut close_search = false;
+        if let Some(search) = pane.search.as_mut() {
+            let bar = egui::Rect::from_min_size(egui::pos2(content.max.x - 360.0, content.min.y + 2.0), egui::vec2(356.0, 30.0));
+            let bar = bar.intersect(content.expand(-2.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
+                egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let input = ui.add(
+                            egui::TextEdit::singleline(&mut search.query)
+                                .id(search_input_id(uid))
+                                .desired_width(150.0)
+                                .hint_text(t("在終端機中搜尋")),
+                        );
+                        if std::mem::take(&mut search.focus_input) {
+                            input.request_focus();
+                        }
+                        let count = match (search.current, search.matches.len()) {
+                            (_, 0) if search.query.is_empty() => String::new(),
+                            (_, 0) => t("沒有符合").to_owned(),
+                            (Some(c), n) => format!("{}/{}", c + 1, n),
+                            (None, n) => format!("0/{n}"),
+                        };
+                        ui.label(egui::RichText::new(count).weak());
+                        if crate::icons::small_button(ui, crate::Icon::ChevronUp, t("較早的符合項目（Enter）"), true).clicked() {
+                            search.step(true);
+                        }
+                        if crate::icons::small_button(ui, crate::Icon::ChevronDown, t("較新的符合項目（Shift+Enter）"), true).clicked() {
+                            search.step(false);
+                        }
+                        if crate::icons::small_button(ui, crate::Icon::Close, t("關閉搜尋（Esc）"), true).clicked() {
+                            close_search = true;
+                        }
+                        // Enter 找下一筆（Shift+Enter 反方向），Esc 關閉；輸入框按 Enter 或 Esc 會失去焦點，要再要回來
+                        if input.lost_focus() {
+                            let (enter, esc, shift) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.modifiers.shift));
+                            if esc {
+                                close_search = true;
+                            } else if enter {
+                                search.step(!shift);
+                                input.request_focus();
+                            }
+                        }
+                    });
+                });
+            });
+        }
+        if close_search {
+            pane.search = None;
+            pane.want_focus = true;
         }
 }
 
@@ -794,6 +1032,77 @@ mod tests {
         assert_eq!(next_in_cycle(&order, Some(4)), None, "最後一個之後回到編輯區");
         assert_eq!(next_in_cycle::<u32>(&[], None), None);
         assert_eq!(next_in_cycle(&order, Some(99)), None, "不在清單裡的當作繞完");
+    }
+
+    /// 在寬 `cols`、高 `lines` 的終端機裡「顯示」一段輸出（`\r\n` 換行，太長的會折行）。
+    fn term_with(cols: usize, lines: usize, output: &str) -> alacritty_terminal::Term<alacritty_terminal::event::VoidListener> {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+        let size = GridSize { cols, lines };
+        let mut term = alacritty_terminal::Term::new(Config::default(), &size, VoidListener);
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+        parser.advance(&mut term, output.as_bytes());
+        term
+    }
+
+    #[test]
+    fn search_finds_matches_in_the_scrollback_and_across_wrapped_rows() {
+        // 10 欄寬：第一行折成兩列，歷史（往上捲出去）裡也有符合的字
+        let mut out = String::new();
+        for i in 0..8 {
+            out.push_str(&format!("line {i} Foo\r\n"));
+        }
+        out.push_str("hello wor");
+        out.push_str("ld HELLO\r\n");
+        let term = term_with(10, 5, &out);
+        assert!(term.grid().history_size() > 0, "有些輸出已經捲進歷史");
+        let found = scan_matches(term.grid(), "foo");
+        assert_eq!(found.len(), 8, "歷史裡的也找得到，不分大小寫");
+        let world = scan_matches(term.grid(), "world");
+        assert_eq!(world.len(), 1);
+        assert_eq!(world[0].len(), 2, "跨越折行：兩列各一段");
+        assert_eq!(scan_matches(term.grid(), "hello").len(), 2);
+        assert!(scan_matches(term.grid(), "").is_empty());
+        assert!(scan_matches(term.grid(), "nothing like this").is_empty());
+    }
+
+    #[test]
+    fn a_url_wrapped_over_two_rows_is_found_from_either_row() {
+        let term = term_with(20, 4, "go https://example.com/a/very/long/path ok\r\n");
+        let grid = term.grid();
+        let top = grid.topmost_line().0;
+        for line in [top, top + 1] {
+            let glyphs = logical_containing(grid, line);
+            let at = glyphs.iter().position(|g| g.line == line && g.c != ' ').expect("這一列有字");
+            let url = terminal_text::url_at(&glyphs, at).map(|x| x.2);
+            if line == top {
+                // 第一列最前面的 "go" 不是網址的一部分，找網址中間的字
+                let mid = glyphs.iter().position(|g| g.c == 'x').expect("example 的 x");
+                assert_eq!(terminal_text::url_at(&glyphs, mid).map(|x| x.2).as_deref(), Some("https://example.com/a/very/long/path"));
+            } else {
+                assert_eq!(url.as_deref(), Some("https://example.com/a/very/long/path"), "第二列也屬於同一個網址");
+            }
+        }
+    }
+
+    #[test]
+    fn search_steps_wrap_around_in_both_directions_and_ask_for_a_jump() {
+        let seg = |l: i32| vec![Segment { line: l, start_col: 0, end_col: 1 }];
+        let mut s = Search { matches: vec![seg(0), seg(1), seg(2)], ..Search::default() };
+        s.step(true); // 還沒選：往較早的從最後一筆開始
+        assert_eq!((s.current, s.jump), (Some(2), true));
+        s.jump = false;
+        s.step(true);
+        s.step(true);
+        assert_eq!(s.current, Some(0));
+        s.step(true);
+        assert_eq!(s.current, Some(2), "最早的再往前，繞到最新的");
+        s.step(false);
+        assert_eq!(s.current, Some(0), "最新的再往後，繞回最早的");
+        let mut empty = Search::default();
+        empty.step(true);
+        assert_eq!((empty.current, empty.jump), (None, false), "沒有符合項目就什麼都不做");
     }
 
     #[test]
