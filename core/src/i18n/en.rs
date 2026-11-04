@@ -279,6 +279,18 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("留空使用系統預設", "Leave empty for the system default"),
     ("安全界線", "Margin guide"),
     ("Tab 欄數", "Tab width"),
+    ("自動縮排", "Auto indent"),
+    ("按 Enter 時依語言縮排", "Indent by language on Enter"),
+    (
+        "行尾是左括號（Python 還有冒號）就多縮排一層，在一對括號之間按 Enter 會展開成三行，輸入右括號時自動少一層；關閉時只沿用上一行的縮排",
+        "A line ending in an opening bracket (or a colon in Python) indents the next line one more level, Enter between a pair of brackets opens three lines, and typing a closing bracket removes one level; when off, Enter only copies the previous line's indent",
+    ),
+    (
+        "排列格式：依檔案類型重排縮排並去掉行尾空白，JSON 重新排版（有選取只處理選到的行，否則整份文件）",
+        "Reformat: re-indent by file type and trim trailing whitespace; JSON is pretty-printed (selected lines only, or the whole document when nothing is selected)",
+    ),
+    ("沒有需要重排的內容", "Nothing to reformat"),
+    ("第 {} 行：indent 只能是 none、brace、python", "Line {}: indent must be none, brace or python"),
     ("用 FEditor 開啟", "Open with FEditor"),
     ("用 FEditor 選取檔案開啟…", "Pick files to open with FEditor..."),
     ("檔案總管", "File Explorer"),

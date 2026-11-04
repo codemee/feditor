@@ -63,4 +63,5 @@ The **interface language** is a three-state button in the settings panel: "Follo
   | `triple_quotes` / `backtick_strings` | Triple-quoted strings (Python) and backtick strings (JavaScript); they can span lines |
   | `interpolation` | Start and end of an embedded expression in a string, e.g. `${, }` (JavaScript), `#{, }` (Ruby), `{, }` (Python f-string) |
   | `interpolation_in` | Which strings contain embedded expressions, comma-separated: `backtick` (backtick strings), `double` (double-quoted strings), `fstring` (strings with an `f` or `$` prefix; `{{` is an escape). Default: `backtick, double` |
+  | `indent` | Indentation rule (used by auto indent on Enter and by Reformat): `none` (default; just copy the previous line's indent), `brace` (by `{ ( [` and `} ) ]`), `python` (a trailing `:` also opens a level) |
   | `mode` | `code` (default), `markup` (HTML/XML), `markdown`, `config` (`[section]` and `key =` in ini/toml) |

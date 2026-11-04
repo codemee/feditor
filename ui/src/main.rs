@@ -501,6 +501,10 @@ enum Action {
     ToggleRecord,
     /// 把 Tab 換成空白（`to_tabs` 為 false），或把行首縮排的空白換成 Tab。
     ConvertIndent { to_tabs: bool },
+    /// 排列格式：依語言重排縮排、去行尾空白（JSON 重新排版）。
+    Reformat,
+    /// 按 Enter 時依語言自動加深／減淺縮排。
+    SetAutoIndent(bool),
     OpenMacroDir,
     /// 開關跨檔搜尋面板。
     ToggleFolderSearch,
@@ -1158,6 +1162,7 @@ impl App {
         };
         feditor_core::motion::set_tab_width(self.settings.tab_width_for(language));
         feditor_core::motion::set_tab_uses_spaces(self.settings.tab_spaces);
+        feditor_core::motion::set_auto_indent(self.settings.auto_indent);
     }
 
     /// 作用中的是空白、沒存過、沒改過的文件：開新檔案時直接用掉它，不要多出一個空分頁。
@@ -1647,6 +1652,24 @@ impl App {
                     self.pending_editor_focus = true;
                 }
             }
+            Action::Reformat => {
+                if self.doc.terminal.is_none() {
+                    self.editor.clamp(&self.doc.buffer);
+                    if self.editor.command(&mut self.doc.buffer, "reformat") == Some(true) {
+                        self.doc.sync();
+                        self.find.invalidate();
+                    } else {
+                        self.push(LogKind::Info, t("沒有需要重排的內容").to_owned());
+                    }
+                    self.pending_editor_focus = true;
+                }
+            }
+            Action::SetAutoIndent(on) => {
+                if on != self.settings.auto_indent {
+                    self.settings.auto_indent = on;
+                    self.mark_settings_dirty();
+                }
+            }
             Action::OpenMacroDir => self.open_macro_dir(),
             Action::PaneTab(pane, cmd) => {
                 self.focus_pane(pane);
@@ -1807,6 +1830,9 @@ impl App {
             }
             if icons::button(ui, Icon::SpacesToTabs, t("把行首縮排的空白換成 Tab（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"), editable).clicked() {
                 action = Some(Action::ConvertIndent { to_tabs: true });
+            }
+            if icons::button(ui, Icon::Reformat, t("排列格式：依檔案類型重排縮排並去掉行尾空白，JSON 重新排版（有選取只處理選到的行，否則整份文件）"), editable).clicked() {
+                action = Some(Action::Reformat);
             }
 
             group_separator(ui);
@@ -2784,6 +2810,15 @@ impl App {
                     .on_hover_text(t("按 Tab 鍵與縮排時輸入空白，不輸入 Tab 字元（檔案裡原有的 Tab 不會被改）"));
                 if response.changed() {
                     action = Some(Action::SetTabSpaces(on));
+                }
+            });
+            form_row(ui, t("自動縮排"), |ui| {
+                let mut on = self.settings.auto_indent;
+                let response = ui
+                    .checkbox(&mut on, t("按 Enter 時依語言縮排"))
+                    .on_hover_text(t("行尾是左括號（Python 還有冒號）就多縮排一層，在一對括號之間按 Enter 會展開成三行，輸入右括號時自動少一層；關閉時只沿用上一行的縮排"));
+                if response.changed() {
+                    action = Some(Action::SetAutoIndent(on));
                 }
             });
             // 依檔案類型：第一列是新增的下拉清單，已設定的檔案類型各佔一列（列的高度一致，不會疊在一起）

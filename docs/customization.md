@@ -63,4 +63,5 @@
   | `triple_quotes`／`backtick_strings` | 三引號字串（Python）、反引號字串（JavaScript），可跨行 |
   | `interpolation` | 字串內嵌運算式的開頭與結尾，例如 `${, }`（JavaScript）、`#{, }`（Ruby）、`{, }`（Python f-string） |
   | `interpolation_in` | 哪些字串裡有內嵌運算式，逗號分隔：`backtick`（反引號字串）、`double`（雙引號字串）、`fstring`（帶 `f` 或 `$` 前綴的字串，`{{` 視為跳脫）。沒寫就是 `backtick, double` |
+  | `indent` | 縮排規則（Enter 自動縮排與排列格式用）：`none`（預設，只沿用上一行的縮排）、`brace`（依 `{ ( [` 與 `} ) ]`）、`python`（行尾 `:` 也開啟一層） |
   | `mode` | `code`（預設）、`markup`（HTML/XML）、`markdown`、`config`（ini／toml 的 `[區段]` 與「鍵 =」） |

@@ -198,6 +198,72 @@ impl EditorState {
         })
     }
 
+    /// 排列格式：依語言重新排好縮排並去掉行尾空白。有選取只處理選到的行，沒有就處理整份文件。
+    ///
+    /// - JSON：整個（或選到的行）能解析成 JSON 時完整重新排版（鍵順序保留）；解析不了就改用下一項。
+    /// - 用括號決定縮排的語言：依 `{ ( [` 的深度重算每一行的縮排（字串、註解裡的括號不算；
+    ///   多行字串與區塊註解裡面的行原樣不動）。深度永遠從文件開頭累計，所以只選一段也對得上。
+    /// - 其他語言（Python…）算不出層數：只去行尾空白，並把行首縮排換成目前設定的字元（欄位寬度不變）。
+    ///
+    /// 縮排字元跟隨「改用空白」與 Tab 欄寬。整件事是一個復原步驟；沒有任何變化回傳 `false`。
+    pub fn reformat(&mut self, buf: &mut Buffer) -> bool {
+        self.interrupt_composition();
+        let last_line = buf.line_count() - 1;
+        let (a, b) = if self.sel.is_empty() { (0, last_line) } else { self.selected_lines(buf) };
+        let all = Self::lines_text(buf, 0, last_line);
+        let old: Vec<String> = all[a..=b].to_vec();
+        let unit = super::indent::indent_unit();
+        let json = self.language.is_some_and(|l| l.name == "JSON");
+        let pretty = json.then(|| super::indent::json_pretty(&old.join("\n"), &unit)).flatten();
+        let new: Vec<String> = match pretty {
+            Some(text) => {
+                let base = super::indent::leading_ws(&old[0]);
+                let mut lines: Vec<String> = text.split('\n').map(|l| format!("{base}{l}")).collect();
+                if old.last().is_some_and(|l| l.is_empty()) && b == last_line && old.len() > 1 {
+                    lines.push(String::new()); // 檔尾原本的換行保留
+                }
+                lines
+            }
+            None => {
+                let how = super::indent::scan(self.language, &all);
+                (a..=b).map(|i| super::indent::format_line(&all[i], how[i], &unit)).collect()
+            }
+        };
+        if new == old {
+            return false;
+        }
+        let lead = |l: &str| l.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+        // 每一行的（舊行首, 新行首, 舊縮排長度, 新縮排長度, 新的行長）；行數不一樣（JSON）時用「第幾行」對應
+        let mut marks = Vec::with_capacity(old.len());
+        let mut new_start = buf.line_start(a);
+        for (i, line) in new.iter().enumerate() {
+            let (os, ol) = match old.get(i) {
+                Some(o) => (buf.line_start(a + i), lead(o)),
+                None => (usize::MAX, 0),
+            };
+            marks.push((os, new_start, ol, lead(line), line.chars().count()));
+            new_start += line.chars().count() + 1;
+        }
+        let old_end = Self::line_end(buf, b);
+        let new_end = buf.line_start(a) + new.join("\n").chars().count();
+        let map = move |p: usize| {
+            if p > old_end {
+                return (p as isize + new_end as isize - old_end as isize) as usize;
+            }
+            match marks.iter().rposition(|m| m.0 <= p) {
+                None => p,
+                Some(i) => {
+                    let (os, ns, ol, nl, len) = marks[i];
+                    let col = p - os;
+                    let col = if col < ol { col.min(nl) } else { col - ol + nl };
+                    (ns + col.min(len)).min(new_end)
+                }
+            }
+        };
+        self.rewrite_lines(buf, a, b, &new, map);
+        true
+    }
+
     /// 縮排一層（每個非空行行首加一個 Tab；設定成用空白取代 Tab 時，加一個 Tab 欄寬的空白）。
     pub fn indent_lines(&mut self, buf: &mut Buffer) -> bool {
         let indent = if motion::tab_uses_spaces() { " ".repeat(motion::tab_width()) } else { "\t".to_owned() };
@@ -454,5 +520,70 @@ mod tests {
         let (mut b, mut s) = setup("\n  \n", 0, 0);
         s.comment_prefix = "//";
         assert!(!s.toggle_comment(&mut b), "全是空行不動作");
+    }
+
+    /// 測試用：固定 Tab 設定（4 欄、用空白、自動縮排開），結束還原。
+    struct Tabs(usize, bool, bool);
+    impl Tabs {
+        fn set(width: usize, spaces: bool) -> Self {
+            Tabs(motion::set_tab_width(width), motion::set_tab_uses_spaces(spaces), motion::auto_indent())
+        }
+    }
+    impl Drop for Tabs {
+        fn drop(&mut self) {
+            motion::set_tab_width(self.0);
+            motion::set_tab_uses_spaces(self.1);
+            motion::set_auto_indent(self.2);
+        }
+    }
+
+    #[test]
+    fn reformat_fixes_the_whole_document_without_a_selection_in_one_undo_step() {
+        let _t = Tabs::set(4, true);
+        let (mut b, mut s) = setup("fn a() {\n  x();   \n      }\n", 12, 12);
+        s.language = crate::syntax::language_for_name("a.rs");
+        assert!(s.reformat(&mut b));
+        assert_eq!(b.text(), "fn a() {\n    x();\n}\n");
+        assert_eq!(s.sel, Selection::collapsed(14), "游標還在 x 的後面（縮排多了兩格）");
+        assert!(!s.reformat(&mut b), "已經排好了：沒有變化");
+        b.undo();
+        assert_eq!(b.text(), "fn a() {\n  x();   \n      }\n", "一個復原步驟");
+    }
+
+    #[test]
+    fn reformat_with_a_selection_only_touches_those_lines_but_counts_depth_from_the_top() {
+        let _t = Tabs::set(4, true);
+        let text = "fn a() {\n   if x {\n   y;\n   }\n   z;\n}";
+        // 選第 3、4 行（y; 與 }）：深度從文件開頭算，第 2 行（沒選）維持原樣
+        let start = text.find("   y;").unwrap();
+        let end = text.find("   z;").unwrap();
+        let (mut b, mut s) = setup(text, start, end);
+        s.language = crate::syntax::language_for_name("a.rs");
+        assert!(s.reformat(&mut b));
+        assert_eq!(b.text(), "fn a() {\n   if x {\n        y;\n    }\n   z;\n}");
+        assert_eq!(s.sel, Selection { anchor: start, head: end + 6 }, "選取跟著文字走（結束仍在下一行行首）");
+    }
+
+    #[test]
+    fn reformat_pretty_prints_json_and_falls_back_when_it_is_not_valid() {
+        let _t = Tabs::set(2, true);
+        let (mut b, mut s) = setup("{\"a\":[1,2],\"b\":{}}\n", 0, 0);
+        s.language = crate::syntax::language_for_name("a.json");
+        assert!(s.reformat(&mut b));
+        assert_eq!(b.text(), "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n");
+        // 有註解的 JSONC 解析不了：改用括號深度重排
+        let (mut b, mut s) = setup("{\n// c\n\"a\": 1\n}", 0, 0);
+        s.language = crate::syntax::language_for_name("a.json");
+        assert!(s.reformat(&mut b));
+        assert_eq!(b.text(), "{\n  // c\n  \"a\": 1\n}");
+    }
+
+    #[test]
+    fn reformat_uses_tabs_when_spaces_are_off() {
+        let _t = Tabs::set(4, false);
+        let (mut b, mut s) = setup("a {\nb;\n}", 0, 0);
+        s.language = crate::syntax::language_for_name("a.css");
+        assert!(s.reformat(&mut b));
+        assert_eq!(b.text(), "a {\n\tb;\n}");
     }
 }

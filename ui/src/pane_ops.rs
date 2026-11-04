@@ -950,6 +950,8 @@ fn show_pane_editor(
     editor.comment_prefix = resolved
         .and_then(|l| l.line_comment())
         .unwrap_or_else(|| language::comment_prefix(doc.path.as_deref()));
+    // 縮排規則看檔案類型，與「語法上色」開關無關
+    editor.language = resolved;
     let language = if options.syntax { resolved } else { None };
     EditorView {
         id: editor_id(pane),

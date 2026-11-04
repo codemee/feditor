@@ -169,6 +169,8 @@ pub struct Settings {
     pub tab_widths: std::collections::BTreeMap<String, u8>,
     /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
     pub tab_spaces: bool,
+    /// 按 Enter 時依語言自動加深／減淺縮排（預設開）。
+    pub auto_indent: bool,
     /// 在檔案總管（Windows）、Finder（macOS）的右鍵選單加入 FEditor。
     pub shell_menu: bool,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
@@ -200,6 +202,7 @@ impl Default for Settings {
             tab_width: DEFAULT_TAB_COLUMNS,
             tab_widths: Default::default(),
             tab_spaces: false,
+            auto_indent: true,
             shell_menu: false,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
@@ -293,6 +296,11 @@ impl Settings {
                         settings.tab_spaces = on;
                     }
                 }
+                "auto_indent" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.auto_indent = on;
+                    }
+                }
                 "terminal_font_size" => {
                     if let Ok(size) = value.parse::<f32>() {
                         settings.terminal_font_size =
@@ -361,6 +369,7 @@ impl Settings {
         text.push_str(&format!("font_size = {}\n", self.font_size));
         text.push_str(&format!("preview_font_size = {}\n", self.preview_font_size));
         text.push_str(&format!("tab_width = {}\ntab_spaces = {}\n", self.tab_width, self.tab_spaces));
+        text.push_str(&format!("auto_indent = {}\n", self.auto_indent));
         text.push_str(&format!("shell_menu = {}\n", self.shell_menu));
         for (name, width) in &self.tab_widths {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
@@ -612,6 +621,16 @@ mod tests {
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
         assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
+    #[test]
+    fn auto_indent_is_on_by_default_and_round_trips() {
+        assert!(Settings::default().auto_indent);
+        assert!(!Settings::parse("auto_indent = false").auto_indent);
+        assert!(Settings::parse("auto_indent = maybe").auto_indent, "看不懂就維持預設");
+        let mut s = Settings::default();
+        s.auto_indent = false;
+        assert!(!Settings::parse(&s.to_text()).auto_indent);
     }
 
     #[test]

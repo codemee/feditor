@@ -119,6 +119,9 @@ pub struct EditorState {
     pub swallow_ime: Option<(String, u8)>,
     /// 行註解符號（//、#…），空字串表示這種檔案沒有行註解。由檔案類型決定。
     pub comment_prefix: &'static str,
+    /// 這份文件的語言（決定 Enter 自動縮排、排列格式的規則）；沒有語言就只沿用上一行的縮排。
+    /// 由畫面每一幀依檔案類型設定。
+    pub language: Option<&'static crate::syntax::Language>,
     /// 自動換行的折行寬度（欄數）；None 表示不換行。由畫面每一幀更新，上下移動、Home、End
     /// 要依畫面上的「列」而不是文字的「行」。
     pub wrap_cols: Option<usize>,
@@ -441,6 +444,26 @@ impl EditorState {
         if text.is_empty() {
             return false;
         }
+        // 在只有空白的行首輸入閉括號：先減一層縮排（取代游標前的那一層空白）
+        if self.sel.is_empty()
+            && self.language.is_some()
+            && let Some(c) = text.chars().next().filter(|c| text.chars().count() == 1 && "})]".contains(*c))
+        {
+            let at = self.sel.head;
+            let (line, col) = Self::line_and_col(buf, at);
+            let before: String = buf.line_text(line).chars().take(col).collect();
+            let state = self.line_state(buf, line);
+            let remove = super::indent::closer_dedent(self.language, state, &before, c);
+            if remove > 0 {
+                buf.break_group();
+                buf.replace(at - remove..at, &text);
+                buf.break_group();
+                self.sel = Selection::collapsed(at - remove + 1);
+                self.goal_col = None;
+                self.scroll_to_caret = true;
+                return true;
+            }
+        }
         let start = if self.sel.is_empty() {
             let at = self.sel.head;
             buf.typed(at, &text);
@@ -478,19 +501,33 @@ impl EditorState {
         true
     }
 
+    /// 第 `line` 行開頭的語法跨行狀態（沒有語言就是一般狀態）。
+    pub(super) fn line_state(&mut self, buf: &Buffer, line: usize) -> crate::syntax::State {
+        match self.language {
+            Some(lang) => self.syntax_cache.state_at(lang, buf, line),
+            None => crate::syntax::State::Normal,
+        }
+    }
+
     /// Enter：換行，並沿用目前這一行開頭的縮排（空白與 Tab）。
+    /// 有語言的縮排規則時（見 `indent.rs`）：行尾是 `{ ( [`（Python 還有 `:`）就多縮排一層，
+    /// 游標在一對括號之間時展開成三行。
     pub fn enter(&mut self, buf: &mut Buffer) -> bool {
         if self.has_multi() {
             return self.multi_enter(buf);
         }
-        let (line, col) = Self::line_and_col(buf, self.sel.range().start);
-        let indent: String = buf
-            .line_text(line)
-            .chars()
-            .take(col)
-            .take_while(|c| *c == ' ' || *c == '\t')
-            .collect();
-        self.insert_text(buf, &format!("\n{indent}"))
+        let range = self.sel.range();
+        let (line, col) = Self::line_and_col(buf, range.start);
+        let before: String = buf.line_text(line).chars().take(col).collect();
+        let end_line = buf.line_of_char(range.end);
+        let after: String = buf.line_text(end_line).chars().skip(range.end - buf.line_start(end_line)).collect();
+        let state = self.line_state(buf, line);
+        let plan = super::indent::enter_plan(self.language, state, &before, &after);
+        if !self.insert_text(buf, &plan.text) {
+            return false;
+        }
+        self.sel = Selection::collapsed(range.start + plan.caret);
+        true
     }
 
     /// Tab：選取跨多行時整段縮排，否則插入一個 Tab；設定成用空白取代 Tab 時，改成插入空白補到下一個 Tab 位置
@@ -993,6 +1030,87 @@ mod tests {
         let (mut b, mut s) = setup("  |  foo");
         s.enter(&mut b);
         assert_eq!(show(&b, &s), "  \n  |  foo", "只複製游標前面的縮排");
+    }
+
+    /// 測試用：固定 Tab 與自動縮排設定，結束還原。
+    struct Cfg(usize, bool, bool);
+    impl Cfg {
+        fn set(width: usize, spaces: bool) -> Self {
+            Cfg(motion::set_tab_width(width), motion::set_tab_uses_spaces(spaces), motion::auto_indent())
+        }
+    }
+    impl Drop for Cfg {
+        fn drop(&mut self) {
+            motion::set_tab_width(self.0);
+            motion::set_tab_uses_spaces(self.1);
+            motion::set_auto_indent(self.2);
+        }
+    }
+
+    fn with_lang(text: &str, file: &str) -> (Buffer, EditorState) {
+        let (b, mut s) = setup(text);
+        s.language = crate::syntax::language_for_name(file);
+        (b, s)
+    }
+
+    #[test]
+    fn enter_after_an_opening_bracket_indents_and_between_brackets_opens_three_lines() {
+        let _c = Cfg::set(4, true);
+        let (mut b, mut s) = with_lang("fn f() {|", "a.rs");
+        s.enter(&mut b);
+        assert_eq!(show(&b, &s), "fn f() {\n    |");
+        let (mut b, mut s) = with_lang("  if x {|}", "a.rs");
+        s.enter(&mut b);
+        assert_eq!(show(&b, &s), "  if x {\n      |\n  }");
+        b.undo();
+        assert_eq!(b.text(), "  if x {}", "一個復原步驟");
+        let (mut b, mut s) = with_lang("def f():|", "a.py");
+        s.enter(&mut b);
+        assert_eq!(show(&b, &s), "def f():\n    |");
+        // 沒有語言：只沿用縮排
+        let (mut b, mut s) = setup("  a {|");
+        s.enter(&mut b);
+        assert_eq!(show(&b, &s), "  a {\n  |");
+        // 關掉自動縮排
+        motion::set_auto_indent(false);
+        let (mut b, mut s) = with_lang("fn f() {|", "a.rs");
+        s.enter(&mut b);
+        assert_eq!(show(&b, &s), "fn f() {\n|");
+    }
+
+    #[test]
+    fn typing_a_closer_at_the_start_of_a_blank_indented_line_dedents_it() {
+        let _c = Cfg::set(4, true);
+        let (mut b, mut s) = with_lang("fn f() {\n    |", "a.rs");
+        assert!(s.insert_text(&mut b, "}"));
+        assert_eq!(show(&b, &s), "fn f() {\n}|");
+        b.undo();
+        assert_eq!(b.text(), "fn f() {\n    ", "減縮排與輸入是同一步復原");
+        // 行上已有文字：不動
+        let (mut b, mut s) = with_lang("    x |", "a.rs");
+        s.insert_text(&mut b, "}");
+        assert_eq!(show(&b, &s), "    x }|");
+        // 沒有語言：不動
+        let (mut b, mut s) = setup("    |");
+        s.insert_text(&mut b, "}");
+        assert_eq!(show(&b, &s), "    }|");
+        // 貼上不減縮排
+        let (mut b, mut s) = with_lang("    |", "a.rs");
+        s.paste(&mut b, "}");
+        assert_eq!(show(&b, &s), "    }|");
+    }
+
+    #[test]
+    fn multi_caret_enter_indents_each_line_by_the_language() {
+        let _c = Cfg::set(2, true);
+        let mut s = EditorState::default();
+        s.language = crate::syntax::language_for_name("a.rs");
+        let mut b = Buffer::from_text("a {\n b {}\n");
+        s.sel = Selection::collapsed(3);
+        s.extra = vec![Selection::collapsed(8)];
+        s.multi_rev = b.revision();
+        assert!(s.enter(&mut b));
+        assert_eq!(b.text(), "a {\n  \n b {\n   }\n", "每個游標各自多縮排一層，不做三行展開");
     }
 
     #[test]

@@ -256,17 +256,20 @@ impl EditorState {
     }
 
     pub(super) fn multi_enter(&mut self, buf: &mut Buffer) -> bool {
+        let language = self.language;
+        let cache = std::cell::RefCell::new(crate::syntax::StateCache::default());
         self.edit_each(buf, |_, s, b| {
             let r = s.range();
             let line = b.line_of_char(r.start);
             let col = r.start - b.line_start(line);
-            let indent: String = b
-                .line_text(line)
-                .chars()
-                .take(col)
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .collect();
-            (r, format!("\n{indent}"))
+            let before: String = b.line_text(line).chars().take(col).collect();
+            let state = match language {
+                Some(l) => cache.borrow_mut().state_at(l, b, line),
+                None => crate::syntax::State::Normal,
+            };
+            // 多個游標時游標一律落在插入文字的最後，所以不做「一對括號之間展開成三行」，只取第一段
+            let plan = super::indent::enter_plan(language, state, &before, "");
+            (r, plan.text.chars().take(plan.caret).collect())
         })
     }
 

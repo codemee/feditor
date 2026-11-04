@@ -2,6 +2,12 @@
 
 # Changelog
 
+## Unreleased
+
+### Added
+- **Auto indent**: Enter indents by file type: a line ending in `{ ( [` (or `:` in Python) indents the next line one more level, Enter between a pair of brackets opens three lines, and typing `} ) ]` on a blank indented line removes one level; brackets in strings and comments are ignored. The indent characters follow "Spaces instead of Tab" and the Tab width. A new "Auto indent" switch in the settings panel's editing page (on by default); the settings file gains `auto_indent`. Custom language files gain `indent = none|brace|python`.
+- **Reformat**: a new "Reformat" toolbar button (`Alt+Shift+F` in the editor, `editor.run("reformat")` in macros). With a selection only the selected lines are processed, otherwise the whole document. It recomputes indentation from the bracket depth and trims trailing whitespace (lines inside multi-line strings and block comments are left alone); JSON is pretty-printed completely (key order kept); Python and other types with no depth rule only get trailing whitespace trimmed and indentation converted to the current setting.
+
 ## [0.5.1] - 2026-11-04
 
 ### Fixed

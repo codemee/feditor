@@ -1126,6 +1126,7 @@ fn key_command(key: Key, m: Modifiers, multi: bool) -> Option<&'static str> {
         Key::ArrowUp if m.alt => "moveLineUp",
         Key::ArrowDown if m.alt => "moveLineDown",
         Key::K if m.command && shift => "deleteLine",
+        Key::F if m.alt && shift && !m.command => "reformat",
         Key::Slash if m.command => "toggleComment",
         Key::OpenBracket if m.command => "unindent",
         Key::CloseBracket if m.command => "indent",

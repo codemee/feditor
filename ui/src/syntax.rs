@@ -88,8 +88,23 @@ enum Mode {
     Markdown,
 }
 
+/// 這個語言怎麼決定縮排（Enter 自動縮排、排列格式用）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum IndentStyle {
+    /// 沒有規則：只沿用上一行的縮排。
+    #[default]
+    None,
+    /// 用 `{ ( [` 與 `} ) ]` 決定縮排（C、Rust、JavaScript、Go、CSS、JSON…）。
+    Brace,
+    /// 行尾的 `:` 開啟一個縮排區塊（Python）。
+    Python,
+}
+
+#[derive(Debug)]
 pub struct Language {
     pub name: &'static str,
+    /// 縮排規則；自訂語言檔用 `indent = brace|python|none` 指定。
+    pub indent: IndentStyle,
     mode: Mode,
     line_comments: &'static [&'static str],
     block: Option<(&'static str, &'static str)>,
@@ -112,6 +127,7 @@ pub struct Language {
 const fn lang(name: &'static str) -> Language {
     Language {
         name,
+        indent: IndentStyle::None,
         mode: Mode::Code,
         line_comments: &[],
         block: None,
@@ -141,6 +157,7 @@ static RUST: Language = Language {
         "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
         "true", "type", "unsafe", "use", "where", "while",
     ],
+    indent: IndentStyle::Brace,
     ..lang("Rust")
 };
 
@@ -156,6 +173,7 @@ static C_LIKE: Language = Language {
         "sizeof", "static", "struct", "switch", "template", "this", "throw", "true", "try",
         "typedef", "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "while",
     ],
+    indent: IndentStyle::Brace,
     ..lang("C/C++")
 };
 
@@ -172,6 +190,7 @@ static JAVA_LIKE: Language = Language {
         "static", "string", "super", "switch", "this", "throw", "throws", "true", "try", "using",
         "var", "virtual", "void", "while", "yield",
     ],
+    indent: IndentStyle::Brace,
     ..lang("Java/C#")
 };
 
@@ -189,6 +208,7 @@ static JAVASCRIPT: Language = Language {
         "void", "while", "with", "yield",
     ],
     interp: Some(Interp { open: "${", close: "}", backtick: true, double: false, fstring: false }),
+    indent: IndentStyle::Brace,
     ..lang("JavaScript/TypeScript")
 };
 
@@ -203,6 +223,7 @@ static PYTHON: Language = Language {
         "try", "while", "with", "yield",
     ],
     interp: Some(Interp { open: "{", close: "}", backtick: false, double: false, fstring: true }),
+    indent: IndentStyle::Python,
     ..lang("Python")
 };
 
@@ -217,6 +238,7 @@ static GO: Language = Language {
         "package", "range", "return", "select", "struct", "switch", "true", "type", "var",
     ],
     capital_types: true,
+    indent: IndentStyle::Brace,
     ..lang("Go")
 };
 
@@ -247,6 +269,7 @@ static SQL: Language = Language {
 static CSS: Language = Language {
     block: SLASH_BLOCK,
     keywords: &["important"],
+    indent: IndentStyle::Brace,
     ..lang("CSS")
 };
 
@@ -263,6 +286,7 @@ static LUA: Language = Language {
 static JSON: Language = Language {
     quotes: &['"'],
     keywords: &["true", "false", "null"],
+    indent: IndentStyle::Brace,
     ..lang("JSON")
 };
 
@@ -333,6 +357,7 @@ fn parse_flag(key: &str, value: &str) -> Result<bool, String> {
 /// triple_quotes = false            # 三引號字串（Python）
 /// backtick_strings = false         # 反引號字串（JavaScript）
 /// mode = code                      # code／markup（HTML）／markdown／config（ini）
+/// indent = brace                   # 縮排規則：none／brace（{ ( [ ）／python（行尾 :）
 /// ```
 ///
 /// `#` 開頭的整行是註解；`keywords` 可以重複出現，內容會合併。
@@ -379,6 +404,12 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
             "interpolation_in" => {
                 interp_in = Some(split_list(value));
             }
+            "indent" => match value.to_ascii_lowercase().as_str() {
+                "none" => lang.indent = IndentStyle::None,
+                "brace" => lang.indent = IndentStyle::Brace,
+                "python" => lang.indent = IndentStyle::Python,
+                _ => return Err(tf!("第 {} 行：indent 只能是 none、brace、python", n + 1)),
+            },
             "capital_types" => lang.capital_types = parse_flag(key, value)?,
             "case_insensitive" => lang.case_insensitive = parse_flag(key, value)?,
             "triple_quotes" => lang.triple_quotes = parse_flag(key, value)?,

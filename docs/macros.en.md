@@ -42,7 +42,7 @@ editor.run("selectRight", 2);
 | `editor.alert(msg)` / `editor.confirm(msg)` | Dialogs; `confirm` returns whether "Yes" was pressed |
 | `console.log(...)` | Output |
 
-Editor commands (`editor.run`): `left` `right` `up` `down` `wordLeft` `wordRight` `pageUp` `pageDown` `home` `end` `docStart` `docEnd`, their `select`-prefixed variants (`selectLeft` ... `selectDocEnd`, `selectAll`); `backspace` `delete` `deleteWordLeft` `deleteWordRight` `enter` `tab` `shiftTab` `undo` `redo`; `moveLineUp` `moveLineDown` `duplicateLine` `deleteLine` `toggleComment` `indent` `unindent` `tabsToSpaces` `spacesToTabs`; `addCaretUp` `addCaretDown` `selectNextOccurrence` `clearCarets`. An unknown name throws an error.
+Editor commands (`editor.run`): `left` `right` `up` `down` `wordLeft` `wordRight` `pageUp` `pageDown` `home` `end` `docStart` `docEnd`, their `select`-prefixed variants (`selectLeft` ... `selectDocEnd`, `selectAll`); `backspace` `delete` `deleteWordLeft` `deleteWordRight` `enter` `tab` `shiftTab` `undo` `redo`; `moveLineUp` `moveLineDown` `duplicateLine` `deleteLine` `toggleComment` `indent` `unindent` `tabsToSpaces` `spacesToTabs` `reformat` (reformat); `addCaretUp` `addCaretDown` `selectNextOccurrence` `clearCarets`. An unknown name throws an error.
 
 - Positions are in **Unicode code points**, not JavaScript string UTF-16 units. `"😀".length` is 2, but `editor.length()` counts it as 1.
 - Positions must be non-negative integers; otherwise a `RangeError` is thrown.

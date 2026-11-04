@@ -21,6 +21,17 @@ pub const MAX_TAB_WIDTH: usize = 32;
 thread_local! {
     static TAB_WIDTH_CELL: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_TAB_WIDTH) };
     static TAB_SPACES_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static AUTO_INDENT_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// 按 Enter 時是不是依語言自動加深／減淺縮排（關閉時只沿用上一行的縮排）。
+pub fn auto_indent() -> bool {
+    AUTO_INDENT_CELL.get()
+}
+
+/// 設定自動縮排的開關，回傳原本的值。
+pub fn set_auto_indent(on: bool) -> bool {
+    AUTO_INDENT_CELL.replace(on)
 }
 
 /// 目前的 Tab 欄寬。
