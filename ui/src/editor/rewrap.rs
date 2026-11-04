@@ -169,14 +169,41 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
     }) else {
         return one();
     };
-    // 最外層的圓／方括號群組
-    let mut groups: Vec<(usize, usize)> = Vec::new();
+    // 越過界線的那組括號：先看最外層；對齊風格下它只有一個參數就沒有地方可以斷，
+    // 改看那個參數裡面越過界線的括號（`a.b(c(x, y))` 斷在 `c(` 那組）
+    let (mut from, mut to) = (0, chars.len());
+    let (open, close, args) = loop {
+        let Some((open, close)) = outer_groups(&chars, &kinds, from, to).into_iter().find(|&(op, cl)| op < k && cl >= k) else {
+            return one();
+        };
+        let args = split_args(&chars, &kinds, open, close);
+        if args.is_empty() {
+            return one();
+        }
+        if o.style == WrapStyle::Align && args.len() < 2 {
+            (from, to) = (open + 1, close);
+            continue;
+        }
+        break (open, close, args);
+    };
+    let head: String = chars[..=open].iter().collect();
+    let tail: String = chars[close..].iter().collect();
+    let head_w = width(&format!("{prefix}{head}"));
+    // 對齊風格要第一個參數接在開括號後面還裝得下；對齊的位置太靠右、或第一個參數就超過界線時，這組改用 hang
+    let first_fits = head_w + width(&args[0]) + 1 <= o.margin;
+    let align = o.style == WrapStyle::Align && head_w + 12 <= o.margin && first_fits;
+    if align { layout_align(lang, &args, &head, &tail, prefix, head_w, o) } else { layout_hang(lang, &args, &head, &tail, prefix, o) }
+}
+
+/// `chars[from..to]` 裡最外層的圓／方括號群組（開、關括號的位置）。
+fn outer_groups(chars: &[char], kinds: &[Kind], from: usize, to: usize) -> Vec<(usize, usize)> {
+    let mut groups = Vec::new();
     let (mut depth, mut open_at) = (0usize, 0usize);
-    for (j, &c) in chars.iter().enumerate() {
+    for j in from..to {
         if kinds[j] != Kind::Plain {
             continue;
         }
-        match c {
+        match chars[j] {
             '(' | '[' => {
                 if depth == 0 {
                     open_at = j;
@@ -192,10 +219,11 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
             _ => {}
         }
     }
-    let Some(&(open, close)) = groups.iter().find(|&&(op, cl)| op < k && cl >= k) else {
-        return one();
-    };
-    // 參數：括號內最外層的逗號分隔
+    groups
+}
+
+/// 括號內的參數：最外層的逗號分隔，去掉頭尾空白與空的（結尾逗號）。
+fn split_args(chars: &[char], kinds: &[Kind], open: usize, close: usize) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let (mut d, mut cur) = (0i32, String::new());
     for j in open + 1..close {
@@ -216,17 +244,7 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
     }
     args.push(cur.trim().to_owned());
     args.retain(|a| !a.is_empty());
-    if args.is_empty() {
-        return one();
-    }
-    let head: String = chars[..=open].iter().collect();
-    let tail: String = chars[close..].iter().collect();
-    let head_w = width(&format!("{prefix}{head}"));
-    let align = o.style == WrapStyle::Align && args.len() >= 2 && head_w + 12 <= o.margin;
-    if o.style == WrapStyle::Align && args.len() < 2 {
-        return one(); // 對齊風格下，只有一個參數沒有地方可以斷
-    }
-    if align { layout_align(lang, &args, &head, &tail, prefix, head_w, o) } else { layout_hang(lang, &args, &head, &tail, prefix, o) }
+    args
 }
 
 /// 每個參數一行，縮排一層，閉括號獨立一行。
@@ -381,6 +399,20 @@ mod tests {
         // 行尾有註解：維持原樣
         let c = "foo(aaaa, bbbb, cccc, dddd); // 很長的註解";
         assert_eq!(run("a.rs", c, &opts(20, WrapStyle::Hang, true)), c);
+    }
+
+    #[test]
+    fn align_breaks_the_inner_group_when_the_outer_one_has_a_single_argument() {
+        let text = "    reply_task = asyncio.create_task(process_voice(bytes(pcm_buffer), writer))";
+        // 界線 72：內層那組對齊得下
+        let got = run("a.py", text, &opts(72, WrapStyle::Align, false));
+        assert_eq!(
+            got,
+            "    reply_task = asyncio.create_task(process_voice(bytes(pcm_buffer),\n                                                   writer))"
+        );
+        // 界線 67：第一個參數接在開括號後面就超過界線，這組改成換行縮排
+        let got = run("a.py", text, &opts(67, WrapStyle::Align, true));
+        assert_eq!(got, "    reply_task = asyncio.create_task(process_voice(\n        bytes(pcm_buffer),\n        writer,\n    ))");
     }
 
     #[test]

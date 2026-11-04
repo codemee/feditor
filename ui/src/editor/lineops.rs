@@ -593,7 +593,7 @@ mod tests {
     #[test]
     fn reformat_joins_and_breaks_calls_by_the_safe_margin_in_one_undo_step() {
         let _t = Tabs::set(4, true);
-        let margin = motion::set_wrap_margin(Some(30));
+        let margin = motion::set_wrap_margin(Some(32));
         let text = "fn a() {\n    let v = foo(\n        1,\n        2,\n    );\n    let w = bar(first_argument, second_argument);\n}";
         let (mut b, mut s) = setup(text, 0, 0);
         s.language = crate::syntax::language_for_name("a.rs");
