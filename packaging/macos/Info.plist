@@ -24,6 +24,7 @@
     <string>public.app-category.developer-tools</string>
     <key>CFBundleDocumentTypes</key>
     <array>
+        <!-- 系統有定義文件類型（UTI）的文字類檔案 -->
         <dict>
             <key>CFBundleTypeName</key>
             <string>Text</string>
@@ -33,9 +34,92 @@
             <string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
+                <string>public.text</string>
                 <string>public.plain-text</string>
                 <string>public.source-code</string>
-                <string>public.data</string>
+                <string>public.script</string>
+                <string>public.json</string>
+                <string>public.xml</string>
+                <string>public.yaml</string>
+            </array>
+        </dict>
+        <!-- 系統沒有定義類型的（例如 .toml、.rs）要用副檔名。必須是獨立的一項：
+             跟 LSItemContentTypes 放在同一項，副檔名會被忽略 -->
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Text by extension</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>toml</string>
+                <string>rs</string>
+                <string>go</string>
+                <string>ts</string>
+                <string>tsx</string>
+                <string>jsx</string>
+                <string>mjs</string>
+                <string>cjs</string>
+                <string>vue</string>
+                <string>svelte</string>
+                <string>lock</string>
+                <string>yml</string>
+                <string>yaml</string>
+                <string>ini</string>
+                <string>cfg</string>
+                <string>conf</string>
+                <string>properties</string>
+                <string>env</string>
+                <string>csv</string>
+                <string>tsv</string>
+                <string>log</string>
+                <string>sql</string>
+                <string>sh</string>
+                <string>bash</string>
+                <string>zsh</string>
+                <string>fish</string>
+                <string>ps1</string>
+                <string>bat</string>
+                <string>cmd</string>
+                <string>lua</string>
+                <string>rb</string>
+                <string>pl</string>
+                <string>php</string>
+                <string>kt</string>
+                <string>kts</string>
+                <string>scala</string>
+                <string>swift</string>
+                <string>dart</string>
+                <string>zig</string>
+                <string>nim</string>
+                <string>hs</string>
+                <string>ml</string>
+                <string>ex</string>
+                <string>exs</string>
+                <string>erl</string>
+                <string>clj</string>
+                <string>cs</string>
+                <string>fs</string>
+                <string>vb</string>
+                <string>r</string>
+                <string>jl</string>
+                <string>tex</string>
+                <string>bib</string>
+                <string>rst</string>
+                <string>adoc</string>
+                <string>diff</string>
+                <string>patch</string>
+                <string>gitignore</string>
+                <string>gitattributes</string>
+                <string>editorconfig</string>
+                <string>dockerfile</string>
+                <string>makefile</string>
+                <string>cmake</string>
+                <string>gradle</string>
+                <string>proto</string>
+                <string>graphql</string>
             </array>
         </dict>
     </array>

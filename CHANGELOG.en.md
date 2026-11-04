@@ -2,6 +2,11 @@
 
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **macOS "Open With" missed `.toml`, `.json`, `.rs` and similar files**: only `public.data` and a few other types were declared, but the system ignores `public.data` and does not know types for extensions like `.toml`. The app now declares the system text types (text, source code, JSON, XML, YAML, script) and adds an explicit extension list for files without a defined type. Images, archives and the like no longer list FEditor.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added
