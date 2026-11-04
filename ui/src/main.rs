@@ -196,6 +196,9 @@ fn tight_buttons(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.x = BUTTON_GAP;
 }
 
+/// 設定面板左側的標籤（順序與 `settings_page` 的頁碼一致）。
+const SETTINGS_TABS: [&str; 5] = ["介面", "編輯區", "預覽", "終端機", "狀態列"];
+
 /// 設定面板的一個群組：兩欄的表單。所有群組的標籤欄一樣寬，控制項才會左緣對齊。
 fn settings_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id)
@@ -465,6 +468,8 @@ enum Action {
     /// 開始（或取消）等待使用者按下這支巨集的新快捷鍵。
     CaptureShortcut(usize),
     ToggleRecord,
+    /// 把 Tab 換成空白（`to_tabs` 為 false），或把行首縮排的空白換成 Tab。
+    ConvertIndent { to_tabs: bool },
     OpenMacroDir,
     /// 開關跨檔搜尋面板。
     ToggleFolderSearch,
@@ -1577,6 +1582,21 @@ impl App {
                 self.capturing_shortcut = if self.capturing_shortcut == Some(i) { None } else { Some(i) };
             }
             Action::ToggleRecord => self.toggle_record(),
+            Action::ConvertIndent { to_tabs } => {
+                if self.doc.terminal.is_none() {
+                    // 用作用中文件的檔案類型的 Tab 欄寬（apply_tab_settings 每個畫面都設好了）
+                    let name = if to_tabs { "spacesToTabs" } else { "tabsToSpaces" };
+                    self.editor.clamp(&self.doc.buffer);
+                    if self.editor.command(&mut self.doc.buffer, name) == Some(true) {
+                        self.doc.sync();
+                        self.find.invalidate();
+                    } else {
+                        let message = if to_tabs { t("沒有可以換成 Tab 的縮排空白") } else { t("沒有 Tab 需要換成空白") };
+                        self.push(LogKind::Info, message.to_owned());
+                    }
+                    self.pending_editor_focus = true;
+                }
+            }
             Action::OpenMacroDir => self.open_macro_dir(),
             Action::PaneTab(pane, cmd) => {
                 self.focus_pane(pane);
@@ -1714,6 +1734,17 @@ impl App {
             }
             if icons::button(ui, Icon::SaveAs, t("另存新檔 (Ctrl+Shift+S)"), true).clicked() {
                 action = Some(Action::SaveAs);
+            }
+
+            group_separator(ui);
+
+            // 轉換縮排：有選取只轉選到的行，沒有就轉整份文件；欄寬用這份文件的檔案類型的 Tab 欄數
+            let editable = self.doc.terminal.is_none();
+            if icons::button(ui, Icon::TabsToSpaces, t("把 Tab 換成空白（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"), editable).clicked() {
+                action = Some(Action::ConvertIndent { to_tabs: false });
+            }
+            if icons::button(ui, Icon::SpacesToTabs, t("把行首縮排的空白換成 Tab（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"), editable).clicked() {
+                action = Some(Action::ConvertIndent { to_tabs: true });
             }
 
             group_separator(ui);
@@ -2478,11 +2509,37 @@ impl App {
         action
     }
 
-    /// 設定面板：外觀、配色、字型、字級。
+    /// 設定面板：左邊一排標籤（介面、編輯區、預覽、終端機、狀態列），右邊是選到的那一頁。
     fn settings_panel(&self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
-        ui.set_min_width(340.0);
         no_hover_outline(ui);
+        let tab_id = ui.make_persistent_id("settings_tab");
+        let mut tab: usize = ui.data(|d| d.get_temp(tab_id)).unwrap_or(0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_min_width(76.0);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (i, name) in SETTINGS_TABS.iter().enumerate() {
+                    let label = t(name);
+                    if ui.add_sized([76.0, icons::BUTTON_HEIGHT], egui::Button::selectable(tab == i, label)).clicked() {
+                        tab = i;
+                    }
+                }
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                ui.set_min_width(340.0);
+                ui.set_min_height(300.0);
+                action = self.settings_page(ui, tab);
+            });
+        });
+        ui.data_mut(|d| d.insert_temp(tab_id, tab));
+        action
+    }
+
+    /// 設定面板的一頁：`tab` 是 [`SETTINGS_TABS`] 的索引。
+    fn settings_page(&self, ui: &mut egui::Ui, tab: usize) -> Option<Action> {
+        let mut action = None;
         // 掃描結果複製一份出來，避免整個繪製過程一直握著鎖
         let scan = self.font_scan.lock().ok().and_then(|guard| {
             guard
@@ -2491,6 +2548,7 @@ impl App {
         });
 
         // ── 介面 ──
+        if tab == 0 {
         group_title(ui, t("介面"));
         settings_grid(ui, "settings_ui", |ui| {
             // 介面語言：三態狀態鈕（跟隨系統＝地球、中文＝「中」、英文＝「En」），旁邊寫出目前的選擇。
@@ -2550,8 +2608,8 @@ impl App {
                 }
             });
         });
-        group_gap(ui);
-
+        }
+        if tab == 1 {
         // ── 編輯區 ──
         group_title(ui, t("編輯區"));
         settings_grid(ui, "settings_editor", |ui| {
@@ -2644,43 +2702,40 @@ impl App {
                     action = Some(Action::SetTabSpaces(on));
                 }
             });
+            // 依檔案類型：第一列是新增的下拉清單，已設定的檔案類型各佔一列（列的高度一致，不會疊在一起）
+            let overrides: Vec<(String, u8)> = self.settings.tab_widths.iter().map(|(n, w)| (n.clone(), *w)).collect();
             form_row(ui, t("依檔案類型"), |ui| {
-                ui.vertical(|ui| {
-                    let overrides: Vec<(String, u8)> = self.settings.tab_widths.iter().map(|(n, w)| (n.clone(), *w)).collect();
-                    for (name, width) in &overrides {
-                        ui.horizontal(|ui| {
-                            ui.label(name);
-                            let mut w = *width;
-                            if ui
-                                .add(egui::DragValue::new(&mut w).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
-                                .changed()
-                            {
-                                action = Some(Action::SetLanguageTabWidth(name.clone(), Some(w)));
-                            }
-                            unit_label(ui, t("欄"));
-                            if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
-                                action = Some(Action::SetLanguageTabWidth(name.clone(), None));
-                            }
-                        });
-                    }
-                    egui::ComboBox::from_id_salt("tab_width_add")
-                        .icon(icons::combo_chevron)
-                        .width(200.0)
-                        .selected_text(t("新增檔案類型…"))
-                        .show_ui(ui, |ui| {
-                            flat_list(ui, |ui| {
-                                for lang in syntax::all_languages() {
-                                    if !overrides.iter().any(|(n, _)| n == lang.name) && ui.selectable_label(false, lang.name).clicked() {
-                                        action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), Some(self.settings.tab_width)));
-                                    }
+                egui::ComboBox::from_id_salt("tab_width_add")
+                    .icon(icons::combo_chevron)
+                    .width(200.0)
+                    .selected_text(t("新增檔案類型…"))
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            for lang in syntax::all_languages() {
+                                if !overrides.iter().any(|(n, _)| n == lang.name) && ui.selectable_label(false, lang.name).clicked() {
+                                    action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), Some(self.settings.tab_width)));
                                 }
-                            })
+                            }
                         })
-                        .response
-                        .on_hover_text(t("替某個檔案類型（語法上色的語言）設定自己的 Tab 欄數"));
-                });
+                    })
+                    .response
+                    .on_hover_text(t("替某個檔案類型（語法上色的語言）設定自己的 Tab 欄數"));
             });
-
+            for (name, width) in &overrides {
+                form_row(ui, name, |ui| {
+                    let mut w = *width;
+                    if ui
+                        .add(egui::DragValue::new(&mut w).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
+                        .changed()
+                    {
+                        action = Some(Action::SetLanguageTabWidth(name.clone(), Some(w)));
+                    }
+                    unit_label(ui, t("欄"));
+                    if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
+                        action = Some(Action::SetLanguageTabWidth(name.clone(), None));
+                    }
+                });
+            }
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -2719,8 +2774,8 @@ impl App {
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
-        group_gap(ui);
-
+        }
+        if tab == 2 {
         // ── 預覽 ──
         group_title(ui, t("預覽"));
         settings_grid(ui, "settings_preview", |ui| {
@@ -2744,8 +2799,8 @@ impl App {
                 }
             });
         });
-        group_gap(ui);
-
+        }
+        if tab == 3 {
         // ── 終端機 ──
         group_title(ui, t("終端機"));
         settings_grid(ui, "settings_terminal", |ui| {
@@ -2814,8 +2869,8 @@ impl App {
                 }
             });
         });
-        group_gap(ui);
-
+        }
+        if tab == 4 {
         // ── 狀態列 ──
         group_title(ui, t("狀態列"));
         settings_grid(ui, "settings_status", |ui| {
@@ -2838,6 +2893,7 @@ impl App {
                     .on_hover_text(t("狀態列「行、欄」的欄號算法：1 是一個字一欄（多數編輯器），2 是和畫面寬度一致"));
             });
         });
+        }
         action
     }
 

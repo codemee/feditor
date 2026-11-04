@@ -153,6 +153,51 @@ impl EditorState {
         true
     }
 
+    /// 轉換空白字元：有選取就只轉選到的行，沒有就轉整份文件。`edit` 把一行轉成新的一行；
+    /// 游標與選取位置依「那個位置之前的文字轉換後有多長」搬到對應的位置。
+    fn convert_whitespace(&mut self, buf: &mut Buffer, edit: impl Fn(&str) -> String) -> bool {
+        self.interrupt_composition();
+        let (a, b) = if self.sel.is_empty() { (0, buf.line_count() - 1) } else { self.selected_lines(buf) };
+        let old = Self::lines_text(buf, a, b);
+        let new: Vec<String> = old.iter().map(|l| edit(l)).collect();
+        if new == old {
+            return false;
+        }
+        // 每一行的（舊行首, 新行首）
+        let mut marks = Vec::with_capacity(old.len());
+        let mut new_start = buf.line_start(a);
+        for (i, line) in new.iter().enumerate() {
+            marks.push((buf.line_start(a + i), new_start));
+            new_start += line.chars().count() + 1;
+        }
+        let map = |p: usize| {
+            let Some(i) = marks.iter().rposition(|m| m.0 <= p) else {
+                return p;
+            };
+            let prefix: String = old[i].chars().take(p - marks[i].0).collect();
+            marks[i].1 + edit(&prefix).chars().count()
+        };
+        self.rewrite_lines(buf, a, b, &new, map);
+        true
+    }
+
+    /// 把 Tab 換成空白（依目前的 Tab 欄寬補到下一個 Tab 位置）：有選取只轉選到的行，否則整份文件。
+    pub fn tabs_to_spaces(&mut self, buf: &mut Buffer) -> bool {
+        self.convert_whitespace(buf, motion::expand_tabs)
+    }
+
+    /// 把行首的縮排換成 Tab（每個 Tab 欄寬一個 Tab，不足一個的餘數留成空白）：有選取只轉選到的行，否則整份文件。
+    /// 只動行首的縮排；文字中間的空白是對齊用的，不會被換掉。
+    pub fn spaces_to_tabs(&mut self, buf: &mut Buffer) -> bool {
+        self.convert_whitespace(buf, |line| {
+            let lead = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+            let cols = motion::display_col(line, lead);
+            let width = motion::tab_width();
+            let rest: String = line.chars().skip(lead).collect();
+            format!("{}{}{rest}", "\t".repeat(cols / width), " ".repeat(cols % width))
+        })
+    }
+
     /// 縮排一層（每個非空行行首加一個 Tab；設定成用空白取代 Tab 時，加一個 Tab 欄寬的空白）。
     pub fn indent_lines(&mut self, buf: &mut Buffer) -> bool {
         let indent = if motion::tab_uses_spaces() { " ".repeat(motion::tab_width()) } else { "\t".to_owned() };
@@ -357,6 +402,33 @@ mod tests {
         assert_eq!(b.text(), "x");
         motion::set_tab_width(width);
         motion::set_tab_uses_spaces(spaces);
+    }
+
+    #[test]
+    fn tabs_and_leading_spaces_convert_by_the_tab_width() {
+        let width = motion::set_tab_width(4);
+        // 沒有選取：整份文件。Tab 補到下一個 Tab 位置（全形字佔兩欄）
+        let (mut b, mut s) = setup("\ta\tb\n  \t你\tc\nplain", 0, 0);
+        assert!(s.tabs_to_spaces(&mut b));
+        assert_eq!(b.text(), "    a   b\n    你  c\nplain");
+        assert!(!s.tabs_to_spaces(&mut b), "已經沒有 Tab：沒有動作");
+        // 空白換回 Tab：只動行首，餘數留成空白，行中間的空白不動
+        let (mut b, mut s) = setup("        x\n      y  z\n  w\n", 0, 0);
+        assert!(s.spaces_to_tabs(&mut b));
+        assert_eq!(b.text(), "\t\tx\n\t  y  z\n  w\n");
+        assert!(!s.spaces_to_tabs(&mut b), "已經是 Tab：沒有動作");
+        // 欄寬 2
+        motion::set_tab_width(2);
+        let (mut b, mut s) = setup("    a\n \tb", 0, 0);
+        assert!(s.spaces_to_tabs(&mut b));
+        assert_eq!(b.text(), "\t\ta\n\tb", "一個空白加一個 Tab 只到第 2 欄（Tab 補到下一個 Tab 位置），所以是一個 Tab");
+        // 有選取：只轉選到的行，游標跟著文字走
+        motion::set_tab_width(4);
+        let (mut b, mut s) = setup("\ta\n\tb\n\tc", 4, 5);
+        assert!(s.tabs_to_spaces(&mut b));
+        assert_eq!(b.text(), "\ta\n    b\n\tc");
+        assert_eq!(s.sel, Selection { anchor: 7, head: 8 }, "選取原本在第二行的 b 前後，現在還是 b 的前後");
+        motion::set_tab_width(width);
     }
 
     #[test]

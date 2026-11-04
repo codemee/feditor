@@ -14,7 +14,7 @@ pub const COMMANDS: &[&str] = &[
     "selectWordRight", "selectPageUp", "selectPageDown", "selectHome", "selectEnd",
     "selectDocStart", "selectDocEnd", "selectAll", "backspace", "delete", "deleteWordLeft",
     "deleteWordRight", "enter", "tab", "shiftTab", "undo", "redo", "moveLineUp", "moveLineDown",
-    "duplicateLine", "deleteLine", "toggleComment", "indent", "unindent", "addCaretUp",
+    "duplicateLine", "deleteLine", "toggleComment", "indent", "unindent", "tabsToSpaces", "spacesToTabs", "addCaretUp",
     "addCaretDown", "selectNextOccurrence", "clearCarets",
 ];
 
@@ -65,6 +65,8 @@ impl EditorState {
             "toggleComment" => self.toggle_comment(buf),
             "indent" => self.indent_lines(buf),
             "unindent" => self.unindent_lines(buf),
+            "tabsToSpaces" => self.tabs_to_spaces(buf),
+            "spacesToTabs" => self.spaces_to_tabs(buf),
             "addCaretUp" => self.add_caret_vertical(buf, true),
             "addCaretDown" => self.add_caret_vertical(buf, false),
             "selectNextOccurrence" => self.add_next_occurrence(buf),

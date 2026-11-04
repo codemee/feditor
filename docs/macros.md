@@ -42,7 +42,7 @@ editor.run("selectRight", 2);
 | `editor.alert(msg)`／`editor.confirm(msg)` | 對話框；`confirm` 回傳是否按了「是」 |
 | `console.log(...)` | 輸出 |
 
-編輯指令（`editor.run`）：`left` `right` `up` `down` `wordLeft` `wordRight` `pageUp` `pageDown` `home` `end` `docStart` `docEnd`，加上 `select` 前綴的選取版本（`selectLeft`…`selectDocEnd`、`selectAll`）；`backspace` `delete` `deleteWordLeft` `deleteWordRight` `enter` `tab` `shiftTab` `undo` `redo`；`moveLineUp` `moveLineDown` `duplicateLine` `deleteLine` `toggleComment` `indent` `unindent`；`addCaretUp` `addCaretDown` `selectNextOccurrence` `clearCarets`。不認得的名稱會丟出錯誤。
+編輯指令（`editor.run`）：`left` `right` `up` `down` `wordLeft` `wordRight` `pageUp` `pageDown` `home` `end` `docStart` `docEnd`，加上 `select` 前綴的選取版本（`selectLeft`…`selectDocEnd`、`selectAll`）；`backspace` `delete` `deleteWordLeft` `deleteWordRight` `enter` `tab` `shiftTab` `undo` `redo`；`moveLineUp` `moveLineDown` `duplicateLine` `deleteLine` `toggleComment` `indent` `unindent` `tabsToSpaces` `spacesToTabs`；`addCaretUp` `addCaretDown` `selectNextOccurrence` `clearCarets`。不認得的名稱會丟出錯誤。
 
 - 位置單位是 **Unicode 碼點**，不是 JavaScript 字串的 UTF-16 單位。`"😀".length` 是 2，但 `editor.length()` 只算 1。
 - 位置必須是非負整數，否則丟出 `RangeError`。
