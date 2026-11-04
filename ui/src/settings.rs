@@ -123,12 +123,14 @@ pub struct ViewOptions {
     pub word_wrap: bool,
     /// 依檔案類型做語法上色。
     pub syntax: bool,
-    /// 安全界線的欄數：在這一欄的右緣畫一條淺淺的垂直線，提醒一行不要寫過這個寬度；0 是不畫。
-    /// 欄數和畫面一致（中日韓全形字佔兩欄）。
+    /// 是否啟用安全界線：從 `ruler_column` 欄的右緣起，右邊的區域換成淡淡的顏色，提醒一行不要寫過這個寬度。
+    pub ruler: bool,
+    /// 安全界線的欄數（1 起算）。欄數和畫面一致（中日韓全形字佔兩欄）；沒啟用時也會記著。
     pub ruler_column: u16,
 }
 
-/// 安全界線欄數的上限。
+/// 安全界線欄數的範圍。
+pub const MIN_RULER_COLUMN: u16 = 1;
 pub const MAX_RULER_COLUMN: u16 = 500;
 /// 安全界線的預設欄數（常見的程式碼寬度）。
 pub const DEFAULT_RULER_COLUMN: u16 = 80;
@@ -141,6 +143,7 @@ impl Default for ViewOptions {
             highlight_line: true,
             word_wrap: false,
             syntax: true,
+            ruler: true,
             ruler_column: DEFAULT_RULER_COLUMN,
         }
     }
@@ -263,9 +266,13 @@ impl Settings {
                 }
                 "terminal_shell" => settings.terminal_shell = value.trim_matches('"').trim().to_owned(),
                 "ruler_column" => {
-                    // 讀不懂就忽略；太大的拉回上限，0 是關閉
+                    // 讀不懂就忽略；超出範圍的拉回範圍內。0 是舊版「不畫」的寫法：視為沒啟用，欄數留預設
                     if let Ok(n) = value.parse::<u32>() {
-                        settings.view.ruler_column = n.min(MAX_RULER_COLUMN as u32) as u16;
+                        if n == 0 {
+                            settings.view.ruler = false;
+                        } else {
+                            settings.view.ruler_column = n.clamp(MIN_RULER_COLUMN as u32, MAX_RULER_COLUMN as u32) as u16;
+                        }
                     }
                 }
                 "light_scheme" => settings.light_scheme = value.trim_matches('"').trim().to_owned(),
@@ -285,13 +292,14 @@ impl Settings {
                         settings.show_output = on;
                     }
                 }
-                key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap" | "syntax") => {
+                key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap" | "syntax" | "ruler") => {
                     let Some(on) = parse_bool(value) else { continue };
                     match key {
                         "show_whitespace" => settings.view.show_whitespace = on,
                         "show_line_numbers" => settings.view.show_line_numbers = on,
                         "highlight_line" => settings.view.highlight_line = on,
                         "syntax" => settings.view.syntax = on,
+                        "ruler" => settings.view.ruler = on,
                         _ => settings.view.word_wrap = on,
                     }
                 }
@@ -318,7 +326,7 @@ impl Settings {
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
             v.show_whitespace, v.show_line_numbers, v.highlight_line, v.word_wrap, v.syntax
         ));
-        text.push_str(&format!("ruler_column = {}\n", v.ruler_column));
+        text.push_str(&format!("ruler = {}\nruler_column = {}\n", v.ruler, v.ruler_column));
         text.push_str(&format!("show_output = {}\n", self.show_output));
         text.push_str(&format!("wide_cols = {}\n", self.wide_cols));
         text.push_str(&format!("language = {}\n", self.language.key()));
@@ -494,20 +502,26 @@ mod tests {
     }
 
     #[test]
-    fn the_ruler_column_defaults_to_80_is_clamped_and_round_trips() {
-        assert_eq!(Settings::default().view.ruler_column, DEFAULT_RULER_COLUMN);
-        assert_eq!(Settings::parse("ruler_column = 100").view.ruler_column, 100);
-        assert_eq!(Settings::parse("ruler_column = 0").view.ruler_column, 0, "0 是不畫");
+    fn the_margin_guide_is_on_by_default_with_80_columns_the_column_is_clamped_and_both_round_trip() {
+        let d = Settings::default().view;
+        assert_eq!((d.ruler, d.ruler_column), (true, DEFAULT_RULER_COLUMN));
+        let s = Settings::parse("ruler = false\nruler_column = 100\n").view;
+        assert_eq!((s.ruler, s.ruler_column), (false, 100), "沒啟用時欄數也記著");
         assert_eq!(Settings::parse("ruler_column = 99999").view.ruler_column, MAX_RULER_COLUMN);
-        assert_eq!(Settings::parse("ruler_column = -3").view.ruler_column, DEFAULT_RULER_COLUMN, "讀不懂就忽略，用預設");
+        assert_eq!(Settings::parse("ruler_column = -3").view.ruler_column, DEFAULT_RULER_COLUMN, "讀不懂就忽略");
         assert_eq!(Settings::parse("ruler_column = wide").view.ruler_column, DEFAULT_RULER_COLUMN);
+        assert_eq!(Settings::parse("ruler = maybe").view.ruler, true, "讀不懂就用預設");
+        // 舊版用 0 表示不畫：視為沒啟用，欄數留預設
+        let legacy = Settings::parse("ruler_column = 0").view;
+        assert_eq!((legacy.ruler, legacy.ruler_column), (false, DEFAULT_RULER_COLUMN));
         let mut s = Settings::default();
+        s.view.ruler = false;
         s.view.ruler_column = 72;
-        assert_eq!(Settings::parse(&s.to_text()).view.ruler_column, 72);
-        s.view.ruler_column = 0;
-        assert_eq!(Settings::parse(&s.to_text()).view.ruler_column, 0, "關閉也會記住，不會被預設蓋回去");
+        let back = Settings::parse(&s.to_text()).view;
+        assert_eq!((back.ruler, back.ruler_column), (false, 72), "關閉也會記住，欄數也留著");
+        s.view.ruler = true;
+        assert_eq!(Settings::parse(&s.to_text()).view.ruler, true);
     }
-
     #[test]
     fn terminal_settings_are_validated_and_round_trip() {
         let d = Settings::default();

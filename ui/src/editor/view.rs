@@ -361,7 +361,7 @@ fn row_of_caret(state: &EditorState, buffer: &Buffer, line: usize, col: usize, k
 }
 
 /// 空白字元的標記：空格畫小點、Tab 畫箭頭、全形空白畫小方框，行尾畫換行符號。
-/// 安全界線的水平位置：`column` 欄（0 是不畫）文字的右緣，文字區的左邊是 `text_left`。
+/// 安全界線的水平位置（換色區域的左緣）：`column` 欄（至少 1）文字的右緣，文字區的左邊是 `text_left`。
 fn ruler_x(column: u16, text_left: f32, char_w: f32) -> Option<f32> {
     (column > 0).then(|| text_left + column as f32 * char_w)
 }
@@ -733,17 +733,19 @@ impl EditorView<'_> {
                 let find_color = ui.visuals().warn_fg_color.gamma_multiply(0.35);
                 let faint = ui.visuals().weak_text_color().gamma_multiply(0.6);
 
-                // 安全界線：第 N 欄的右緣畫一條淺淺的垂直線（畫在文字底下，不擋字）。
-                // 只在文字區裡才畫（捲到左邊看不到的、或被行號區蓋住的不畫）
-                if let Some(x) = ruler_x(options.ruler_column, text_left, char_w) {
-                    if x > visible.left() + metrics.gutter_w && x < visible.right() {
-                        painter.line_segment(
-                            [pos2(x, visible.top()), pos2(x, visible.bottom())],
-                            Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.3)),
+                // 安全界線：第 N 欄右緣的右邊整塊換一個淡淡的顏色（畫在文字底下，不擋字），
+                // 一行寫過界線，那一段字就落在換色的區域裡。
+                // 只畫在文字區裡：界線被捲到左邊看不到、或被行號區蓋住時，換色的範圍從文字區的左緣算起
+                if let Some(x) = options.ruler.then(|| ruler_x(options.ruler_column, text_left, char_w)).flatten() {
+                    let left = x.max(visible.left() + metrics.gutter_w);
+                    if left < visible.right() {
+                        painter.rect_filled(
+                            Rect::from_min_max(pos2(left, visible.top()), pos2(visible.right(), visible.bottom())),
+                            0.0,
+                            ui.visuals().weak_text_color().gamma_multiply(0.12),
                         );
                     }
                 }
-
                 for layout in &layouts {
                     let y = origin.y + layout.row as f32 * row_h;
                     if y + row_h < visible.top() || y > visible.bottom() {

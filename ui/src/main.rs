@@ -297,6 +297,12 @@ fn aligned_panel_frame(style: &egui::Style) -> egui::Frame {
     frame.inner_margin(egui::Margin { left: side, right: side, top: m.top, bottom: m.bottom })
 }
 
+/// 設定面板裡數字欄位旁邊的單位（pt、欄…）。單位寫在輸入欄位的外面，輸入欄位裡只有數字，
+/// 使用者就不會混淆「要不要連單位一起輸入」。
+fn unit_label(ui: &mut egui::Ui, unit: &str) {
+    ui.label(egui::RichText::new(unit).color(ui.visuals().weak_text_color()));
+}
+
 /// 工具列的群組分隔線：只畫一小段，比按鈕 hover 時的底色還矮。
 /// （`ui.separator()` 在橫向排列裡會撐滿整列高度，看起來太長。）
 fn group_separator(ui: &mut egui::Ui) {
@@ -2552,35 +2558,31 @@ impl App {
             // 字級：與快捷鍵共用同一個設定值，所以兩邊永遠同步
             form_row(ui, t("字級"), |ui| {
                 let mut size = self.settings.font_size;
-                let response = ui.add(
-                    egui::DragValue::new(&mut size)
-                        .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
-                        .speed(0.1)
-                        .max_decimals(1)
-                        .suffix(" pt"),
-                );
+                let response = ui.add(egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1));
+                unit_label(ui, "pt");
                 if response.changed() {
                     action = Some(Action::SetFontSize(size));
                 }
             });
 
-            // 安全界線：在這一欄的右緣畫一條淺淺的垂直線；0 是不畫
+            // 安全界線：勾選啟用，再設定從第幾欄起換色；單位寫在輸入欄位的外面，欄位裡只有數字
             form_row(ui, t("安全界線"), |ui| {
                 let v = self.settings.view;
+                let mut on = v.ruler;
                 let mut column = v.ruler_column;
-                let response = ui
-                    .add(
-                        egui::DragValue::new(&mut column)
-                            .range(0..=settings::MAX_RULER_COLUMN)
-                            .speed(0.5)
-                            .custom_formatter(|n, _| if n < 0.5 { t("不畫界線").to_owned() } else { tf!("{n} 欄", n = n as u32) }),
+                let toggled = ui.add(egui::Checkbox::without_text(&mut on)).on_hover_text(t("啟用安全界線")).changed();
+                let dragged = ui
+                    .add_enabled(
+                        on,
+                        egui::DragValue::new(&mut column).range(settings::MIN_RULER_COLUMN..=settings::MAX_RULER_COLUMN).speed(0.5),
                     )
-                    .on_hover_text(t("在編輯區的這一欄畫一條淺淺的垂直線，提醒一行不要寫得比它寬（全形字算兩欄）；拉到 0 就不畫"));
-                if response.changed() {
-                    action = Some(Action::SetView(settings::ViewOptions { ruler_column: column, ..v }));
+                    .on_hover_text(t("從這一欄的右緣起，右邊的區域換成淡淡的顏色，提醒一行不要寫得比它寬（全形字算兩欄）"))
+                    .changed();
+                unit_label(ui, t("欄"));
+                if toggled || dragged {
+                    action = Some(Action::SetView(settings::ViewOptions { ruler: on, ruler_column: column, ..v }));
                 }
             });
-
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -2637,13 +2639,8 @@ impl App {
             // 預覽字級：點在預覽窗格上時，縮放快捷鍵調的也是它，所以兩邊永遠同步
             form_row(ui, t("預覽字級"), |ui| {
                 let mut size = self.settings.preview_font_size;
-                let response = ui.add(
-                    egui::DragValue::new(&mut size)
-                        .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
-                        .speed(0.1)
-                        .max_decimals(1)
-                        .suffix(" pt"),
-                );
+                let response = ui.add(egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1));
+                unit_label(ui, "pt");
                 if response.changed() {
                     action = Some(Action::SetPreviewFontSize(size));
                 }
@@ -2657,9 +2654,8 @@ impl App {
             // 終端機字級：點在終端機上時，縮放快捷鍵調的也是它
             form_row(ui, t("終端機字級"), |ui| {
                 let mut size = self.settings.terminal_font_size;
-                let response = ui.add(
-                    egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1).suffix(" pt"),
-                );
+                let response = ui.add(egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1));
+                unit_label(ui, "pt");
                 if response.changed() {
                     action = Some(Action::SetTerminalFontSize(size));
                 }
@@ -2667,14 +2663,9 @@ impl App {
             form_row(ui, t("最低對比度"), |ui| {
                 let mut ratio = self.settings.terminal_min_contrast;
                 let response = ui
-                    .add(
-                        egui::DragValue::new(&mut ratio)
-                            .range(MIN_TERMINAL_CONTRAST..=MAX_TERMINAL_CONTRAST)
-                            .speed(0.05)
-                            .max_decimals(1)
-                            .custom_formatter(|v, _| if v <= 1.0 { t("不調整").to_owned() } else { format!("{v:.1} : 1") }),
-                    )
+                    .add(egui::DragValue::new(&mut ratio).range(MIN_TERMINAL_CONTRAST..=MAX_TERMINAL_CONTRAST).speed(0.05).max_decimals(1))
                     .on_hover_text(t("終端機文字和底色的對比低於這個值時，自動把文字調整到看得清楚；拉到最小就是不調整"));
+                unit_label(ui, if ratio <= MIN_TERMINAL_CONTRAST { t("（不調整）") } else { ": 1" });
                 if response.changed() {
                     action = Some(Action::SetTerminalMinContrast(ratio));
                 }
@@ -4046,19 +4037,20 @@ mod tests {
     }
 
     #[test]
-    fn the_ruler_column_is_a_view_option_changed_through_set_view() {
+    fn the_margin_guide_is_switched_on_and_off_and_its_column_is_kept_through_set_view() {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
-        assert_eq!(app.settings.view.ruler_column, settings::DEFAULT_RULER_COLUMN);
-        let view = settings::ViewOptions { ruler_column: 72, ..app.settings.view };
-        app.handle(Action::SetView(view), &ctx);
+        let d = app.settings.view;
+        assert_eq!((d.ruler, d.ruler_column), (true, settings::DEFAULT_RULER_COLUMN));
+        app.handle(Action::SetView(settings::ViewOptions { ruler_column: 72, ..d }), &ctx);
         assert_eq!(app.settings.view.ruler_column, 72);
-        let off = settings::ViewOptions { ruler_column: 0, ..app.settings.view };
-        app.handle(Action::SetView(off), &ctx);
-        assert_eq!(app.settings.view.ruler_column, 0);
-        assert!(app.settings.view.word_wrap == settings::ViewOptions::default().word_wrap, "其他的顯示選項不受影響");
+        app.handle(Action::SetView(settings::ViewOptions { ruler: false, ..app.settings.view }), &ctx);
+        let v = app.settings.view;
+        assert_eq!((v.ruler, v.ruler_column), (false, 72), "沒啟用時欄數還在");
+        app.handle(Action::SetView(settings::ViewOptions { ruler: true, ..v }), &ctx);
+        assert_eq!(app.settings.view.ruler_column, 72, "再勾選回來還是原本的欄數");
+        assert_eq!(app.settings.view.word_wrap, d.word_wrap, "其他的顯示選項不受影響");
     }
-
     #[test]
     fn the_plain_terminal_button_uses_the_default_shell_and_the_dropdown_picks_another_one_for_that_terminal_only() {
         let mut app = App::new(None, Settings::default());
