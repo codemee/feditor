@@ -30,6 +30,8 @@ mod terminal_pane;
 mod terminal_text;
 mod shell_icons;
 mod watcher;
+#[cfg(windows)]
+mod win_icon;
 mod theme;
 
 use document::{Document, SaveDocError};
@@ -3397,6 +3399,10 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // Windows：視窗出現後把 exe 的圖示設成工作列用的大圖示（只做一次）
+        #[cfg(windows)]
+        win_icon::apply_once();
 
         if !self.startup_paths.is_empty() {
             let paths = std::mem::take(&mut self.startup_paths);

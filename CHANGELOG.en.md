@@ -2,6 +2,11 @@
 
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Windows taskbar icon**: the taskbar button showed the generic blank-window icon. Once the window appears, the icon embedded in the exe is now explicitly set as both the large and the small window icon (sized for the screen scaling).
+
 ## [0.4.0] - 2026-11-04
 
 ### Added
