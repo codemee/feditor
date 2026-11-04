@@ -2,10 +2,14 @@
 
 # Changelog
 
-## [0.3.0] - 2026-11-04
+## Unreleased
 
 ### Added
 - **File Explorer / Finder context menu integration**: a new "Add to the context menu" switch on the "Interface" page of the settings panel. Files gain "Open with FEditor" and folders (including the empty space inside) gain "Pick files to open with FEditor..." (the open dialog starting in that folder). On Windows it is written to the current user's registry without administrator rights; on macOS two Finder Quick Actions are generated. The entries are refreshed at startup when the program moves or the language changes. The command line now accepts several paths (files or folders) at once.
+
+## [0.3.0] - 2026-11-04
+
+### Added
 - **Settings panel with tabs on the left**: Interface, Editor, Preview, Terminal and Status bar each get a page instead of one long scrolling list; the "Per file type" list no longer overlaps the items below it.
 - **Indentation conversion tools**: two new toolbar buttons, "Tabs to spaces" and "Indentation spaces to Tabs", convert by the Tab width; with a selection only the selected lines are converted, otherwise the whole document, and spaces to Tabs only touches leading indentation. Macros gain the editor commands `tabsToSpaces` and `spacesToTabs`.
 - **Tab width and spaces instead of Tabs**: the "Editor" group of the settings panel gains "Tab width" (4 by default), "Per file type" (give one file type its own width; types without one use the default) and "Use spaces" under "Typing Tab" (shared by every file type). With spaces on, the Tab key pads up to the next tab stop and multi-line indent adds a Tab width of spaces; Tabs already in a file are left alone. Each editor pane lays out by its own document's file type, and word wrap and the horizontal scroll range are recomputed when the width changes. The settings file gains `tab_width`, `tab_width.<language>` and `tab_spaces`.
