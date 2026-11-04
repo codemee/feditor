@@ -223,7 +223,7 @@ fn tight_buttons(ui: &mut egui::Ui) {
 }
 
 /// 設定面板左側的標籤（順序與 `settings_page` 的頁碼一致）。
-const SETTINGS_TABS: [&str; 5] = ["介面", "編輯區", "預覽", "終端機", "狀態列"];
+const SETTINGS_TABS: [&str; 6] = ["介面", "編輯區", "檔案類型", "預覽", "終端機", "狀態列"];
 
 /// 設定面板每一頁至少這麼寬（內容更寬的頁面會把全部的頁面一起撐寬）。
 const SETTINGS_PAGE_MIN_WIDTH: f32 = 420.0;
@@ -2848,86 +2848,6 @@ impl App {
                     action = Some(Action::SetAutoIndent(on));
                 }
             });
-            // 依檔案類型：第一列是新增的下拉清單，已設定的檔案類型各佔一列（列的高度一致，不會疊在一起）
-            let overrides: Vec<(String, u8)> = self.settings.tab_widths.iter().map(|(n, w)| (n.clone(), *w)).collect();
-            form_row(ui, t("依檔案類型"), |ui| {
-                egui::ComboBox::from_id_salt("tab_width_add")
-                    .icon(icons::combo_chevron)
-                    .width(200.0)
-                    .selected_text(t("新增檔案類型…"))
-                    .show_ui(ui, |ui| {
-                        flat_list(ui, |ui| {
-                            for lang in syntax::all_languages() {
-                                if !overrides.iter().any(|(n, _)| n == lang.name) && ui.selectable_label(false, lang.name).clicked() {
-                                    action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), Some(self.settings.tab_width)));
-                                }
-                            }
-                        })
-                    })
-                    .response
-                    .on_hover_text(t("替某個檔案類型（語法上色的語言）設定自己的 Tab 欄數"));
-            });
-            for (name, width) in &overrides {
-                form_row(ui, name, |ui| {
-                    let mut w = *width;
-                    if ui
-                        .add(egui::DragValue::new(&mut w).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
-                        .changed()
-                    {
-                        action = Some(Action::SetLanguageTabWidth(name.clone(), Some(w)));
-                    }
-                    unit_label(ui, t("欄"));
-                    if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
-                        action = Some(Action::SetLanguageTabWidth(name.clone(), None));
-                    }
-                });
-            }
-            // 排列格式的括號內斷行風格：和上面的 Tab 欄數一樣，依檔案類型個別指定；沒指定的用語言本身的預設
-            let wrap_overrides: Vec<(String, syntax::WrapStyle)> = self.settings.wrap_styles.iter().map(|(n, s)| (n.clone(), *s)).collect();
-            let wrap_label = |style: syntax::WrapStyle| match style {
-                syntax::WrapStyle::Align => t("對齊第一個參數"),
-                syntax::WrapStyle::Hang => t("換行後縮排"),
-            };
-            form_row(ui, t("換行風格"), |ui| {
-                egui::ComboBox::from_id_salt("wrap_style_add")
-                    .icon(icons::combo_chevron)
-                    .width(200.0)
-                    .selected_text(t("新增檔案類型…"))
-                    .show_ui(ui, |ui| {
-                        flat_list(ui, |ui| {
-                            for lang in syntax::all_languages() {
-                                if lang.indent != syntax::IndentStyle::None
-                                    && !wrap_overrides.iter().any(|(n, _)| n == lang.name)
-                                    && ui.selectable_label(false, lang.name).clicked()
-                                {
-                                    action = Some(Action::SetLanguageWrapStyle(lang.name.to_owned(), Some(lang.wrap)));
-                                }
-                            }
-                        })
-                    })
-                    .response
-                    .on_hover_text(t("排列格式在括號內斷行時，下一行怎麼排：對齊第一個參數，或換行後縮排一層（只列出有縮排規則的檔案類型）"));
-            });
-            for (name, style) in &wrap_overrides {
-                form_row(ui, name, |ui| {
-                    egui::ComboBox::from_id_salt(("wrap_style", name))
-                        .icon(icons::combo_chevron)
-                        .width(200.0)
-                        .selected_text(wrap_label(*style))
-                        .show_ui(ui, |ui| {
-                            flat_list(ui, |ui| {
-                                for choice in [syntax::WrapStyle::Align, syntax::WrapStyle::Hang] {
-                                    if ui.selectable_label(*style == choice, wrap_label(choice)).clicked() {
-                                        action = Some(Action::SetLanguageWrapStyle(name.clone(), Some(choice)));
-                                    }
-                                }
-                            })
-                        });
-                    if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
-                        action = Some(Action::SetLanguageWrapStyle(name.clone(), None));
-                    }
-                });
-            }
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -2968,6 +2888,107 @@ impl App {
         );
         }
         if tab == 2 {
+        // ── 檔案類型：用下拉清單選一個檔案類型，只設定這一個類型的 Tab 欄數與換行風格 ──
+        group_title(ui, t("檔案類型"));
+        let langs = syntax::all_languages();
+        let pick_id = ui.make_persistent_id("settings_file_type");
+        let active_name = if self.doc.terminal.is_some() {
+            None
+        } else {
+            syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).map(|l| l.name)
+        };
+        // 預設選目前這份文件的檔案類型
+        let chosen: String = ui
+            .data(|d| d.get_temp::<String>(pick_id))
+            .filter(|n| langs.iter().any(|l| l.name == n))
+            .or_else(|| active_name.map(str::to_owned))
+            .unwrap_or_else(|| langs[0].name.to_owned());
+        let lang = langs.iter().copied().find(|l| l.name == chosen).unwrap_or(langs[0]);
+        let customized = |name: &str| self.settings.tab_widths.contains_key(name) || self.settings.wrap_styles.contains_key(name);
+        let wrap_label = |style: syntax::WrapStyle| match style {
+            syntax::WrapStyle::Align => t("對齊第一個參數"),
+            syntax::WrapStyle::Hang => t("換行後縮排"),
+        };
+        settings_grid(ui, "settings_file_type", |ui| {
+            form_row(ui, t("檔案類型"), |ui| {
+                let shown = if customized(lang.name) { format!("● {}", lang.name) } else { lang.name.to_owned() };
+                egui::ComboBox::from_id_salt("settings_file_type_pick")
+                    .icon(icons::combo_chevron)
+                    .width(220.0)
+                    .height(320.0)
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            for l in &langs {
+                                let label = if customized(l.name) { format!("● {}", l.name) } else { l.name.to_owned() };
+                                if ui.selectable_label(l.name == lang.name, label).clicked() {
+                                    ui.data_mut(|d| d.insert_temp(pick_id, l.name.to_owned()));
+                                }
+                            }
+                        })
+                    })
+                    .response
+                    .on_hover_text(t("選一個檔案類型，下面設定只對這個類型有效；● 表示這個類型已經有個別設定"));
+            });
+            // Tab 欄數：沒有個別設定時顯示預設的欄數；改了就成為這個類型的個別設定
+            form_row(ui, t("Tab 欄數"), |ui| {
+                let custom = self.settings.tab_widths.get(lang.name).copied();
+                let mut width = custom.unwrap_or(self.settings.tab_width);
+                let response = ui
+                    .add(egui::DragValue::new(&mut width).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
+                    .on_hover_text(t("這個檔案類型一個 Tab 佔幾欄"));
+                unit_label(ui, t("欄"));
+                if response.changed() {
+                    action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), Some(width)));
+                }
+                if custom.is_some() {
+                    if icons::small_button(ui, Icon::Close, t("移除個別設定，改用「編輯區」的預設 Tab 欄數"), true).clicked() {
+                        action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), None));
+                    }
+                } else {
+                    ui.label(egui::RichText::new(t("（預設）")).color(ui.visuals().weak_text_color()));
+                }
+            });
+            // 縮排規則：語言本身的（自訂語言檔用 indent 指定），唯讀
+            form_row(ui, t("縮排規則"), |ui| {
+                let text = match lang.indent {
+                    syntax::IndentStyle::Brace => t("依括號決定"),
+                    syntax::IndentStyle::Python => t("依行尾冒號與括號決定"),
+                    syntax::IndentStyle::None => t("只沿用上一行的縮排"),
+                };
+                ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
+            });
+            // 換行風格：排列格式在括號內斷行時，下一行怎麼排。沒有縮排規則的類型用不到
+            form_row(ui, t("換行風格"), |ui| {
+                if lang.indent == syntax::IndentStyle::None {
+                    ui.label(egui::RichText::new(t("沒有縮排規則，不適用")).color(ui.visuals().weak_text_color()));
+                    return;
+                }
+                let custom = self.settings.wrap_styles.get(lang.name).copied();
+                let default_text = tf!("預設（{}）", wrap_label(lang.wrap));
+                let shown = custom.map_or_else(|| default_text.clone(), |s| wrap_label(s).to_owned());
+                egui::ComboBox::from_id_salt("settings_wrap_style")
+                    .icon(icons::combo_chevron)
+                    .width(220.0)
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            if ui.selectable_label(custom.is_none(), &default_text).clicked() {
+                                action = Some(Action::SetLanguageWrapStyle(lang.name.to_owned(), None));
+                            }
+                            for choice in [syntax::WrapStyle::Align, syntax::WrapStyle::Hang] {
+                                if ui.selectable_label(custom == Some(choice), wrap_label(choice)).clicked() {
+                                    action = Some(Action::SetLanguageWrapStyle(lang.name.to_owned(), Some(choice)));
+                                }
+                            }
+                        })
+                    })
+                    .response
+                    .on_hover_text(t("排列格式在括號內斷行時，下一行怎麼排：對齊第一個參數，或換行後縮排一層"));
+            });
+        });
+        }
+        if tab == 3 {
         // ── 預覽 ──
         group_title(ui, t("預覽"));
         settings_grid(ui, "settings_preview", |ui| {
@@ -2992,7 +3013,7 @@ impl App {
             });
         });
         }
-        if tab == 3 {
+        if tab == 4 {
         // ── 終端機 ──
         group_title(ui, t("終端機"));
         settings_grid(ui, "settings_terminal", |ui| {
@@ -3062,7 +3083,7 @@ impl App {
             });
         });
         }
-        if tab == 4 {
+        if tab == 5 {
         // ── 狀態列 ──
         group_title(ui, t("狀態列"));
         settings_grid(ui, "settings_status", |ui| {
