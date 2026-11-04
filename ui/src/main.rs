@@ -1677,8 +1677,8 @@ impl App {
 
             group_separator(ui);
 
-            let terminal_on = !self.terminal_tabs().is_empty();
-            if icons::toggle(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), terminal_on).clicked() {
+            // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式
+            if icons::button(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), true).clicked() {
                 action = Some(Action::NewTerminal);
             }
 

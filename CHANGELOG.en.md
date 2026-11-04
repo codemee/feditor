@@ -10,6 +10,7 @@
 - **Search inside the terminal**: press Ctrl+F (as in the editor; a full-screen program still gets it while it runs) while a terminal has the focus to open a search bar; it searches live, ignoring case and including the history scrolled out of view, highlights the matches, moves between them with Enter / Shift+Enter, and closes with Esc.
 
 ### Fixed
+- **The toolbar's terminal button no longer looks like a toggle**: it is an action button that adds a terminal, so it does not switch to the active style after being pressed and keeps the ordinary tool style.
 - **Terminal: pressing Ctrl (or Shift, Alt) alone sent Ctrl+C**: a modifier key by itself is also a key event, and the first letter of its name was mistaken for a Ctrl+letter (ControlLeft → Ctrl+C). Now only real letter keys are turned into control characters.
 
 ## [0.2.1] - 2026-11-03
