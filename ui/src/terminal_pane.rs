@@ -59,6 +59,8 @@ pub struct TerminalPane {
     error: Option<String>,
     /// shell 的起始資料夾。
     dir: Option<std::path::PathBuf>,
+    /// 開 shell 時要加上的環境變數（執行環境：虛擬環境的 `PATH` 等，見 `runtime_env::terminal_env`）。
+    env: Vec<(String, String)>,
     /// 這個終端機要執行的 shell（程式加參數）；空字串是系統預設。開的時候就決定了，之後改設定不影響已經開著的。
     shell: String,
     /// 下一個畫面要把鍵盤焦點給它。
@@ -187,6 +189,11 @@ impl std::fmt::Debug for TerminalPane {
 }
 
 impl TerminalPane {
+    /// 設定開 shell 時要加上的環境變數（要在 shell 還沒開之前呼叫）。
+    pub fn set_env(&mut self, env: Vec<(String, String)>) {
+        self.env = env;
+    }
+
     pub fn new(dir: Option<std::path::PathBuf>, number: usize, shell: String) -> Self {
         Self {
             uid: NEXT_UID.fetch_add(1, Ordering::Relaxed),
@@ -195,6 +202,7 @@ impl TerminalPane {
             term: None,
             error: None,
             dir,
+            env: Vec::new(),
             shell,
             want_focus: true,
             scroll_acc: 0.0,
@@ -319,7 +327,12 @@ impl App {
         }
         let dir = self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
         let shell = shell.unwrap_or_else(|| self.settings.terminal_shell.clone());
-        let doc = Document::new_terminal(lowest_free_number(numbers), dir.or_else(|| std::env::current_dir().ok()), shell);
+        let dir = dir.or_else(|| std::env::current_dir().ok());
+        let env = self.terminal_env(dir.as_deref());
+        let mut doc = Document::new_terminal(lowest_free_number(numbers), dir, shell);
+        if let Some(terminal) = doc.terminal.as_mut() {
+            terminal.set_env(env);
+        }
         self.open_tab_in_new_pane(target, PaneSide::Bottom, Tab { doc, editor: EditorState::default() });
     }
 
@@ -479,7 +492,7 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
 
         if pane.term.is_none() && pane.error.is_none() {
-            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell) {
+            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell, &pane.env) {
                 Ok(t) => pane.term = Some(t),
                 Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
             }

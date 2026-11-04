@@ -169,6 +169,9 @@ pub struct Settings {
     pub tab_widths: std::collections::BTreeMap<String, u8>,
     /// 依檔案類型指定括號內斷行的風格（排列格式用）。鍵是語言名稱；沒有的用語言本身的預設。
     pub wrap_styles: std::collections::BTreeMap<String, crate::syntax::WrapStyle>,
+    /// 手動選的執行環境：鍵是專案資料夾（[`crate::runtime_env::project_root`]），值是直譯器（[`crate::runtime_env::Candidate::key`]）。
+    /// 沒有的就自動搜尋。
+    pub runtime_choices: std::collections::BTreeMap<String, String>,
     /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
     pub tab_spaces: bool,
     /// 按 Enter 時依語言自動加深／減淺縮排（預設開）。
@@ -206,6 +209,7 @@ impl Default for Settings {
             tab_width: DEFAULT_TAB_COLUMNS,
             tab_widths: Default::default(),
             wrap_styles: Default::default(),
+            runtime_choices: Default::default(),
             tab_spaces: false,
             auto_indent: true,
             shell_menu: false,
@@ -295,6 +299,14 @@ impl Settings {
                     let name = key["tab_width.".len()..].trim();
                     if let (false, Ok(n)) = (name.is_empty(), value.parse::<u32>()) {
                         settings.tab_widths.insert(name.to_owned(), n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8);
+                    }
+                }
+                // runtime.專案資料夾 = 直譯器：這個專案手動選的執行環境
+                key if key.starts_with("runtime.") => {
+                    let project = key["runtime.".len()..].trim();
+                    let value = value.trim_matches('"').trim();
+                    if !project.is_empty() && !value.is_empty() {
+                        settings.runtime_choices.insert(project.to_owned(), value.to_owned());
                     }
                 }
                 // wrap_style.語言名稱 = align|hang：這個檔案類型括號內斷行的風格
@@ -399,6 +411,12 @@ impl Settings {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
             if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
                 text.push_str(&format!("tab_width.{name} = {width}\n"));
+            }
+        }
+        for (project, program) in &self.runtime_choices {
+            // 專案資料夾與直譯器都是單行文字；資料夾含等號會被當成鍵值的分隔，那種就不記
+            if !project.is_empty() && !project.contains(['\r', '\n', '=']) && !program.contains(['\r', '\n']) {
+                text.push_str(&format!("runtime.{project} = {program}\n"));
             }
         }
         for (name, style) in &self.wrap_styles {
@@ -650,6 +668,20 @@ mod tests {
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
         assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
+    #[test]
+    fn manual_runtime_choices_are_remembered_per_project() {
+        assert!(Settings::default().runtime_choices.is_empty());
+        let s = Settings::parse("runtime.C:\\code\\app = C:\\code\\app\\.venv\\Scripts\\python.exe\nruntime. = x\nruntime.empty =\n");
+        assert_eq!(s.runtime_choices.len(), 1);
+        assert_eq!(s.runtime_choices["C:\\code\\app"], "C:\\code\\app\\.venv\\Scripts\\python.exe");
+        let mut t = Settings::default();
+        t.runtime_choices.insert("/home/me/app".to_owned(), "/usr/bin/python3".to_owned());
+        t.runtime_choices.insert("bad=name".to_owned(), "x".to_owned());
+        let back = Settings::parse(&t.to_text());
+        assert_eq!(back.runtime_choices.get("/home/me/app").map(String::as_str), Some("/usr/bin/python3"));
+        assert!(back.runtime_choices.len() == 1, "含等號的資料夾不寫進設定檔");
     }
 
     #[test]

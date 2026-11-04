@@ -280,6 +280,11 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("安全界線", "Margin guide"),
     ("Tab 欄數", "Tab width"),
     ("全部不儲存", "Don't save any"),
+    ("執行環境（自動搜尋）。點一下可以改選別的直譯器", "Runtime environment (found automatically). Click to pick another interpreter"),
+    ("{} 執行環境", "{} environment"),
+    ("無法執行", "cannot run"),
+    ("重新搜尋", "Search again"),
+    ("{}：找不到", "{}: not found"),
     ("知道了", "OK"),
     ("已加入 feditor 指令", "feditor command added"),
     (

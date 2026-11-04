@@ -23,6 +23,7 @@ mod scheme;
 mod session;
 mod settings;
 mod cli_command;
+mod runtime_env;
 mod shell_integration;
 #[cfg(target_os = "macos")]
 mod macos_open;
@@ -455,6 +456,10 @@ enum Action {
     SetShellMenu(bool),
     /// 在 `~/.local/bin` 加入或移除 `feditor` 指令。
     SetCliCommand(bool),
+    /// 手動選這個專案（專案資料夾）用的執行環境；`None` 是回到自動搜尋。
+    SetRuntime(String, Option<String>),
+    /// 丟掉這個資料夾的搜尋結果重新搜尋。
+    RefreshRuntime(PathBuf),
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
@@ -639,6 +644,8 @@ struct App {
     shell_menu_backend: fn(bool, &shell_integration::Labels) -> Result<(), String>,
     /// 在 `~/.local/bin` 加入／移除 `feditor` 指令（測試時換成不碰系統的替身）。
     cli_backend: fn(bool) -> Result<(), String>,
+    /// 自動搜尋的執行環境（Python 的虛擬環境等）：背景搜尋與快取。
+    runtime: runtime_env::Resolver,
     allow_close: bool,
     /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
     modal: Option<Pending>,
@@ -709,6 +716,7 @@ impl App {
             incoming: None,
             shell_menu_backend: apply_shell_menu,
             cli_backend: cli_command::apply,
+            runtime: runtime_env::Resolver::default(),
             allow_close: false,
             modal: None,
             close_skipped: Vec::new(),
@@ -1171,6 +1179,15 @@ impl App {
         self.close_skipped.clear();
         self.allow_close = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// 開終端機時要加上的環境變數：`dir`（通常是檔案所在的資料夾）往上找得到專案的虛擬環境、
+    /// 或使用者替這個專案手動選了直譯器時，讓 shell 裡的 `python` 就是那個；否則不動環境。
+    pub(crate) fn terminal_env(&self, dir: Option<&std::path::Path>) -> Vec<(String, String)> {
+        let Some(dir) = dir else { return Vec::new() };
+        let project = runtime_env::project_root(dir).display().to_string();
+        let manual = self.settings.runtime_choices.get(&project).map(String::as_str);
+        runtime_env::terminal_env_here(&runtime_env::PYTHON, dir, manual)
     }
 
     /// 設定裡有開 feditor 指令時，把它更新成目前的執行檔位置（程式搬了位置也會跟上）。
@@ -1774,6 +1791,18 @@ impl App {
                     self.mark_settings_dirty();
                 }
             }
+            Action::SetRuntime(project, choice) => {
+                match choice {
+                    Some(program) => {
+                        self.settings.runtime_choices.insert(project, program);
+                    }
+                    None => {
+                        self.settings.runtime_choices.remove(&project);
+                    }
+                }
+                self.mark_settings_dirty();
+            }
+            Action::RefreshRuntime(dir) => self.runtime.forget_dir(&dir),
             Action::SetCliCommand(on) => {
                 if on != self.settings.cli_command {
                     match (self.cli_backend)(on) {
@@ -3513,6 +3542,51 @@ impl App {
                     .on_hover_text(t("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定"));
                 if let Some(choice) = picked {
                     self.doc.lang = choice;
+                }
+
+                // 執行環境（畫面上在語言的左邊）：有找環境規則的語言才顯示（目前是 Python）；點一下可以改選
+                if let (Some(lang), Some(file)) = (resolved, self.doc.path.as_deref())
+                    && let Some(rule) = runtime_env::rule_for(lang.name)
+                    && let Some(dir) = file.parent()
+                {
+                    let project = runtime_env::project_root(dir).display().to_string();
+                    let manual = self.settings.runtime_choices.get(&project).cloned();
+                    let found = self.runtime.get(ui.ctx(), rule, dir);
+                    let text = match &found {
+                        None => format!("{}…", rule.label),
+                        Some(r) => match r.chosen(manual.as_deref()) {
+                            Some(item) => format!("{} {} · {}", rule.label, item.version.as_deref().unwrap_or("?"), item.candidate.origin),
+                            None => tf!("{}：找不到", rule.label),
+                        },
+                    };
+                    let response = ui
+                        .add(egui::Label::new(text).sense(egui::Sense::click()))
+                        .on_hover_text(t("執行環境（自動搜尋）。點一下可以改選別的直譯器"));
+                    egui::Popup::menu(&response).show(|ui| {
+                        no_hover_outline(ui);
+                        ui.label(tf!("{} 執行環境", rule.label));
+                        if ui.selectable_label(manual.is_none(), t("自動")).clicked() {
+                            action = Some(Action::SetRuntime(project.clone(), None));
+                            ui.close();
+                        }
+                        for item in found.iter().flat_map(|r| r.items.iter()) {
+                            let c = &item.candidate;
+                            let label = match &item.version {
+                                Some(v) => format!("{} {} · {}  ({})", rule.label, v, c.origin, c.program.display()),
+                                None => format!("{}（{}）", c.program.display(), t("無法執行")),
+                            };
+                            let selected = manual.as_deref() == Some(c.key().as_str());
+                            if ui.add_enabled(item.version.is_some(), egui::Button::selectable(selected, label)).clicked() {
+                                action = Some(Action::SetRuntime(project.clone(), Some(c.key())));
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button(t("重新搜尋")).clicked() {
+                            action = Some(Action::RefreshRuntime(dir.to_path_buf()));
+                            ui.close();
+                        }
+                    });
                 }
 
                 // 游標位置（畫面上在語言的左邊）：行、欄都從 1 起算

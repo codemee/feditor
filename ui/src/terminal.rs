@@ -269,13 +269,22 @@ fn exists_in_path(exe: &str) -> bool {
 
 impl Terminal {
     /// 開一個 shell。`dir` 是起始資料夾；`cell` 是一格的大小（點），只用來告訴 shell 像素尺寸。
-    pub fn spawn(ctx: &egui::Context, size: GridSize, cell: (u16, u16), dir: Option<PathBuf>, custom_shell: &str) -> std::io::Result<Self> {
+    pub fn spawn(
+        ctx: &egui::Context,
+        size: GridSize,
+        cell: (u16, u16),
+        dir: Option<PathBuf>,
+        custom_shell: &str,
+        extra_env: &[(String, String)],
+    ) -> std::io::Result<Self> {
         let shell = resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path);
+        let mut env = HashMap::from([("TERM".to_owned(), "xterm-256color".to_owned()), ("COLORTERM".to_owned(), "truecolor".to_owned())]);
+        env.extend(extra_env.iter().cloned()); // 執行環境（虛擬環境的 PATH 等）
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program, shell.args)),
             working_directory: dir.filter(|d| d.is_dir()),
             drain_on_exit: true,
-            env: HashMap::from([("TERM".to_owned(), "xterm-256color".to_owned()), ("COLORTERM".to_owned(), "truecolor".to_owned())]),
+            env,
             #[cfg(target_os = "windows")]
             escape_args: false,
         };
@@ -659,7 +668,7 @@ mod tests {
     fn a_real_shell_runs_a_command_and_its_output_reaches_the_grid() {
         let ctx = egui::Context::default();
         let size = GridSize { cols: 80, lines: 24 };
-        let mut t = Terminal::spawn(&ctx, size, (8, 16), None, "").expect("開不了 shell");
+        let mut t = Terminal::spawn(&ctx, size, (8, 16), None, "", &[]).expect("開不了 shell");
         let command: &[u8] = if cfg!(windows) { b"echo feditor-terminal-ok\r\n" } else { b"echo feditor-terminal-ok\n" };
         t.write(command);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
