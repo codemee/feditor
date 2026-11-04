@@ -452,6 +452,8 @@ enum Action {
     SetShellMenu(bool),
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
+    /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
+    SetLanguageWrapStyle(String, Option<syntax::WrapStyle>),
     SetTerminalFontSize(f32),
     SetTerminalMinContrast(f32),
     SetTerminalShell(String),
@@ -916,14 +918,19 @@ impl App {
 
     /// 對作用中的文件顯示「要儲存嗎？」對話框；答案由 [`App::resolve_modal`] 處理。
     fn ask_save(&mut self, then: Then, before: &str) {
+        self.ask_save_with(then, before, false);
+    }
+
+    /// 同 [`App::ask_save`]；`discard_all` 時多一個「全部不儲存」鈕（關閉視窗而且還有別的文件也沒存）。
+    fn ask_save_with(&mut self, then: Then, before: &str, discard_all: bool) {
         let spec = modal::Spec::new(
             t("尚未儲存"),
             tf!("「{}」有尚未儲存的修改。要在{}之前儲存嗎？", self.doc.name(), before),
         )
         .button(t("儲存"), modal::Answer::Yes)
-        .button(t("不儲存"), modal::Answer::No)
-        .button(t("取消"), modal::Answer::Cancel);
-        self.modal = Some(Pending::new(spec, then));
+        .button(t("不儲存"), modal::Answer::No);
+        let spec = if discard_all { spec.button(t("全部不儲存"), modal::Answer::NoToAll) } else { spec };
+        self.modal = Some(Pending::new(spec.button(t("取消"), modal::Answer::Cancel), then));
     }
 
     /// 錄製結束：請使用者為巨集命名（預設名稱不與現有的重複）。`text`／`error` 用在輸入有誤、重新詢問時。
@@ -1108,6 +1115,8 @@ impl App {
                 match answer {
                     Yes if self.save() => {}
                     No => self.close_skipped.push((self.layout.focus, self.tabs.active())),
+                    // 全部不儲存：剩下的也都不問了，直接關
+                    modal::Answer::NoToAll => return self.close_now(ctx),
                     _ => return, // 取消，或儲存失敗／另存新檔被取消：不關了
                 }
                 self.next_close_prompt(ctx);
@@ -1132,16 +1141,21 @@ impl App {
         let next = self.all_dirty().into_iter().find(|k| !self.close_skipped.contains(k));
         match next {
             Some((pane, i)) => {
+                // 除了這一份，還有別的還沒問過的：多給一個「全部不儲存」
+                let remaining = self.all_dirty().into_iter().filter(|k| !self.close_skipped.contains(k)).count();
                 self.focus_pane(pane);
                 self.switch_tab(i);
-                self.ask_save(Then::CloseWindow, t("關閉"));
+                self.ask_save_with(Then::CloseWindow, t("關閉"), remaining > 1);
             }
-            None => {
-                self.close_skipped.clear();
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+            None => self.close_now(ctx),
         }
+    }
+
+    /// 真的關閉視窗（不再詢問）。
+    fn close_now(&mut self, ctx: &egui::Context) {
+        self.close_skipped.clear();
+        self.allow_close = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     /// 設定裡有開右鍵選單時，把它更新成目前的執行檔位置與介面語言（程式搬了位置、換了語言都會跟上）。
@@ -1760,6 +1774,17 @@ impl App {
                     }
                     None => {
                         self.settings.tab_widths.remove(&name);
+                    }
+                }
+                self.mark_settings_dirty();
+            }
+            Action::SetLanguageWrapStyle(name, style) => {
+                match style {
+                    Some(s) => {
+                        self.settings.wrap_styles.insert(name, s);
+                    }
+                    None => {
+                        self.settings.wrap_styles.remove(&name);
                     }
                 }
                 self.mark_settings_dirty();
@@ -2854,6 +2879,52 @@ impl App {
                     unit_label(ui, t("欄"));
                     if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
                         action = Some(Action::SetLanguageTabWidth(name.clone(), None));
+                    }
+                });
+            }
+            // 排列格式的括號內斷行風格：和上面的 Tab 欄數一樣，依檔案類型個別指定；沒指定的用語言本身的預設
+            let wrap_overrides: Vec<(String, syntax::WrapStyle)> = self.settings.wrap_styles.iter().map(|(n, s)| (n.clone(), *s)).collect();
+            let wrap_label = |style: syntax::WrapStyle| match style {
+                syntax::WrapStyle::Align => t("對齊第一個參數"),
+                syntax::WrapStyle::Hang => t("換行後縮排"),
+            };
+            form_row(ui, t("換行風格"), |ui| {
+                egui::ComboBox::from_id_salt("wrap_style_add")
+                    .icon(icons::combo_chevron)
+                    .width(200.0)
+                    .selected_text(t("新增檔案類型…"))
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            for lang in syntax::all_languages() {
+                                if lang.indent != syntax::IndentStyle::None
+                                    && !wrap_overrides.iter().any(|(n, _)| n == lang.name)
+                                    && ui.selectable_label(false, lang.name).clicked()
+                                {
+                                    action = Some(Action::SetLanguageWrapStyle(lang.name.to_owned(), Some(lang.wrap)));
+                                }
+                            }
+                        })
+                    })
+                    .response
+                    .on_hover_text(t("排列格式在括號內斷行時，下一行怎麼排：對齊第一個參數，或換行後縮排一層（只列出有縮排規則的檔案類型）"));
+            });
+            for (name, style) in &wrap_overrides {
+                form_row(ui, name, |ui| {
+                    egui::ComboBox::from_id_salt(("wrap_style", name))
+                        .icon(icons::combo_chevron)
+                        .width(200.0)
+                        .selected_text(wrap_label(*style))
+                        .show_ui(ui, |ui| {
+                            flat_list(ui, |ui| {
+                                for choice in [syntax::WrapStyle::Align, syntax::WrapStyle::Hang] {
+                                    if ui.selectable_label(*style == choice, wrap_label(choice)).clicked() {
+                                        action = Some(Action::SetLanguageWrapStyle(name.clone(), Some(choice)));
+                                    }
+                                }
+                            })
+                        });
+                    if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
+                        action = Some(Action::SetLanguageWrapStyle(name.clone(), None));
                     }
                 });
             }
@@ -4001,6 +4072,39 @@ mod tests {
     }
 
     #[test]
+    fn closing_with_several_unsaved_documents_offers_discard_all() {
+        let (mut app, _dir) = app_with_two_files();
+        let ctx = egui::Context::default();
+        let has_discard_all = |app: &App| {
+            app.modal.as_ref().expect("要先問").spec.buttons.iter().any(|(_, a)| *a == modal::Answer::NoToAll)
+        };
+        // 只有一份沒存：沒有「全部不儲存」
+        app.doc.buffer.insert(0, "x");
+        assert!(app.doc.sync());
+        app.next_close_prompt(&ctx);
+        assert!(!has_discard_all(&app), "只剩一份時不需要");
+        app.modal = None;
+        // 兩份都沒存：有；選了之後直接關，不再問第二份
+        app.switch_tab(0);
+        app.doc.buffer.insert(0, "y");
+        assert!(app.doc.sync());
+        assert_eq!(app.all_dirty().len(), 2);
+        app.close_skipped.clear();
+        app.next_close_prompt(&ctx);
+        assert!(has_discard_all(&app));
+        let Pending { then, .. } = app.modal.take().unwrap();
+        app.resolve_modal(then, modal::Answer::NoToAll, None, &ctx);
+        assert!(app.allow_close && app.modal.is_none(), "直接關閉");
+        // 先選「不儲存」略過第一份之後，剩下最後一份：同樣沒有「全部不儲存」
+        app.allow_close = false;
+        app.close_skipped.clear();
+        app.next_close_prompt(&ctx);
+        let Pending { then, .. } = app.modal.take().unwrap();
+        app.resolve_modal(then, modal::Answer::No, None, &ctx);
+        assert!(!has_discard_all(&app), "最後一份");
+    }
+
+    #[test]
     fn dirty_tabs_and_the_session_cover_every_pane() {
         let (mut app, dir) = app_with_two_files();
         let first = app.layout.focus;
@@ -4419,6 +4523,10 @@ mod tests {
         assert_eq!(width_after_opening(&mut app, &py), (4, true));
         assert_eq!(width_after_opening(&mut app, &txt), (8, true), "沒有個別設定的用預設的");
         // 拿掉個別設定就回到預設；範圍也會拉回
+        app.handle(Action::SetLanguageWrapStyle("Python".to_owned(), Some(syntax::WrapStyle::Hang)), &ctx);
+        assert_eq!(app.settings.wrap_style_for("Python"), Some(syntax::WrapStyle::Hang));
+        app.handle(Action::SetLanguageWrapStyle("Python".to_owned(), None), &ctx);
+        assert_eq!(app.settings.wrap_style_for("Python"), None, "移除之後用語言本身的預設");
         app.handle(Action::SetLanguageTabWidth("Rust".to_owned(), None), &ctx);
         assert!(!app.settings.tab_widths.contains_key("Rust"));
         app.handle(Action::SetTabWidth(200), &ctx);

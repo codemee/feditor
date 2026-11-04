@@ -12,6 +12,8 @@ use std::ops::Range;
 pub enum Answer {
     Yes,
     No,
+    /// 「全部都否」：關閉視窗時有好幾份未儲存的文件，一次都不儲存。
+    NoToAll,
     Cancel,
 }
 

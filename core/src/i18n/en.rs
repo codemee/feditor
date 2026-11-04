@@ -279,6 +279,14 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("留空使用系統預設", "Leave empty for the system default"),
     ("安全界線", "Margin guide"),
     ("Tab 欄數", "Tab width"),
+    ("全部不儲存", "Don't save any"),
+    ("換行風格", "Wrap style"),
+    ("對齊第一個參數", "Align with first argument"),
+    ("換行後縮排", "Break and indent"),
+    (
+        "排列格式在括號內斷行時，下一行怎麼排：對齊第一個參數，或換行後縮排一層（只列出有縮排規則的檔案類型）",
+        "How the next line lines up when Reformat breaks inside brackets: align with the first argument, or break and indent one level (only file types with an indent rule are listed)",
+    ),
     ("自動縮排", "Auto indent"),
     ("按 Enter 時依語言縮排", "Indent by language on Enter"),
     (
