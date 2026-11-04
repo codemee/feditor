@@ -9,7 +9,7 @@
 //! 都是不碰緩衝區的純函式；套用到緩衝區在 `lineops.rs` 的 `reformat`。
 
 use super::indent::{LineIndent, analyze, format_line, leading_ws, normalize_lead};
-use crate::syntax::{Kind, Language, State, WrapStyle, highlight_line};
+use crate::syntax::{IndentStyle, Kind, Language, State, WrapStyle, highlight_line};
 use feditor_core::motion;
 
 /// 斷行的參數。
@@ -28,13 +28,16 @@ fn width(s: &str) -> usize {
 }
 
 /// 掃一行：累計圓／方括號深度；遇到註解、或括號裡有 `{ }` 就標成「不能接合」。
-fn scan_line(chars: &[char], kinds: &[Kind], depth: &mut usize, bad: &mut bool) {
+fn scan_line(chars: &[char], kinds: &[Kind], depth: &mut usize, bad: &mut bool, curly: bool) {
     for (j, &c) in chars.iter().enumerate() {
         match kinds[j] {
             Kind::Comment => *bad = true,
             Kind::Plain => match c {
                 '(' | '[' => *depth += 1,
                 ')' | ']' => *depth = depth.saturating_sub(1),
+                // Python 的 { } 一定是字典或集合（資料），和括號一樣處理；其他語言括號裡的 { } 可能是程式區塊
+                '{' if curly => *depth += 1,
+                '}' if curly => *depth = depth.saturating_sub(1),
                 '{' | '}' if *depth > 0 => *bad = true,
                 _ => {}
             },
@@ -51,6 +54,7 @@ pub fn plan(lang: &Language, lines: &[String], a: usize, b: usize) -> Vec<(usize
     for l in &lines[..a] {
         state = highlight_line(lang, l, state).1;
     }
+    let curly = lang.indent == IndentStyle::Python;
     let mut out = Vec::new();
     let mut i = a;
     while i <= b {
@@ -59,7 +63,7 @@ pub fn plan(lang: &Language, lines: &[String], a: usize, b: usize) -> Vec<(usize
         state = end;
         let (mut depth, mut bad) = (0usize, false);
         if start_state == State::Normal {
-            scan_line(&chars, &kinds, &mut depth, &mut bad);
+            scan_line(&chars, &kinds, &mut depth, &mut bad, curly);
         }
         if start_state != State::Normal || depth == 0 {
             out.push((i, i));
@@ -77,7 +81,7 @@ pub fn plan(lang: &Language, lines: &[String], a: usize, b: usize) -> Vec<(usize
             if st != State::Normal || lines[j].trim().is_empty() {
                 bad = true;
             }
-            scan_line(&c2, &k2, &mut depth, &mut bad);
+            scan_line(&c2, &k2, &mut depth, &mut bad, curly);
             if depth == 0 {
                 closed = true;
                 break;
@@ -107,7 +111,7 @@ pub fn join_group(lang: &Language, lines: &[String]) -> String {
         if t.is_empty() {
             continue;
         }
-        if !(s.ends_with(['(', '[']) || t.starts_with([')', ']'])) {
+        if !(s.ends_with(['(', '[', '{']) || t.starts_with([')', ']', '}'])) {
             s.push(' ');
         }
         s.push_str(t);
@@ -171,9 +175,10 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
     };
     // 越過界線的那組括號：先看最外層；對齊風格下它只有一個參數就沒有地方可以斷，
     // 改看那個參數裡面越過界線的括號（`a.b(c(x, y))` 斷在 `c(` 那組）
-    let (mut from, mut to) = (0, chars.len());
+    // `{ }` 在 Python 一定是資料；其他語言只有在括號裡面才當成資料（頂層的 `{` 多半是程式區塊）
+    let (mut from, mut to, mut curly) = (0, chars.len(), lang.indent == IndentStyle::Python);
     let (open, close, args) = loop {
-        let Some((open, close)) = outer_groups(&chars, &kinds, from, to).into_iter().find(|&(op, cl)| op < k && cl >= k) else {
+        let Some((open, close)) = outer_groups(&chars, &kinds, from, to, curly).into_iter().find(|&(op, cl)| op < k && cl >= k) else {
             return one();
         };
         let args = split_args(&chars, &kinds, open, close);
@@ -181,7 +186,7 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
             return one();
         }
         if o.style == WrapStyle::Align && args.len() < 2 {
-            (from, to) = (open + 1, close);
+            (from, to, curly) = (open + 1, close, true);
             continue;
         }
         break (open, close, args);
@@ -196,7 +201,7 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
 }
 
 /// `chars[from..to]` 裡最外層的圓／方括號群組（開、關括號的位置）。
-fn outer_groups(chars: &[char], kinds: &[Kind], from: usize, to: usize) -> Vec<(usize, usize)> {
+fn outer_groups(chars: &[char], kinds: &[Kind], from: usize, to: usize, curly: bool) -> Vec<(usize, usize)> {
     let mut groups = Vec::new();
     let (mut depth, mut open_at) = (0usize, 0usize);
     for j in from..to {
@@ -209,6 +214,18 @@ fn outer_groups(chars: &[char], kinds: &[Kind], from: usize, to: usize) -> Vec<(
                     open_at = j;
                 }
                 depth += 1;
+            }
+            '{' if curly => {
+                if depth == 0 {
+                    open_at = j;
+                }
+                depth += 1;
+            }
+            '}' if curly && depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    groups.push((open_at, j));
+                }
             }
             ')' | ']' if depth > 0 => {
                 depth -= 1;
@@ -413,6 +430,21 @@ mod tests {
         // 界線 67：第一個參數接在開括號後面就超過界線，這組改成換行縮排
         let got = run("a.py", text, &opts(67, WrapStyle::Align, true));
         assert_eq!(got, "    reply_task = asyncio.create_task(process_voice(\n        bytes(pcm_buffer),\n        writer,\n    ))");
+    }
+
+    #[test]
+    fn dict_literals_in_python_and_braces_inside_brackets_can_be_broken() {
+        let line = "        history.append({\"role\": \"assistant\", \"content\": full_reply.strip()})";
+        let got = run("a.py", line, &opts(67, WrapStyle::Align, true));
+        assert_eq!(
+            got,
+            "        history.append({\"role\": \"assistant\",\n                        \"content\": full_reply.strip()})"
+        );
+        // 多行的字典能接回一行
+        assert_eq!(run("a.py", "d = {\n    \"a\": 1,\n    \"b\": 2,\n}", &opts(60, WrapStyle::Align, true)), "d = {\"a\": 1, \"b\": 2}");
+        // 其他語言：頂層的 { 是程式區塊，不動
+        let block = "if aaaaaaaa && bbbbbbbbbbb && cccccccccccc && dddddddddddd { x = 1, 2 }";
+        assert_eq!(run("a.rs", block, &opts(30, WrapStyle::Hang, true)), block);
     }
 
     #[test]
