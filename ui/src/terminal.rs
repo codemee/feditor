@@ -272,7 +272,11 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
         Space if mods.ctrl => vec![0],
         // Ctrl+字母：控制字元（Ctrl+C = 0x03…）。Ctrl+C／X／V 是複製、剪下、貼上，由呼叫端處理
         k if mods.ctrl && !mods.command_only_mac() => {
-            let c = k.name().chars().next().filter(char::is_ascii_alphabetic)?;
+            // 只有單一字母的鍵（A～Z）才有對應的控制字元。名字比較長的鍵（ControlLeft、ShiftLeft、AltLeft…，
+            // 單按修飾鍵本身也是一個按鍵事件）不能拿名字的第一個字母當字母用，否則單按 Ctrl 就變成 Ctrl+C
+            let name = k.name();
+            let mut letters = name.chars();
+            let c = letters.next().filter(char::is_ascii_alphabetic).filter(|_| letters.next().is_none())?;
             let byte = (c.to_ascii_uppercase() as u8) & 0x1f;
             if mods.alt { vec![0x1b, byte] } else { vec![byte] }
         }
@@ -375,6 +379,22 @@ mod tests {
         // 修飾鍵：Ctrl+→ 是 ESC [ 1 ; 5 C
         assert_eq!(enc(Key::ArrowRight, CTRL).as_deref(), Some("\x1b[1;5C"));
         assert_eq!(enc(Key::ArrowLeft, Modifiers::ALT).as_deref(), Some("\x1b[1;3D"));
+    }
+
+    #[test]
+    fn pressing_a_modifier_key_alone_sends_nothing() {
+        // 單按 Ctrl／Shift／Alt 本身也是按鍵事件（Key::ControlLeft…），名字的第一個字母不能被當成 Ctrl+字母
+        for key in [Key::ControlLeft, Key::ControlRight, Key::ShiftLeft, Key::ShiftRight, Key::AltLeft, Key::AltRight, Key::SuperLeft] {
+            let all = Modifiers { ctrl: true, shift: true, alt: true, ..Modifiers::NONE };
+            for mods in [CTRL, Modifiers::SHIFT, Modifiers::ALT, all] {
+                assert_eq!(encode_key(key, mods, TermMode::NONE), None, "{key:?} {mods:?}");
+            }
+        }
+        // 名字比較長的一般鍵也一樣：Copy／Cut／Paste 專用鍵不是 Ctrl+C／X／V
+        assert_eq!(encode_key(Key::Copy, CTRL, TermMode::NONE), None);
+        // 真的字母鍵不受影響
+        assert_eq!(encode_key(Key::C, CTRL, TermMode::NONE), Some(vec![3]));
+        assert_eq!(encode_key(Key::Z, CTRL, TermMode::NONE), Some(vec![26]));
     }
 
     #[test]

@@ -308,6 +308,12 @@ impl App {
                     if let Some(rendered) = self.previews.get(&id).and_then(PreviewPane::rendered) {
                         crate::preview_ui::show(ui, rendered, base_dir.as_deref(), id);
                     }
+                    // 點了指向本機檔案的連結：在編輯器開啟（其他連結已經交給瀏覽器了）
+                    if let Some(url) = crate::preview_ui::take_clicked_link(ui.ctx()) {
+                        if let crate::preview_ui::LinkTarget::File(path) = crate::preview_ui::classify_link(&url, base_dir.as_deref()) {
+                            action = Some(crate::Action::OpenLocalFile(path));
+                        }
+                    }
                 }
             }
         });

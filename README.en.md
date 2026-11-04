@@ -60,7 +60,7 @@ The **eye** button on the toolbar opens a preview pane to the right of the curre
 | JSON, TOML, YAML | A collapsible tree; on a syntax error, the line and column of the error |
 | SVG | The drawing itself, updated as you edit |
 
-The preview pane can be dragged anywhere in the layout, and clicking it lets Ctrl +/- adjust its own font size. To preview other file types, write a JavaScript **preview plugin** (see [Preview plugins](docs/preview-plugins.en.md)).
+Links in the preview: URLs, e-mail addresses and the like go to the default browser; a link to a **local file** (a relative path is relative to the document's folder) opens in a new editor tab, or switches to it if it is already open. The preview pane can be dragged anywhere in the layout, and clicking it lets Ctrl +/- adjust its own font size. To preview other file types, write a JavaScript **preview plugin** (see [Preview plugins](docs/preview-plugins.en.md)).
 
 ## Terminal
 
@@ -71,7 +71,7 @@ The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's defa
 - Supports colors, full-screen programs, IME, copy and paste (Ctrl+C copies when text is selected and interrupts otherwise), mouse-drag selection and wheel scrolling. Colors follow the current color scheme, and text whose contrast with its background is too low is adjusted until it is readable.
 - When a program asks for mouse reporting (vim, htop and the like), mouse events are sent to it; holding Shift still lets you select text.
 - **URLs**: hold Ctrl and move the mouse over a URL (`http`, `https`, `ftp`, `file`) and the whole URL is underlined and the pointer becomes a hand; click to open it in the default browser. URLs that wrap over several rows work too.
-- **Search**: press Ctrl+Shift+F while a terminal has the focus and a search bar appears in its top-right corner (so Ctrl+Shift+F searches the terminal, not "Find in Files"). It searches as you type, ignoring case and including the history scrolled out of view; matches are highlighted, Enter finds the earlier match, Shift+Enter the later one, and Esc closes it.
+- **Search**: press Ctrl+F while a terminal has the focus (the same as in the editor) and a search bar appears in its top-right corner. While a full-screen program such as vim or less is running, Ctrl+F still goes to the program. It searches as you type, ignoring case and including the history scrolled out of view; matches are highlighted, Enter finds the earlier match, Shift+Enter the later one, and Esc closes it.
 
 ## Editing
 

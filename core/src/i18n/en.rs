@@ -212,6 +212,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("終端機：亮白", "Terminal: bright white"),
     ("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點", "New terminal (Ctrl+Shift+`); Ctrl+` cycles focus between the editor and the terminals"),
     ("終端機 {n}", "Terminal {n}"),
+    ("找不到連結指向的檔案：{path}", "The file the link points to was not found: {path}"),
     ("在終端機中搜尋", "Search in the terminal"),
     ("沒有符合", "No match"),
     ("較早的符合項目（Enter）", "Earlier match (Enter)"),

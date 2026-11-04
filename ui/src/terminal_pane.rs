@@ -239,6 +239,11 @@ impl TerminalPane {
         self.want_focus = true;
     }
 
+    /// 開搜尋列（已經開著就把鍵盤焦點拉回搜尋框）。
+    pub fn open_search(&mut self) {
+        self.search.get_or_insert_with(Search::default).focus_input = true;
+    }
+
     pub(crate) fn has_focus(&self, ctx: &egui::Context) -> bool {
         ctx.memory(|m| m.has_focus(widget_id(self.uid)))
     }
@@ -364,6 +369,12 @@ impl App {
     /// 作用中的分頁是終端機而且有鍵盤焦點時，把這一幀的按鍵等輸入事件從 egui 取走，送給 shell。
     /// 要在其他快捷鍵處理之前呼叫。
     pub(crate) fn terminal_input(&mut self, ctx: &egui::Context) {
+        // 游標在搜尋框裡：Ctrl+F 回到搜尋框（不要變成編輯區的尋找）
+        if let Some(pane) = self.doc.terminal.as_mut() {
+            if pane.search.is_some() && ctx.memory(|m| m.has_focus(search_input_id(pane.uid))) && ctx.input_mut(|i| i.consume_shortcut(&crate::FIND)) {
+                pane.open_search();
+            }
+        }
         let Some(pane) = self.doc.terminal.as_mut().filter(|t| t.has_focus(ctx)) else { return };
         let Some(term) = pane.term.as_ref() else { return };
         let mut taken: Vec<egui::Event> = Vec::new();
@@ -402,7 +413,10 @@ impl App {
                     preedit = Some(String::new());
                 }
                 egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => preedit = Some(text),
-                egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. } if modifiers.shift && (modifiers.ctrl || modifiers.command) => {
+                // Ctrl+F：和編輯區一樣開搜尋列。全螢幕程式（vim、less 這類）在執行時，Ctrl+F 還是交給程式
+                egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. }
+                    if (modifiers.ctrl || modifiers.command) && !modifiers.shift && !modifiers.alt && !mode.contains(TermMode::ALT_SCREEN) =>
+                {
                     open_search = true;
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
@@ -434,7 +448,7 @@ impl App {
             pane.preedit = p;
         }
         if open_search {
-            pane.search.get_or_insert_with(Search::default).focus_input = true;
+            pane.open_search();
         }
     }
 }

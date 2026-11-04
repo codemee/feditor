@@ -162,13 +162,24 @@ fn inline(ui: &mut egui::Ui, spans: &[Span], size: Option<f32>, bold: bool, base
                 continue;
             }
             match &s.link {
-                // 只有網址與信箱可以點；其他（相對路徑等）只畫成連結的顏色，不去開
-                Some(url) if is_openable(url) => {
-                    ui.add(egui::Hyperlink::from_label_and_url(rich, url));
-                }
-                Some(_) => {
-                    ui.label(rich.color(ui.visuals().hyperlink_color).underline());
-                }
+                Some(url) => match classify_link(url, base_dir) {
+                    // 網址、信箱：交給預設的瀏覽器（或對應的程式）
+                    LinkTarget::Browser => {
+                        ui.add(egui::Hyperlink::from_label_and_url(rich, url));
+                    }
+                    // 本機的檔案：在編輯器開新分頁（由預覽窗格處理，見 `take_clicked_link`）
+                    LinkTarget::File(path) => {
+                        let link = ui.add(egui::Label::new(rich.color(ui.visuals().hyperlink_color).underline()).sense(egui::Sense::click()));
+                        let link = link.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(path.display().to_string());
+                        if link.clicked() {
+                            ui.ctx().data_mut(|d| d.insert_temp(link_click_id(), url.clone()));
+                        }
+                    }
+                    // 同一份文件裡的段落連結（#標題）：只畫成連結的顏色
+                    LinkTarget::Anchor => {
+                        ui.label(rich.color(ui.visuals().hyperlink_color).underline());
+                    }
+                },
                 None => {
                     ui.label(rich);
                 }
@@ -323,11 +334,73 @@ fn md_table(ui: &mut egui::Ui, header: &[Vec<Span>], rows: &[Vec<Vec<Span>>], de
             }
         });
 }
-fn is_openable(url: &str) -> bool {
-    let lower = url.to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+
+/// 連結點下去要做什麼。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkTarget {
+    /// 網址、信箱等：交給預設的瀏覽器（或作業系統對應的程式）。
+    Browser,
+    /// 本機的檔案或資料夾：在編輯器開啟。
+    File(PathBuf),
+    /// 同一份文件裡的段落（`#標題`）。
+    Anchor,
 }
 
+fn link_click_id() -> egui::Id {
+    egui::Id::unique("preview_link_click")
+}
+
+/// 這一幀有沒有點到「要在編輯器開啟的」連結；有的話回傳連結文字，並清掉記錄。
+pub fn take_clicked_link(ctx: &egui::Context) -> Option<String> {
+    ctx.data_mut(|d| d.remove_temp::<String>(link_click_id()))
+}
+
+/// 百分號編碼還原（`%20` → 空白、`%E4%B8%AD` → 中）。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%' && i + 2 < bytes.len() + 0 && hex(bytes[i + 1]).is_some() && hex(bytes[i + 2]).is_some() {
+            out.push((hex(bytes[i + 1]).unwrap() * 16 + hex(bytes[i + 2]).unwrap()) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// 判斷連結點下去該做什麼：`http`、`https`、`mailto` 與其他有協定的連結交給瀏覽器；`file://`、
+/// 絕對路徑與相對路徑（以文件所在資料夾為準，去掉 `#段落` 與 `?查詢`）是本機檔案；只有 `#段落` 的是文件內的連結。
+pub fn classify_link(url: &str, base_dir: Option<&Path>) -> LinkTarget {
+    let url = url.trim();
+    if url.is_empty() || url.starts_with('#') {
+        return LinkTarget::Anchor;
+    }
+    let lower = url.to_ascii_lowercase();
+    let path_text = if let Some(rest) = lower.strip_prefix("file://") {
+        // file:///C:/a/b.txt → C:/a/b.txt；file:///home/a → /home/a；file://host/share 不處理（當成本機路徑的一部分）
+        let rest = &url[url.len() - rest.len()..];
+        let rest = rest.strip_prefix('/').filter(|r| r.chars().nth(1) == Some(':')).unwrap_or(rest);
+        rest.to_owned()
+    } else {
+        // 協定：兩個以上的字母加冒號（排除 Windows 的磁碟機代號 C:\ 或 C:/）
+        let scheme_len = url.find(':').filter(|&i| i >= 2 && url[..i].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')));
+        if scheme_len.is_some() {
+            return LinkTarget::Browser;
+        }
+        url.to_owned()
+    };
+    let without_extras = path_text.split(['#', '?']).next().unwrap_or("");
+    if without_extras.is_empty() {
+        return LinkTarget::Anchor;
+    }
+    let p = PathBuf::from(percent_decode(without_extras));
+    LinkTarget::File(if p.is_absolute() { p } else { base_dir.map(|d| d.join(&p)).unwrap_or(p) })
+}
 /// 圖片在檔案系統上的位置：相對路徑以文件所在資料夾為準；遠端網址（`http(s)`、`data:`）不讀，回傳 `None`。
 fn local_path(url: &str, base_dir: Option<&Path>) -> Option<PathBuf> {
     let lower = url.to_ascii_lowercase();
@@ -594,6 +667,31 @@ mod tests {
             assert_eq!(estimated_width(ui, &img("https://x.y/a.png", None), base), 64.0, "遠端圖片不讀");
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn links_go_to_the_browser_or_to_a_local_file_in_the_editor() {
+        let base = Path::new("C:/docs");
+        let kind = |u: &str| classify_link(u, Some(base));
+        // 網址、信箱、其他協定：瀏覽器
+        for u in ["https://example.com/a", "HTTP://EXAMPLE.COM", "mailto:me@x.org", "ftp://host/f", "tel:+886123", "vscode://file/x"] {
+            assert_eq!(kind(u), LinkTarget::Browser, "{u}");
+        }
+        // 相對路徑：以文件所在資料夾為準；去掉 #段落 與 ?查詢，還原 %20
+        assert_eq!(kind("other.md"), LinkTarget::File(base.join("other.md")));
+        assert_eq!(kind("sub/a%20b.md#section"), LinkTarget::File(base.join("sub/a b.md")));
+        assert_eq!(kind("./x.txt?raw=1"), LinkTarget::File(base.join("./x.txt")));
+        assert_eq!(kind("%E4%B8%AD.md"), LinkTarget::File(base.join("中.md")));
+        // 絕對路徑與 file:// 網址（含 Windows 的磁碟機代號）
+        assert_eq!(kind("C:/data/n.txt"), LinkTarget::File(PathBuf::from("C:/data/n.txt")));
+        assert_eq!(kind("C:\\data\\n.txt"), LinkTarget::File(PathBuf::from("C:\\data\\n.txt")));
+        assert_eq!(kind("file:///C:/data/a%20b.txt"), LinkTarget::File(PathBuf::from("C:/data/a b.txt")));
+        // 文件內的段落連結與空連結
+        assert_eq!(kind("#top"), LinkTarget::Anchor);
+        assert_eq!(kind(""), LinkTarget::Anchor);
+        assert_eq!(kind("#"), LinkTarget::Anchor);
+        // 沒有文件所在資料夾（還沒存檔）：相對路徑原樣當成路徑
+        assert_eq!(classify_link("a.md", None), LinkTarget::File(PathBuf::from("a.md")));
     }
 
     #[test]

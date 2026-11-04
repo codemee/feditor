@@ -431,6 +431,8 @@ enum Action {
     ClosePreview(panes::PaneId),
     /// 開啟預覽外掛的資料夾。
     OpenPreviewsDir,
+    /// 預覽裡點了指向本機檔案的連結：在編輯器開啟。
+    OpenLocalFile(PathBuf),
     /// 開始拖曳一個預覽窗格。
     BeginPreviewDrag(panes::PaneId),
     /// 把預覽窗格（第一個）搬到一般窗格（第二個）的某一側。
@@ -1466,6 +1468,12 @@ impl App {
             Action::ClearLog => self.log.clear(),
             Action::ToggleOutput => self.toggle_output(),
             Action::Reload(enc) => self.reload(enc),
+            // 作用中的分頁是終端機：尋找就是搜尋終端機的畫面
+            Action::Find { .. } if self.doc.terminal.is_some() => {
+                if let Some(terminal) = self.doc.terminal.as_mut() {
+                    terminal.open_search();
+                }
+            }
             Action::Find { replace } => self.open_find(ctx, replace),
             Action::FindNext => self.find_step(false),
             Action::FindPrev => self.find_step(true),
@@ -1556,6 +1564,15 @@ impl App {
 
             Action::ClosePreview(id) => self.close_preview(id),
             Action::OpenPreviewsDir => self.open_folder(preview::previews_dir()),
+            Action::OpenLocalFile(path) => {
+                if path.is_dir() {
+                    self.open_folder(Some(path));
+                } else if path.is_file() {
+                    self.open_path(&path);
+                } else {
+                    self.push(LogKind::Warn, tf!("找不到連結指向的檔案：{path}", path = path.display()));
+                }
+            }
             Action::BeginPreviewDrag(id) => self.begin_preview_drag(id),
             Action::MovePreview(id, target, side) => self.move_preview(id, target, side),
             Action::BeginTabDrag(pane, i) => self.begin_tab_drag(pane, i),
@@ -4724,6 +4741,30 @@ mod tests {
         fresh.restore_from(&saved);
         assert_eq!(fresh.terminal_tabs().len(), 1, "終端機還原了");
         assert_eq!(fresh.doc.name(), "終端機 1");
+    }
+
+    #[test]
+    fn a_preview_link_to_a_local_file_opens_it_in_a_new_tab_and_a_missing_one_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.md"), dir.path().join("b.md"));
+        std::fs::write(&a, "[b](b.md)").unwrap();
+        std::fs::write(&b, "# bee").unwrap();
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.open_path(&a);
+        assert_eq!(app.tabs.len(), 1);
+        app.handle(Action::OpenLocalFile(b.clone()), &ctx);
+        assert_eq!(app.tabs.len(), 2, "新分頁");
+        assert_eq!(app.doc.name(), "b.md");
+        // 再點一次：不重複開，切到它
+        app.switch_tab(0);
+        app.handle(Action::OpenLocalFile(b.clone()), &ctx);
+        assert_eq!((app.tabs.len(), app.doc.name().as_str()), (2, "b.md"));
+        // 不存在：不開分頁，輸出面板有警告
+        let logs = app.log.len();
+        app.handle(Action::OpenLocalFile(dir.path().join("missing.md")), &ctx);
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.log.len(), logs + 1);
     }
 
     #[test]
