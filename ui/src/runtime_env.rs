@@ -256,6 +256,8 @@ fn home_dir() -> Option<PathBuf> {
 
 /// 搜尋結果多久之後重找（使用者可能剛建好虛擬環境）。
 const STALE_AFTER: Duration = Duration::from_secs(30);
+/// 什麼都沒找到時重找得勤一點：使用者多半正在建環境，建好了要馬上看得到。
+const STALE_AFTER_EMPTY: Duration = Duration::from_secs(5);
 
 enum Slot {
     Pending,
@@ -276,7 +278,10 @@ impl Resolver {
         let (current, spawn) = match slots.get(&key) {
             None => (None, true),
             Some(Slot::Pending) => (None, false),
-            Some(Slot::Ready(r, at, refreshing)) => (Some(r.clone()), !*refreshing && at.elapsed() > STALE_AFTER),
+            Some(Slot::Ready(r, at, refreshing)) => {
+                let limit = if r.items.iter().any(|i| i.version.is_some()) { STALE_AFTER } else { STALE_AFTER_EMPTY };
+                (Some(r.clone()), !*refreshing && at.elapsed() > limit)
+            }
         };
         if spawn {
             match slots.get_mut(&key) {
@@ -300,10 +305,16 @@ impl Resolver {
         current
     }
 
-    /// 丟掉這個資料夾的結果，下次問的時候重找（使用者按了「重新搜尋」）。
-    pub fn forget_dir(&self, dir: &Path) {
-        if let Ok(mut slots) = self.slots.lock() {
-            slots.retain(|(_, d), _| d != dir);
+    /// 把這個資料夾的結果標成過期（使用者按了「重新搜尋」）：下次問的時候在背景重找，
+    /// 找完之前還是顯示舊的結果，畫面不會閃一下。`dir` 是 `None` 就是全部。
+    pub fn refresh(&self, dir: Option<&Path>) {
+        let Ok(mut slots) = self.slots.lock() else { return };
+        for ((_, d), slot) in slots.iter_mut() {
+            if let Slot::Ready(_, at, _) = slot
+                && dir.is_none_or(|dir| dir == d)
+            {
+                *at = at.checked_sub(STALE_AFTER + Duration::from_secs(1)).unwrap_or(*at);
+            }
         }
     }
 }
@@ -498,6 +509,43 @@ mod tests {
         let vars = terminal_env(&PYTHON, &work, Some(&manual), None, &no_env, Some(&path));
         assert!(vars.iter().all(|(k, _)| k != "VIRTUAL_ENV"));
         assert!(vars.iter().any(|(k, v)| k == "PATH" && std::env::split_paths(v).next() == Some(bin.clone())));
+    }
+
+    #[test]
+    fn a_refresh_picks_up_an_environment_created_later_and_keeps_showing_the_old_result_meanwhile() {
+        let root = tempfile::tempdir().unwrap();
+        let work = root.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let ctx = egui::Context::default();
+        let resolver = Resolver::default();
+        // 第一次問：還沒有結果，背景開始找
+        assert!(resolver.get(&ctx, &PYTHON, &work).is_none());
+        let wait_for = |resolver: &Resolver| {
+            for _ in 0..400 {
+                if let Some(r) = resolver.get(&ctx, &PYTHON, &work) {
+                    return r;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            panic!("等不到搜尋結果");
+        };
+        let first = wait_for(&resolver);
+        let had_candidates = first.items.len();
+        // 之後才建好虛擬環境：沒有重新搜尋前看不到
+        fake_venv(&work, ".venv");
+        assert_eq!(wait_for(&resolver).items.len(), had_candidates);
+        // 標成過期：先還是給舊的，背景重找完就有新的環境了
+        resolver.refresh(Some(&work));
+        assert_eq!(resolver.get(&ctx, &PYTHON, &work).map(|r| r.items.len()), Some(had_candidates), "重找完成之前還是舊的");
+        let mut found = false;
+        for _ in 0..400 {
+            if resolver.get(&ctx, &PYTHON, &work).is_some_and(|r| r.items.iter().any(|i| i.candidate.source == Source::Venv)) {
+                found = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(found, "重新搜尋之後要找得到新建的環境");
     }
 
     #[test]

@@ -284,6 +284,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("{} 執行環境", "{} environment"),
     ("無法執行", "cannot run"),
     ("重新搜尋", "Search again"),
+    ("重新搜尋執行環境", "Search for the runtime environment again"),
     ("{}：找不到", "{}: not found"),
     ("知道了", "OK"),
     ("已加入 feditor 指令", "feditor command added"),

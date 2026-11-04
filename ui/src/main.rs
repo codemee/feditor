@@ -1813,7 +1813,7 @@ impl App {
                 }
                 self.mark_settings_dirty();
             }
-            Action::RefreshRuntime(dir) => self.runtime.forget_dir(&dir),
+            Action::RefreshRuntime(dir) => self.runtime.refresh(Some(&dir)),
             Action::SetCliCommand(on) => {
                 if on != self.settings.cli_command {
                     match (self.cli_backend)(on) {
@@ -3572,6 +3572,11 @@ impl App {
                         },
                     };
                     status_separator(ui);
+                    // 找不到的時候，旁邊直接放一個重新搜尋鈕（剛建好環境不用先打開清單）
+                    let not_found = found.as_ref().is_some_and(|r| r.chosen(manual.as_deref()).is_none());
+                    if not_found && icons::small_button(ui, Icon::Reload, t("重新搜尋執行環境"), true).clicked() {
+                        action = Some(Action::RefreshRuntime(dir.to_path_buf()));
+                    }
                     egui::ComboBox::from_id_salt("runtime_env")
                         .icon(icons::combo_chevron)
                         .width(combo_width(ui, [text.as_str()]))
@@ -3752,6 +3757,10 @@ impl eframe::App for App {
         // 另外每 5 秒檢查一次當後備（網路磁碟、監看失效的情況）
         let focused = ctx.input(|i| i.focused);
         let changed = self.watch_files(&ctx);
+        if focused && !self.was_focused {
+            // 在別的視窗（終端機等）建好了虛擬環境，回到編輯器就重新找一次
+            self.runtime.refresh(None);
+        }
         if changed || (focused && !self.was_focused) || self.last_disk_check.elapsed() >= Duration::from_secs(5) {
             self.last_disk_check = Instant::now();
             self.check_external_changes();
