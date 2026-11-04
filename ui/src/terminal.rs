@@ -228,6 +228,62 @@ pub fn detect_shells() -> Vec<ShellOption> {
     shells_for(cfg!(windows), &|k| std::env::var(k).ok(), &exists_in_path, &|p| std::path::Path::new(p).is_file(), &etc)
 }
 
+/// shell 的種類：決定要送進去的指令怎麼加引號、怎麼換資料夾。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellKind {
+    /// bash、zsh、fish、sh…
+    Posix,
+    PowerShell,
+    Cmd,
+}
+
+impl ShellKind {
+    /// 由 shell 的程式名稱（可以帶路徑與 `.exe`）判斷。
+    pub fn of(program: &str) -> Self {
+        let name = program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_lowercase();
+        let name = name.strip_suffix(".exe").unwrap_or(&name);
+        if name.contains("pwsh") || name.contains("powershell") {
+            ShellKind::PowerShell
+        } else if name == "cmd" {
+            ShellKind::Cmd
+        } else {
+            ShellKind::Posix
+        }
+    }
+
+    fn quote(self, text: &str) -> String {
+        match self {
+            ShellKind::Cmd => format!("\"{text}\""),
+            ShellKind::PowerShell => format!("'{}'", text.replace('\'', "''")),
+            ShellKind::Posix => format!("'{}'", text.replace('\'', r"'\''")),
+        }
+    }
+
+    /// 執行 `program args… file` 的一行指令（不含換行）。
+    pub fn run_line(self, program: &str, args: &[String], file: &str) -> String {
+        let mut words = vec![self.quote(program)];
+        words.extend(args.iter().map(|a| self.quote(a)));
+        words.push(self.quote(file));
+        let line = words.join(" ");
+        // PowerShell 的字串開頭的指令要加呼叫運算子 &
+        if self == ShellKind::PowerShell { format!("& {line}") } else { line }
+    }
+
+    /// 切到資料夾 `dir` 的一行指令（不含換行）。
+    pub fn cd_line(self, dir: &str) -> String {
+        match self {
+            ShellKind::Cmd => format!("cd /d {}", self.quote(dir)),
+            ShellKind::PowerShell => format!("Set-Location -LiteralPath {}", self.quote(dir)),
+            ShellKind::Posix => format!("cd {}", self.quote(dir)),
+        }
+    }
+}
+
+/// 這個終端機（`custom_shell` 是設定的 shell 指令，空字串是系統預設）用的是哪一種 shell。
+pub fn shell_kind(custom_shell: &str) -> ShellKind {
+    ShellKind::of(&resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path).program)
+}
+
 /// 沒有指定 shell 時實際會用的（系統預設的）shell。
 pub fn system_default_shell() -> ShellCommand {
     default_shell(&|k| std::env::var(k).ok(), &exists_in_path)
@@ -480,6 +536,30 @@ pub fn paste_bytes(text: &str, mode: TermMode) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_kinds_are_told_apart_by_program_name() {
+        assert_eq!(ShellKind::of("pwsh"), ShellKind::PowerShell);
+        assert_eq!(ShellKind::of(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"), ShellKind::PowerShell);
+        assert_eq!(ShellKind::of("CMD.EXE"), ShellKind::Cmd);
+        assert_eq!(ShellKind::of(r"C:\Windows\System32\cmd.exe"), ShellKind::Cmd);
+        assert_eq!(ShellKind::of("/bin/zsh"), ShellKind::Posix);
+        assert_eq!(ShellKind::of("nu"), ShellKind::Posix);
+    }
+
+    #[test]
+    fn run_and_cd_lines_are_quoted_for_each_shell() {
+        let args = vec!["-3".to_owned()];
+        assert_eq!(ShellKind::Posix.run_line("/my dir/python", &args, "/p/it's.py"), r"'/my dir/python' '-3' '/p/it'\''s.py'");
+        assert_eq!(
+            ShellKind::PowerShell.run_line(r"C:\Program Files\py.exe", &args, r"C:\it's\a.py"),
+            r"& 'C:\Program Files\py.exe' '-3' 'C:\it''s\a.py'"
+        );
+        assert_eq!(ShellKind::Cmd.run_line(r"C:\py.exe", &[], r"C:\a b\a.py"), r#""C:\py.exe" "C:\a b\a.py""#);
+        assert_eq!(ShellKind::Posix.cd_line("/a b"), "cd '/a b'");
+        assert_eq!(ShellKind::PowerShell.cd_line(r"C:\a b"), r"Set-Location -LiteralPath 'C:\a b'");
+        assert_eq!(ShellKind::Cmd.cd_line(r"D:\a b"), r#"cd /d "D:\a b""#);
+    }
     use egui::{Key, Modifiers};
 
     const NONE: Modifiers = Modifiers::NONE;

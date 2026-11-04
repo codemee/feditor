@@ -288,6 +288,11 @@ impl TabSet {
         (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.is_some()).collect()
     }
 
+    /// 終端機分頁的（分頁編號, 終端機識別編號）。
+    pub fn terminal_uids(&self, live: Option<&Document>) -> Vec<(usize, u64)> {
+        (0..self.slots.len()).filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| (i, t.uid()))).collect()
+    }
+
     /// 這個分頁集裡終端機分頁的標題編號。
     pub fn terminal_numbers(&self, live: Option<&Document>) -> Vec<usize> {
         (0..self.slots.len()).filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| t.number())).collect()

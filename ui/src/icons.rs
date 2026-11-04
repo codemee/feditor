@@ -68,6 +68,8 @@ pub enum Icon {
     ClosePane,
     /// 終端機（提示字元 >_）。
     Terminal,
+    /// 在終端機執行目前的檔案（終端機視窗框裡一個播放三角形）。
+    RunFile,
     /// 預覽（眼睛）。
     Preview,
     /// 介面語言：跟隨系統（地球）。
@@ -345,6 +347,11 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             // 提示字元：向右的 > 加底線
             line(&[(3.0, 4.5), (7.2, 8.0), (3.0, 11.5)]);
             line(&[(8.8, 12.0), (13.0, 12.0)]);
+        }
+        Icon::RunFile => {
+            // 終端機視窗的外框，裡面是向右的播放三角形：在終端機執行
+            painter.rect_stroke(rect_of(1.5, 2.5, 14.5, 13.5), CornerRadius::same(2), stroke, StrokeKind::Inside);
+            closed(&[(6.2, 5.3), (6.2, 10.7), (10.8, 8.0)]);
         }
         Icon::Preview => {
             // 眼睛：上下眼瞼的弧線加瞳孔

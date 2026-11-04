@@ -61,6 +61,8 @@ pub struct TerminalPane {
     dir: Option<std::path::PathBuf>,
     /// 開 shell 時要加上的環境變數（執行環境：虛擬環境的 `PATH` 等，見 `runtime_env::terminal_env`）。
     env: Vec<(String, String)>,
+    /// shell 還沒開起來（第一次畫面才開）時先收下的輸入，開好之後馬上送進去（「執行目前檔案」用）。
+    pending_input: Vec<u8>,
     /// 這個終端機要執行的 shell（程式加參數）；空字串是系統預設。開的時候就決定了，之後改設定不影響已經開著的。
     shell: String,
     /// 下一個畫面要把鍵盤焦點給它。
@@ -189,6 +191,25 @@ impl std::fmt::Debug for TerminalPane {
 }
 
 impl TerminalPane {
+    /// 這個終端機的識別編號（每個終端機各不相同，關掉也不會重複使用）。
+    pub fn uid(&self) -> u64 {
+        self.uid
+    }
+
+    /// 測試用：還沒送出的輸入。
+    #[cfg(test)]
+    pub fn pending_text(&self) -> String {
+        String::from_utf8_lossy(&self.pending_input).into_owned()
+    }
+
+    /// 把一段文字當成使用者輸入送給 shell。shell 還沒開起來就先收著，開好之後送出。
+    pub fn queue_input(&mut self, text: &str) {
+        match &self.term {
+            Some(term) => term.write(text.as_bytes().to_vec()),
+            None => self.pending_input.extend_from_slice(text.as_bytes()),
+        }
+    }
+
     /// 設定開 shell 時要加上的環境變數（要在 shell 還沒開之前呼叫）。
     pub fn set_env(&mut self, env: Vec<(String, String)>) {
         self.env = env;
@@ -203,6 +224,7 @@ impl TerminalPane {
             error: None,
             dir,
             env: Vec::new(),
+            pending_input: Vec::new(),
             shell,
             want_focus: true,
             scroll_acc: 0.0,
@@ -293,6 +315,53 @@ impl App {
             }
         }
         out
+    }
+
+    /// 識別編號為 `uid` 的終端機在哪個窗格的第幾個分頁（已經關掉了就是 `None`）。
+    fn find_terminal_by_uid(&self, uid: u64) -> Option<(PaneId, usize)> {
+        for id in self.layout.root.leaves() {
+            let live = (id == self.layout.focus).then_some(&self.doc);
+            if let Some((i, _)) = self.set_ref(id).and_then(|s| s.terminal_uids(live).into_iter().find(|(_, u)| *u == uid)) {
+                return Some((id, i));
+            }
+        }
+        None
+    }
+
+    /// 在終端機執行 `program args… file`：用上次「執行」用的那個終端機（還在的話），沒有就開一個新的。
+    /// 重用時先送 Ctrl+C 中斷上次還沒跑完的程式、再切到檔案所在的資料夾。
+    pub(crate) fn run_in_terminal(&mut self, program: &str, args: &[String], file: &std::path::Path) {
+        let reused = self.run_terminal.and_then(|uid| self.find_terminal_by_uid(uid));
+        match reused {
+            Some((pane, idx)) => self.show_terminal_tab(pane, idx),
+            None => {
+                self.new_terminal();
+                if self.doc.terminal.is_none() {
+                    // 新終端機沒有變成作用中的分頁：找最後一個終端機
+                    if let Some((pane, idx)) = self.terminal_tabs().last().copied() {
+                        self.show_terminal_tab(pane, idx);
+                    }
+                }
+                self.pending_editor_focus = true;
+            }
+        }
+        let Some(terminal) = self.doc.terminal.as_mut() else {
+            self.push(LogKind::Warn, t("開不了終端機，沒辦法執行"));
+            return;
+        };
+        let kind = crate::terminal::shell_kind(terminal.shell());
+        let mut text = String::new();
+        if reused.is_some() {
+            text.push('\u{3}');
+            if let Some(dir) = file.parent() {
+                text.push_str(&kind.cd_line(&dir.to_string_lossy()));
+                text.push('\r');
+            }
+        }
+        text.push_str(&kind.run_line(program, args, &file.to_string_lossy()));
+        text.push('\r');
+        terminal.queue_input(&text);
+        self.run_terminal = Some(terminal.uid());
     }
 
     /// 新增一個終端機：在有焦點的窗格下方切出新窗格放它；那裡放不下就依序試其他窗格（大的先）。
@@ -493,7 +562,12 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
 
         if pane.term.is_none() && pane.error.is_none() {
             match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell, &pane.env) {
-                Ok(t) => pane.term = Some(t),
+                Ok(t) => {
+                    if !pane.pending_input.is_empty() {
+                        t.write(std::mem::take(&mut pane.pending_input));
+                    }
+                    pane.term = Some(t);
+                }
                 Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
             }
         }

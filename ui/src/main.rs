@@ -471,6 +471,8 @@ enum Action {
     SetRuntime(String, Option<String>),
     /// 丟掉這個資料夾的搜尋結果重新搜尋。
     RefreshRuntime(PathBuf),
+    /// 在終端機執行目前的檔案（用偵測到的執行環境）。
+    RunFile,
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
@@ -657,6 +659,8 @@ struct App {
     cli_backend: fn(bool) -> Result<(), String>,
     /// 自動搜尋的執行環境（Python 的虛擬環境等）：背景搜尋與快取。
     runtime: runtime_env::Resolver,
+    /// 「執行目前檔案」上次用的終端機（識別編號）；還在就重複使用，不會每次都多開一個。
+    run_terminal: Option<u64>,
     allow_close: bool,
     /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
     modal: Option<Pending>,
@@ -728,6 +732,7 @@ impl App {
             shell_menu_backend: apply_shell_menu,
             cli_backend: cli_command::apply,
             runtime: runtime_env::Resolver::default(),
+            run_terminal: None,
             allow_close: false,
             modal: None,
             close_skipped: Vec::new(),
@@ -1199,6 +1204,40 @@ impl App {
         let project = runtime_env::project_root(dir).display().to_string();
         let manual = self.settings.runtime_choices.get(&project).map(String::as_str);
         runtime_env::terminal_env_here(&runtime_env::PYTHON, dir, manual)
+    }
+
+    /// 目前這份文件能不能「在終端機執行」：不是終端機分頁、已經存成檔案、而且它的語言有執行環境的規則（目前是 Python）。
+    fn run_rule(&self) -> Option<&'static runtime_env::Rule> {
+        if self.doc.terminal.is_some() || self.doc.path.is_none() {
+            return None;
+        }
+        syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).and_then(|l| runtime_env::rule_for(l.name))
+    }
+
+    /// 在終端機執行目前的檔案：有未儲存的修改先存檔，用狀態列上選定（或自動找到）的直譯器。
+    fn run_current_file(&mut self, ctx: &egui::Context) {
+        let Some(rule) = self.run_rule() else {
+            let message = if self.doc.path.is_none() { t("請先儲存檔案再執行") } else { t("這個檔案類型還不支援在終端機執行") };
+            self.push(LogKind::Info, message.to_owned());
+            return;
+        };
+        let Some(path) = self.doc.path.clone() else { return };
+        if self.doc.dirty && !self.save() {
+            return; // 存檔失敗或取消：不要執行舊的內容
+        }
+        let Some(dir) = path.parent() else { return };
+        let project = runtime_env::project_root(dir).display().to_string();
+        let manual = self.settings.runtime_choices.get(&project).cloned();
+        let Some(found) = self.runtime.get(ctx, rule, dir) else {
+            self.push(LogKind::Info, t("正在搜尋執行環境，請稍後再按一次").to_owned());
+            return;
+        };
+        let Some(item) = found.chosen(manual.as_deref()) else {
+            self.push(LogKind::Warn, tf!("找不到可以執行 {} 的直譯器", rule.label));
+            return;
+        };
+        let candidate = item.candidate.clone();
+        self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path);
     }
 
     /// 設定裡有開 feditor 指令時，把它更新成目前的執行檔位置（程式搬了位置也會跟上）。
@@ -1814,6 +1853,7 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::RefreshRuntime(dir) => self.runtime.refresh(Some(&dir)),
+            Action::RunFile => self.run_current_file(ctx),
             Action::SetCliCommand(on) => {
                 if on != self.settings.cli_command {
                     match (self.cli_backend)(on) {
@@ -1988,6 +2028,16 @@ impl App {
                         }
                     });
                 });
+            }
+            // 在終端機執行目前的檔案：存成檔案、而且語言有執行環境規則（Python）才能按
+            let can_run = self.run_rule().is_some();
+            let run_tip = if can_run {
+                t("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）")
+            } else {
+                t("在終端機執行目前的檔案（要先儲存成檔案，而且目前只支援 Python）")
+            };
+            if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
+                action = Some(Action::RunFile);
             }
 
             group_separator(ui);
@@ -4624,6 +4674,38 @@ mod tests {
         assert_eq!(app.settings.terminal_shell, "pwsh ");
         app.handle(Action::SetTerminalShell("a\nb".into()), &ctx);
         assert_eq!(app.settings.terminal_shell, "a b");
+    }
+
+    #[test]
+    fn running_a_file_opens_one_terminal_and_reuses_it_for_the_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let py = dir.path().join("a.py");
+        std::fs::write(&py, "print(1)\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&py);
+        assert!(app.run_rule().is_some(), "存成檔案的 .py 可以執行");
+        app.run_in_terminal("/venv/bin/python", &[], &py);
+        assert_eq!(app.terminal_tabs().len(), 1, "第一次：開一個終端機");
+        let first = app.doc.terminal.as_ref().expect("終端機成為作用中的分頁").pending_text();
+        assert!(first.contains("/venv/bin/python") && first.contains("a.py") && first.ends_with('\r'), "{first:?}");
+        assert!(!first.contains('\u{3}'), "新開的終端機不用先中斷");
+        // 回到檔案再執行一次：還是同一個終端機（不會多開），先中斷上一次再切到檔案的資料夾
+        app.open_path(&py);
+        assert!(app.doc.terminal.is_none(), "回到檔案的分頁");
+        app.run_in_terminal("/venv/bin/python", &[], &py);
+        assert_eq!(app.terminal_tabs().len(), 1, "不會多開");
+        let second = app.doc.terminal.as_ref().unwrap().pending_text();
+        assert!(second.starts_with(&first) && second[first.len()..].starts_with('\u{3}'), "{second:?}");
+    }
+    #[test]
+    fn running_needs_a_saved_file_with_a_language_that_has_a_runtime_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let rs = dir.path().join("a.rs");
+        std::fs::write(&rs, "fn main() {}\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        assert!(app.run_rule().is_none(), "沒有存檔");
+        app.open_path(&rs);
+        assert!(app.run_rule().is_none(), "Rust 還沒有執行規則");
     }
 
     #[test]
