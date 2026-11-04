@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.5.1] - 2026-11-04
 
 ### 修正
 - **macOS「打開檔案的應用程式」漏掉 `.toml`、`.json`、`.rs` 等檔案**：原本只宣告了 `public.data` 等類型，系統對 `public.data` 不採用，也不認識 `.toml` 這類沒有定義類型的副檔名。現在改成列出系統的文字類型（文字、原始碼、JSON、XML、YAML、script），並另外用副檔名清單補上沒有類型的檔案。圖片、壓縮檔等不再列出 FEditor。
@@ -162,6 +162,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
 [0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
 [0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
 [0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0

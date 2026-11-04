@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## [0.5.1] - 2026-11-04
 
 ### Fixed
 - **macOS "Open With" missed `.toml`, `.json`, `.rs` and similar files**: only `public.data` and a few other types were declared, but the system ignores `public.data` and does not know types for extensions like `.toml`. The app now declares the system text types (text, source code, JSON, XML, YAML, script) and adds an explicit extension list for files without a defined type. Images, archives and the like no longer list FEditor.
@@ -162,6 +162,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
 [0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
 [0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
 [0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
