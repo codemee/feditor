@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## [0.4.0] - 2026-11-04
 
 ### Added
 - **File Explorer / Finder context menu integration**: a new "Add to the context menu" switch on the "Interface" page of the settings panel. Files gain "Open with FEditor" and folders (including the empty space inside) gain "Pick files to open with FEditor..." (the open dialog starting in that folder). On Windows it is written to the current user's registry without administrator rights; on macOS two Finder Quick Actions are generated. The entries are refreshed at startup when the program moves or the language changes. The command line now accepts several paths (files or folders) at once.
@@ -144,6 +144,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0

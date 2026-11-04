@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.4.0] - 2026-11-04
 
 ### 新增
 - **檔案總管／Finder 右鍵選單整合**：設定面板「介面」頁新增「加入右鍵選單」開關。檔案的右鍵多「用 FEditor 開啟」，資料夾（含空白處）多「用 FEditor 選取檔案開啟…」（顯示開啟檔案交談窗，從該資料夾開始）。Windows 寫入目前使用者的登錄檔、不需系統管理員權限；macOS 產生兩個 Finder「快速動作」。程式搬位置或換語言會在啟動時自動更新。命令列現在可以一次給多個路徑（檔案或資料夾）。
@@ -144,6 +144,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.4.0]: https://github.com/codemee/feditor/releases/tag/v0.4.0
 [0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0
