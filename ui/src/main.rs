@@ -22,6 +22,7 @@ mod preview_ui;
 mod scheme;
 mod session;
 mod settings;
+mod shell_integration;
 mod syntax;
 mod tabs;
 mod terminal;
@@ -96,6 +97,26 @@ fn keep_tab_in_find_inputs(ui: &egui::Ui) {
             }
         }
     });
+}
+
+/// 右鍵選單兩個項目的文字（跟著目前的介面語言）。
+fn shell_menu_labels() -> shell_integration::Labels {
+    shell_integration::Labels { open: t("用 FEditor 開啟").to_owned(), pick: t("用 FEditor 選取檔案開啟…").to_owned() }
+}
+
+/// 檔案管理員的名稱（設定面板的標籤用）。
+fn file_manager_name() -> &'static str {
+    if cfg!(windows) { t("檔案總管") } else { "Finder" }
+}
+
+/// 真正去加入（`on`）或移除右鍵選單。
+fn apply_shell_menu(on: bool, labels: &shell_integration::Labels) -> Result<(), String> {
+    if on {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        shell_integration::enable(&exe, labels)
+    } else {
+        shell_integration::disable()
+    }
 }
 
 /// 顯示系統的「開啟檔案」交談窗（可多選），從 `dir` 開始；取消回傳空清單。
@@ -422,6 +443,8 @@ enum Action {
     SetTabWidth(u8),
     /// 輸入 Tab 時是否改用空白。
     SetTabSpaces(bool),
+    /// 在檔案總管／Finder 的右鍵選單加入或移除 FEditor。
+    SetShellMenu(bool),
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
     SetTerminalFontSize(f32),
@@ -591,6 +614,11 @@ struct App {
     last_macro: Option<PathBuf>,
     log: Vec<(LogKind, String)>,
     last_title: String,
+    /// 命令列給的路徑（從檔案總管、Finder 的右鍵選單或「開啟檔案」帶進來的）：第一個畫面才開，
+    /// 這樣資料夾的「開啟檔案」交談窗出現時主視窗已經在了。
+    startup_paths: Vec<PathBuf>,
+    /// 加入／移除右鍵選單（測試時換成不碰系統的替身）。
+    shell_menu_backend: fn(bool, &shell_integration::Labels) -> Result<(), String>,
     allow_close: bool,
     /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
     modal: Option<Pending>,
@@ -657,6 +685,8 @@ impl App {
             last_macro: None,
             log: Vec::new(),
             last_title: String::new(),
+            startup_paths: Vec::new(),
+            shell_menu_backend: apply_shell_menu,
             allow_close: false,
             modal: None,
             close_skipped: Vec::new(),
@@ -1099,6 +1129,15 @@ impl App {
                 self.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+        }
+    }
+
+    /// 設定裡有開右鍵選單時，把它更新成目前的執行檔位置與介面語言（程式搬了位置、換了語言都會跟上）。
+    fn sync_shell_menu(&mut self) {
+        if self.settings.shell_menu
+            && let Err(e) = (self.shell_menu_backend)(true, &shell_menu_labels())
+        {
+            self.push(LogKind::Warn, tf!("無法更新{}的右鍵選單：{}", file_manager_name(), e));
         }
     }
 
@@ -1646,6 +1685,7 @@ impl App {
                 if choice != self.settings.language {
                     self.settings.language = choice;
                     feditor_core::i18n::apply(choice);
+                    self.sync_shell_menu(); // 右鍵選單的文字跟著語言
                     self.mark_settings_dirty();
                 }
             }
@@ -1661,6 +1701,17 @@ impl App {
                 if width != self.settings.tab_width {
                     self.settings.tab_width = width;
                     self.mark_settings_dirty();
+                }
+            }
+            Action::SetShellMenu(on) => {
+                if on != self.settings.shell_menu {
+                    match (self.shell_menu_backend)(on, &shell_menu_labels()) {
+                        Ok(()) => {
+                            self.settings.shell_menu = on;
+                            self.mark_settings_dirty();
+                        }
+                        Err(e) => self.push(LogKind::Error, tf!("無法更新{}的右鍵選單：{}", file_manager_name(), e)),
+                    }
                 }
             }
             Action::SetTabSpaces(on) => {
@@ -2588,6 +2639,20 @@ impl App {
                 }
                 ui.label(theme_label(current));
             });
+
+            // 右鍵選單整合（只有支援的系統才有這一列）
+            if shell_integration::supported() {
+                form_row(ui, file_manager_name(), |ui| {
+                    let mut on = self.settings.shell_menu;
+                    let labels = shell_menu_labels();
+                    let response = ui
+                        .checkbox(&mut on, t("加入右鍵選單"))
+                        .on_hover_text(tf!("在{}的右鍵選單加入「{}」（檔案）與「{}」（資料夾）；取消勾選就移除", file_manager_name(), labels.open, labels.pick));
+                    if response.changed() {
+                        action = Some(Action::SetShellMenu(on));
+                    }
+                });
+            }
         });
         group_gap(ui);
 
@@ -3332,6 +3397,11 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        if !self.startup_paths.is_empty() {
+            let paths = std::mem::take(&mut self.startup_paths);
+            self.open_dropped(paths);
+        }
 
         // 組字內容已經被直接寫進編輯區：輸入法稍後送來的同內容 Commit 要丟掉（見 swallow_ime）
         if let Some((text, left)) = self.editor.swallow_ime.take() {
@@ -4202,6 +4272,55 @@ mod tests {
         assert_eq!(app.settings.terminal_shell, "pwsh ");
         app.handle(Action::SetTerminalShell("a\nb".into()), &ctx);
         assert_eq!(app.settings.terminal_shell, "a b");
+    }
+
+    #[test]
+    fn the_shell_menu_switch_calls_the_backend_and_only_sticks_when_it_works() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        // 0：沒呼叫過；1：最後一次要加入；-1：最後一次要移除
+        static LAST: AtomicI32 = AtomicI32::new(0);
+        fn works(on: bool, labels: &shell_integration::Labels) -> Result<(), String> {
+            assert!(!labels.open.is_empty() && !labels.pick.is_empty());
+            LAST.store(if on { 1 } else { -1 }, Ordering::SeqCst);
+            Ok(())
+        }
+        fn fails(_: bool, _: &shell_integration::Labels) -> Result<(), String> {
+            Err("拒絕存取".to_owned())
+        }
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.shell_menu_backend = works;
+        app.sync_shell_menu();
+        assert_eq!(LAST.load(Ordering::SeqCst), 0, "設定沒開時不碰系統");
+        app.handle(Action::SetShellMenu(true), &ctx);
+        assert!(app.settings.shell_menu);
+        assert_eq!(LAST.load(Ordering::SeqCst), 1);
+        LAST.store(0, Ordering::SeqCst);
+        app.sync_shell_menu();
+        assert_eq!(LAST.load(Ordering::SeqCst), 1, "開著時啟動會更新成目前的位置與語言");
+        app.handle(Action::SetShellMenu(false), &ctx);
+        assert!(!app.settings.shell_menu);
+        assert_eq!(LAST.load(Ordering::SeqCst), -1);
+        // 失敗：開關維持原狀，輸出面板有錯誤
+        app.shell_menu_backend = fails;
+        let before = app.log.len();
+        app.handle(Action::SetShellMenu(true), &ctx);
+        assert!(!app.settings.shell_menu, "加入失敗，不能記成已開啟");
+        assert!(app.log.len() > before && app.log.last().is_some_and(|l| l.1.contains("拒絕存取")));
+    }
+
+    #[test]
+    fn paths_from_the_command_line_open_on_the_first_frame_and_a_folder_asks_which_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("sub"));
+        std::fs::write(&a, "x").unwrap();
+        std::fs::create_dir(&b).unwrap();
+        std::fs::write(b.join("c.txt"), "y").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.pick_files_in = |d| vec![d.join("c.txt")];
+        app.open_dropped(vec![a.clone(), b.clone()]);
+        assert!(app.find_open_path(&a).is_some(), "檔案直接開");
+        assert!(app.find_open_path(&b.join("c.txt")).is_some(), "資料夾：從交談窗選的檔案");
     }
 
     #[test]
@@ -5129,12 +5248,15 @@ fn main() -> eframe::Result {
             // 關掉 egui 內建的「Ctrl ＋／－ 縮放整個介面」：我們的 Ctrl ＋／－ 是調整編輯區字級
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             apply_font_size(&cc.egui_ctx, settings.font_size);
-            // 第一個命令列參數視為要開啟的檔案
-            let initial = std::env::args_os().nth(1).map(PathBuf::from);
-            let restore = initial.is_none();
+            // 命令列參數都視為要開啟的路徑（檔案直接開；資料夾顯示選檔交談窗）：右鍵選單選了好幾個檔案時一起帶進來
+            let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+            let initial = None;
+            let restore = paths.is_empty();
             // 先載入自訂語言，這樣還原的分頁一開始就有顏色
             let syntax_msgs = syntax::load_user_languages(syntax::syntax_dir().as_deref());
             let mut app = App::new(initial, settings);
+            app.startup_paths = paths;
+            app.sync_shell_menu();
             for m in syntax_msgs {
                 app.push(LogKind::Warn, m);
             }

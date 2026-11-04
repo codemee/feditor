@@ -169,6 +169,8 @@ pub struct Settings {
     pub tab_widths: std::collections::BTreeMap<String, u8>,
     /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
     pub tab_spaces: bool,
+    /// 在檔案總管（Windows）、Finder（macOS）的右鍵選單加入 FEditor。
+    pub shell_menu: bool,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
     pub terminal_font_size: f32,
     /// 終端機文字和底色的最低對比度；1 表示不調整。
@@ -198,6 +200,7 @@ impl Default for Settings {
             tab_width: DEFAULT_TAB_COLUMNS,
             tab_widths: Default::default(),
             tab_spaces: false,
+            shell_menu: false,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
@@ -280,6 +283,11 @@ impl Settings {
                         settings.tab_widths.insert(name.to_owned(), n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8);
                     }
                 }
+                "shell_menu" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.shell_menu = on;
+                    }
+                }
                 "tab_spaces" => {
                     if let Some(on) = parse_bool(value) {
                         settings.tab_spaces = on;
@@ -353,6 +361,7 @@ impl Settings {
         text.push_str(&format!("font_size = {}\n", self.font_size));
         text.push_str(&format!("preview_font_size = {}\n", self.preview_font_size));
         text.push_str(&format!("tab_width = {}\ntab_spaces = {}\n", self.tab_width, self.tab_spaces));
+        text.push_str(&format!("shell_menu = {}\n", self.shell_menu));
         for (name, width) in &self.tab_widths {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
             if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
@@ -565,6 +574,16 @@ mod tests {
         s.view.ruler = true;
         assert_eq!(Settings::parse(&s.to_text()).view.ruler, true);
     }
+    #[test]
+    fn the_shell_menu_switch_is_off_by_default_and_round_trips() {
+        assert!(!Settings::default().shell_menu);
+        assert!(Settings::parse("shell_menu = true").shell_menu);
+        assert!(!Settings::parse("shell_menu = maybe").shell_menu);
+        let mut s = Settings::default();
+        s.shell_menu = true;
+        assert!(Settings::parse(&s.to_text()).shell_menu);
+    }
+
     #[test]
     fn tab_settings_have_a_default_per_file_type_overrides_and_a_global_spaces_switch() {
         let d = Settings::default();
