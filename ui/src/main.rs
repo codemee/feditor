@@ -341,6 +341,17 @@ fn unit_label(ui: &mut egui::Ui, unit: &str) {
 
 /// 工具列的群組分隔線：只畫一小段，比按鈕 hover 時的底色還矮。
 /// （`ui.separator()` 在橫向排列裡會撐滿整列高度，看起來太長。）
+/// 狀態列的群組分隔線：和這一列的控制項一樣高，比工具列的短。
+fn status_separator(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, ui.spacing().interact_size.y), egui::Sense::hover());
+    let x = rect.center().x;
+    let color = ui.visuals().widgets.noninteractive.bg_stroke.color;
+    ui.painter().line_segment(
+        [egui::pos2(x, rect.center().y - 7.0), egui::pos2(x, rect.center().y + 7.0)],
+        egui::Stroke::new(1.0, color),
+    );
+}
+
 fn group_separator(ui: &mut egui::Ui) {
     // 配置的高度與按鈕相同，這樣不會改變整列的對齊；寬度只留線本身，
     // 加上兩側各一個按鈕間距，群組之間就是 4 + 1 + 4 = 9 像素
@@ -3544,7 +3555,8 @@ impl App {
                     self.doc.lang = choice;
                 }
 
-                // 執行環境（畫面上在語言的左邊）：有找環境規則的語言才顯示（目前是 Python）；點一下可以改選
+                // 執行環境（語言的左邊，前後各有分隔線自成一組）：有找環境規則的語言才顯示（目前是 Python）。
+                // 做成和語言、編碼一樣的下拉清單，看得出來可以點；清單裡有所有候選、手動改選、重新搜尋
                 if let (Some(lang), Some(file)) = (resolved, self.doc.path.as_deref())
                     && let Some(rule) = runtime_env::rule_for(lang.name)
                     && let Some(dir) = file.parent()
@@ -3559,34 +3571,37 @@ impl App {
                             None => tf!("{}：找不到", rule.label),
                         },
                     };
-                    let response = ui
-                        .add(egui::Label::new(text).sense(egui::Sense::click()))
+                    status_separator(ui);
+                    egui::ComboBox::from_id_salt("runtime_env")
+                        .icon(icons::combo_chevron)
+                        .width(combo_width(ui, [text.as_str()]))
+                        .selected_text(text.as_str())
+                        .show_ui(ui, |ui| {
+                            flat_list(ui, |ui| {
+                                ui.label(egui::RichText::new(tf!("{} 執行環境", rule.label)).color(ui.visuals().weak_text_color()));
+                                if ui.selectable_label(manual.is_none(), t("自動")).clicked() {
+                                    action = Some(Action::SetRuntime(project.clone(), None));
+                                }
+                                for item in found.iter().flat_map(|r| r.items.iter()) {
+                                    let c = &item.candidate;
+                                    let label = match &item.version {
+                                        Some(v) => format!("{} {} · {}  ({})", rule.label, v, c.origin, c.program.display()),
+                                        None => format!("{}（{}）", c.program.display(), t("無法執行")),
+                                    };
+                                    let selected = manual.as_deref() == Some(c.key().as_str());
+                                    if ui.add_enabled(item.version.is_some(), egui::Button::selectable(selected, label)).clicked() {
+                                        action = Some(Action::SetRuntime(project.clone(), Some(c.key())));
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button(t("重新搜尋")).clicked() {
+                                    action = Some(Action::RefreshRuntime(dir.to_path_buf()));
+                                }
+                            })
+                        })
+                        .response
                         .on_hover_text(t("執行環境（自動搜尋）。點一下可以改選別的直譯器"));
-                    egui::Popup::menu(&response).show(|ui| {
-                        no_hover_outline(ui);
-                        ui.label(tf!("{} 執行環境", rule.label));
-                        if ui.selectable_label(manual.is_none(), t("自動")).clicked() {
-                            action = Some(Action::SetRuntime(project.clone(), None));
-                            ui.close();
-                        }
-                        for item in found.iter().flat_map(|r| r.items.iter()) {
-                            let c = &item.candidate;
-                            let label = match &item.version {
-                                Some(v) => format!("{} {} · {}  ({})", rule.label, v, c.origin, c.program.display()),
-                                None => format!("{}（{}）", c.program.display(), t("無法執行")),
-                            };
-                            let selected = manual.as_deref() == Some(c.key().as_str());
-                            if ui.add_enabled(item.version.is_some(), egui::Button::selectable(selected, label)).clicked() {
-                                action = Some(Action::SetRuntime(project.clone(), Some(c.key())));
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        if ui.button(t("重新搜尋")).clicked() {
-                            action = Some(Action::RefreshRuntime(dir.to_path_buf()));
-                            ui.close();
-                        }
-                    });
+                    status_separator(ui);
                 }
 
                 // 游標位置（畫面上在語言的左邊）：行、欄都從 1 起算
