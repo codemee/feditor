@@ -6,7 +6,11 @@
 
 ### Added
 - **Terminal: clickable URLs**: hold Ctrl and hover a URL to underline it, and click to open it in the default browser (including URLs that wrap over several rows).
-- **Search inside the terminal**: press Ctrl+Shift+F while a terminal has the focus to open a search bar; it searches live, ignoring case and including the history scrolled out of view, highlights the matches, moves between them with Enter / Shift+Enter, and closes with Esc.
+- **Links to local files in the preview**: relative paths (relative to the document's folder), absolute paths and file:// URLs open in a new editor tab, and every other link (URLs, e-mail addresses, ...) goes to the default browser.
+- **Search inside the terminal**: press Ctrl+F (as in the editor; a full-screen program still gets it while it runs) while a terminal has the focus to open a search bar; it searches live, ignoring case and including the history scrolled out of view, highlights the matches, moves between them with Enter / Shift+Enter, and closes with Esc.
+
+### Fixed
+- **Terminal: pressing Ctrl (or Shift, Alt) alone sent Ctrl+C**: a modifier key by itself is also a key event, and the first letter of its name was mistaken for a Ctrl+letter (ControlLeft → Ctrl+C). Now only real letter keys are turned into control characters.
 
 ## [0.2.1] - 2026-11-03
 
