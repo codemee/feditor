@@ -5,6 +5,7 @@
 ## Unreleased
 
 ### Added
+- **Margin guide**: a new "Margin guide" column in the "Editor" group of the settings panel (80 by default, 0 draws nothing); the editor draws a faint vertical line at the right edge of that column. A full-width character counts as two columns, as on screen.
 - **A list of shells and a default terminal**: the shells available on this machine are found automatically (Windows: PowerShell 7, Windows PowerShell, cmd, Git Bash, WSL, Nushell; macOS / Linux: `$SHELL` and `/etc/shells`). A dropdown next to the toolbar's terminal button adds a terminal with the shell you pick (affecting only that terminal), each entry showing that shell's icon (on Windows taken from the executable itself; terminal tabs show it too); the arrow is as tall as the other toolbar buttons; the button itself uses the "Default terminal" in the "Terminal" group of the settings panel (choose from the list or write your own command).
 - **Terminal: clickable URLs**: hold Ctrl and hover a URL to underline it, and click to open it in the default browser (including URLs that wrap over several rows).
 - **Links to local files in the preview**: relative paths (relative to the document's folder), absolute paths and file:// URLs open in a new editor tab, and every other link (URLs, e-mail addresses, ...) goes to the default browser.
@@ -21,6 +22,7 @@
 - The ends of the status bar and the output panel line up with the outer edges of the pane cards instead of sticking out past the rounded frames.
 
 ### Added
+- **Margin guide**: a new "Margin guide" column in the "Editor" group of the settings panel (80 by default, 0 draws nothing); the editor draws a faint vertical line at the right edge of that column. A full-width character counts as two columns, as on screen.
 - **Mouse reporting in the terminal**: when a program (vim, htop and the like) asks for mouse reporting with sequences such as `ESC[?1000h`, presses, releases, drags and the wheel are sent to it; holding Shift still lets you select text.
 - **Terminal settings** (a new "Terminal" group in the settings panel): the font size (Ctrl +/- adjusts it when a terminal is clicked), the minimum contrast between text and background (previously fixed at 3:1, now adjustable or off), and the shell new terminals run (arguments allowed).
 
@@ -31,6 +33,7 @@
 - **External change detection now uses a file-system watcher** (`notify`): instead of polling only the active file of the focused pane once a second, the folders of all open files are watched, covering every tab in every pane; a change is handled as soon as it settles (short debounce), with a re-check every 5 seconds and when the window regains focus as a fallback. A background tab without unsaved changes is reloaded automatically; otherwise its tab is marked "(changed on disk)" and you are asked when you switch to it.
 
 ### Added
+- **Margin guide**: a new "Margin guide" column in the "Editor" group of the settings panel (80 by default, 0 draws nothing); the editor draws a faint vertical line at the right edge of that column. A full-width character counts as two columns, as on screen.
 - **Terminal** (experimental): the `>_` toolbar button or `` Ctrl+Shift+` `` adds a terminal running the system's default shell. A terminal is a kind of tab, labeled only with a name ("Terminal 1", "Terminal 2", ... by default; double-click the tab to name it yourself): you can open many, drag a tab into any pane's tab bar or to a pane's side to split it into a new pane, and the shell keeps running while it is not shown; `` Ctrl+` `` cycles focus through the terminals. Colors, full-screen programs, IME, copy/paste and wheel scrolling are supported. Terminal tabs are saved in the session: after a restart they come back in the same order with the same names (each is a fresh shell).
 - **Minimum-contrast guard in the terminal**: text whose contrast with its background is below 3:1 (black on black, pale yellow on a light background, ...) is adjusted toward something readable while keeping its hue; text with enough contrast is untouched, and graphic glyphs (blocks, box drawing, Powerline symbols) are never adjusted.
 - **Terminal colors belong to the color scheme**: schemes gain 16 terminal colors (black, red, green, yellow, blue, magenta, cyan, white and their bright variants; the config keys are `term_*`). Each built-in dark and light scheme has its own set (Dracula, Nord, Catppuccin, Gruvbox, etc. use the palettes commonly used with them), custom schemes can adjust them, and unspecified ones are inherited from the base. The default text and background of the terminal also follow the scheme.
@@ -39,6 +42,7 @@
 ## [0.1.5] - 2026-11-03
 
 ### Added
+- **Margin guide**: a new "Margin guide" column in the "Editor" group of the settings panel (80 by default, 0 draws nothing); the editor draws a faint vertical line at the right edge of that column. A full-width character counts as two columns, as on screen.
 - **Preview**: the "eye" button on the toolbar (Ctrl+Shift+P) opens a preview pane (there is only one in the whole program, shared by all documents), following the focused document, its tab, and its text. Built in: Markdown, CSV/TSV (tables), JSON/TOML/YAML (collapsible trees, with the line and column of errors), and SVG.
 - **Preview plugins**: `previews/*.js` in the config folder (the settings panel has a "Preview folder" button). Plugins run in the macro sandbox, declare `@extensions` and `@output` (`markdown`, `table`, `tree`, `svg`, `text`), and define `preview(text, info)`. Examples included: a log-file table, an INI tree, and a to-do list.
 - **The pane layout is remembered**: after closing and reopening, every pane (its tabs, active tab, caret, divider ratios, focus, and preview panes) comes back; files that no longer exist are skipped, and a pane with no file left to open does not reappear.
@@ -72,6 +76,7 @@
 ## [0.1.3] - 2026-11-02
 
 ### Added
+- **Margin guide**: a new "Margin guide" column in the "Editor" group of the settings panel (80 by default, 0 draws nothing); the editor draws a faint vertical line at the right edge of that column. A full-width character counts as two columns, as on screen.
 - **Split panes**: drag a tab to the left, right, or bottom edge of the editor area to split off a new pane in that direction (the area is previewed while dragging). Panes nest, and each has its own independent tab bar and a close-pane button (the pane's tabs move to the neighbouring pane). Panes are rounded cards with a gap between them (the focused one has an accent border). Dividers can be dragged, and a pane never gets smaller than 240×140 points.
 - **Interface language**: a three-state button in the settings panel cycles "Follow system" (globe icon), "中文" (Chinese, a "中" icon), and "English" (an "En" icon), and the change applies immediately. With "Follow system", a Chinese system gets Chinese and everything else gets English.
 - The status bar shows the caret position as "行 X，欄 Y" (line X, column Y, starting at 1). In the column number, full-width characters (CJK ideographs, kana, Hangul, full-width punctuation) count as 1 or 2 columns, chosen under "欄號" (column number) in the settings panel (default 1).
@@ -87,6 +92,7 @@
 ## [0.1.2] - 2026-11-02
 
 ### Added
+- **Margin guide**: a new "Margin guide" column in the "Editor" group of the settings panel (80 by default, 0 draws nothing); the editor draws a faint vertical line at the right edge of that column. A full-width character counts as two columns, as on screen.
 - **Color schemes**: light and dark each get their own scheme. Built in: 11 dark (EVA, Dracula, Monokai, Solarized Dark, One Dark, Nord, Gruvbox Dark, Tokyo Night, Catppuccin Mocha / Macchiato / Frappé) and 7 light (Default Light, Solarized Light, GitHub Light, One Light, Gruvbox Light, VS Code Light+, Catppuccin Latte).
 - **Custom color schemes**: "Edit current scheme…" in the settings panel adjusts 25 colors with a live preview and saves to `themes\*.conf`; you can also write a scheme file yourself, which is re-read whenever the settings panel opens.
 - **Syntax coloring**:

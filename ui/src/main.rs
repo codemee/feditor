@@ -2564,6 +2564,23 @@ impl App {
                 }
             });
 
+            // 安全界線：在這一欄的右緣畫一條淺淺的垂直線；0 是不畫
+            form_row(ui, t("安全界線"), |ui| {
+                let v = self.settings.view;
+                let mut column = v.ruler_column;
+                let response = ui
+                    .add(
+                        egui::DragValue::new(&mut column)
+                            .range(0..=settings::MAX_RULER_COLUMN)
+                            .speed(0.5)
+                            .custom_formatter(|n, _| if n < 0.5 { t("不畫界線").to_owned() } else { tf!("{n} 欄", n = n as u32) }),
+                    )
+                    .on_hover_text(t("在編輯區的這一欄畫一條淺淺的垂直線，提醒一行不要寫得比它寬（全形字算兩欄）；拉到 0 就不畫"));
+                if response.changed() {
+                    action = Some(Action::SetView(settings::ViewOptions { ruler_column: column, ..v }));
+                }
+            });
+
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -4026,6 +4043,20 @@ mod tests {
         assert_eq!(app.settings.terminal_shell, "pwsh ");
         app.handle(Action::SetTerminalShell("a\nb".into()), &ctx);
         assert_eq!(app.settings.terminal_shell, "a b");
+    }
+
+    #[test]
+    fn the_ruler_column_is_a_view_option_changed_through_set_view() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        assert_eq!(app.settings.view.ruler_column, settings::DEFAULT_RULER_COLUMN);
+        let view = settings::ViewOptions { ruler_column: 72, ..app.settings.view };
+        app.handle(Action::SetView(view), &ctx);
+        assert_eq!(app.settings.view.ruler_column, 72);
+        let off = settings::ViewOptions { ruler_column: 0, ..app.settings.view };
+        app.handle(Action::SetView(off), &ctx);
+        assert_eq!(app.settings.view.ruler_column, 0);
+        assert!(app.settings.view.word_wrap == settings::ViewOptions::default().word_wrap, "其他的顯示選項不受影響");
     }
 
     #[test]

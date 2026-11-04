@@ -102,6 +102,7 @@
 - **配色**：淺色與深色**各自選一套**。內建深色 11 套（EVA 為預設，另有 Dracula、Monokai、Solarized Dark、One Dark、Nord、Gruvbox Dark、Tokyo Night、Catppuccin 三款）、淺色 7 套（預設淺色、Solarized Light、GitHub Light、One Light、Gruvbox Light、VS Code Light+、Catppuccin Latte）。「編輯目前配色…」可以逐一調整 41 種顏色（含終端機的 16 色）並另存成自訂配色。
 - **字型**：只列出等寬字型，預設是作業系統預設的等寬字型。**字級**用面板或快捷鍵調整，兩邊同步。
 - **顯示選項**：行號、標示目前這一行、顯示空白字元、語法上色、自動換行。
+- **安全界線**：設定一個欄數（預設 80，拉到 0 就不畫），編輯區就在那一欄的右緣畫一條淺淺的垂直線，提醒一行不要寫得比它寬。欄數和畫面一致，全形字算兩欄。
 - **終端機**：字級（點在終端機上時 Ctrl ＋／－ 調的就是它，和編輯區、預覽各自獨立）、文字與底色的最低對比度（可以關掉）、預設終端機（從偵測到的 shell 清單選，也可以自己寫指令，可以加參數）。
 - 設定存在設定資料夾（Windows `%APPDATA%\feditor\`、macOS `~/Library/Application Support/feditor/`、Linux `~/.config/feditor/`）；設定面板有按鈕可以直接開啟配色、預覽外掛資料夾。
 

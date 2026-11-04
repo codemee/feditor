@@ -361,6 +361,11 @@ fn row_of_caret(state: &EditorState, buffer: &Buffer, line: usize, col: usize, k
 }
 
 /// 空白字元的標記：空格畫小點、Tab 畫箭頭、全形空白畫小方框，行尾畫換行符號。
+/// 安全界線的水平位置：`column` 欄（0 是不畫）文字的右緣，文字區的左邊是 `text_left`。
+fn ruler_x(column: u16, text_left: f32, char_w: f32) -> Option<f32> {
+    (column > 0).then(|| text_left + column as f32 * char_w)
+}
+
 fn paint_whitespace(
     painter: &Painter,
     layout: &LineLayout,
@@ -727,6 +732,17 @@ impl EditorView<'_> {
                 let sel_color = ui.visuals().selection.bg_fill;
                 let find_color = ui.visuals().warn_fg_color.gamma_multiply(0.35);
                 let faint = ui.visuals().weak_text_color().gamma_multiply(0.6);
+
+                // 安全界線：第 N 欄的右緣畫一條淺淺的垂直線（畫在文字底下，不擋字）。
+                // 只在文字區裡才畫（捲到左邊看不到的、或被行號區蓋住的不畫）
+                if let Some(x) = ruler_x(options.ruler_column, text_left, char_w) {
+                    if x > visible.left() + metrics.gutter_w && x < visible.right() {
+                        painter.line_segment(
+                            [pos2(x, visible.top()), pos2(x, visible.bottom())],
+                            Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.3)),
+                        );
+                    }
+                }
 
                 for layout in &layouts {
                     let y = origin.y + layout.row as f32 * row_h;
