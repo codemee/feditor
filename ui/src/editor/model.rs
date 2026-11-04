@@ -111,6 +111,8 @@ pub struct EditorState {
     pub view_rows: usize,
     /// 目前看過的最長一行的顯示欄數。用來決定橫向捲動的範圍；只會增加，載入新檔案時歸零。
     pub max_cols: usize,
+    /// 上次畫的時候的 Tab 欄寬：變了就要重算 `max_cols`（它只會往大長）。
+    pub tab_seen: usize,
     /// 組字內容被我們直接寫進緩衝區之後（焦點被別的輸入框取走時），輸入法稍後可能還會送一個
     /// 內容相同的 Commit，這時它已經是別的輸入框有焦點，必須丟掉，不然文字會被打進那個輸入框。
     /// 值是（文字，還要留意幾個畫面）。
@@ -491,16 +493,27 @@ impl EditorState {
         self.insert_text(buf, &format!("\n{indent}"))
     }
 
-    /// Tab：選取跨多行時整段縮排，否則插入一個 Tab。
+    /// Tab：選取跨多行時整段縮排，否則插入一個 Tab；設定成用空白取代 Tab 時，改成插入空白補到下一個 Tab 位置
+    ///（有多個游標時每個游標都插入一整個 Tab 欄寬的空白）。
     pub fn tab(&mut self, buf: &mut Buffer) -> bool {
         let (a, b) = self.selected_lines(buf);
         if a != b {
             return self.indent_lines(buf);
         }
-        self.insert_text(buf, "\t")
+        if !motion::tab_uses_spaces() {
+            return self.insert_text(buf, "\t");
+        }
+        let width = motion::tab_width();
+        let spaces = if self.has_multi() {
+            width
+        } else {
+            let (line, col) = Self::line_and_col(buf, self.sel.range().start);
+            width - motion::display_col(&buf.line_text(line), col) % width
+        };
+        self.insert_text(buf, &" ".repeat(spaces))
     }
 
-    /// Shift＋Tab：把選到的行少縮排一層（一個 Tab，或最多 [motion::TAB_WIDTH] 個空白）。
+    /// Shift＋Tab：把選到的行少縮排一層（一個 Tab，或最多 [motion::tab_width] 個空白）。
     pub fn shift_tab(&mut self, buf: &mut Buffer) -> bool {
         self.unindent_lines(buf)
     }
@@ -980,6 +993,32 @@ mod tests {
         let (mut b, mut s) = setup("  |  foo");
         s.enter(&mut b);
         assert_eq!(show(&b, &s), "  \n  |  foo", "只複製游標前面的縮排");
+    }
+
+    #[test]
+    fn tab_pads_with_spaces_to_the_next_tab_stop_when_spaces_replace_tabs() {
+        let spaces = motion::set_tab_uses_spaces(true);
+        let width = motion::set_tab_width(4);
+        let (mut b, mut s) = setup("|x");
+        s.tab(&mut b);
+        assert_eq!(show(&b, &s), "    |x", "行首：一整個 Tab 欄寬");
+        let (mut b, mut s) = setup("ab|c");
+        s.tab(&mut b);
+        assert_eq!(show(&b, &s), "ab  |c", "補到下一個 Tab 位置（第 4 欄）");
+        let (mut b, mut s) = setup("你|");
+        s.tab(&mut b);
+        assert_eq!(show(&b, &s), "你  |", "全形字佔兩欄，只需要補兩個空白");
+        motion::set_tab_width(8);
+        let (mut b, mut s) = setup("ab|c");
+        s.tab(&mut b);
+        assert_eq!(show(&b, &s), "ab      |c", "Tab 欄寬 8：補 6 個空白");
+        // 關掉之後還是插入 Tab 字元
+        motion::set_tab_uses_spaces(false);
+        let (mut b, mut s) = setup("|x");
+        s.tab(&mut b);
+        assert_eq!(show(&b, &s), "\t|x");
+        motion::set_tab_width(width);
+        motion::set_tab_uses_spaces(spaces);
     }
 
     #[test]

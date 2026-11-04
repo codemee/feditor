@@ -282,7 +282,7 @@ fn layout_segments(ui: &Ui, spec: &TextSpec, text: &str, kinds: Option<&[Kind]>)
         let kind = kinds.and_then(|k| k.get(idx)).copied().unwrap_or(Kind::Plain);
         if c == '\t' {
             flush(&mut out, &mut run, run_col, run_cells, run_is_ascii, run_kind);
-            col = (col / motion::TAB_WIDTH + 1) * motion::TAB_WIDTH;
+            col = (col / motion::tab_width() + 1) * motion::tab_width();
             continue;
         }
         let width = motion::char_width(c);
@@ -392,7 +392,7 @@ fn paint_whitespace(
                 col += 2;
             }
             '\t' => {
-                let next = (col / motion::TAB_WIDTH + 1) * motion::TAB_WIDTH;
+                let next = (col / motion::tab_width() + 1) * motion::tab_width();
                 let x1 = text_left + next as f32 * cw;
                 let (a, b) = (x0 + cw * 0.2, x1 - cw * 0.2);
                 painter.line_segment([pos2(a, mid), pos2(b, mid)], stroke);
@@ -448,6 +448,11 @@ impl EditorView<'_> {
             },
         };
         state.clamp(buffer);
+        // Tab 欄寬變了（設定改了、或這份文件的檔案類型不同）：橫向捲動的範圍要重算（它只會往大長）
+        if state.tab_seen != motion::tab_width() {
+            state.tab_seen = motion::tab_width();
+            state.max_cols = 0;
+        }
 
         // 自動換行：折行寬度由目前的可用寬度決定。太大的文件不換行（見 wrap::MAX_LINES）
         let wrap_cols = (options.word_wrap && buffer.line_count() <= wrap::MAX_LINES).then(|| {

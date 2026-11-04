@@ -129,6 +129,11 @@ pub struct ViewOptions {
     pub ruler_column: u16,
 }
 
+/// Tab 欄數的範圍與預設（設定面板用；實際換算在 `feditor_core::motion`）。
+pub const MIN_TAB_COLUMNS: u8 = 1;
+pub const MAX_TAB_COLUMNS: u8 = 16;
+pub const DEFAULT_TAB_COLUMNS: u8 = 4;
+
 /// 安全界線欄數的範圍。
 pub const MIN_RULER_COLUMN: u16 = 1;
 pub const MAX_RULER_COLUMN: u16 = 500;
@@ -158,6 +163,12 @@ pub struct Settings {
     pub font_size: f32,
     /// 預覽窗格內文的字級（點在預覽窗格上時，縮放快捷鍵調的是它）。
     pub preview_font_size: f32,
+    /// 一個 Tab 佔幾欄（沒有個別設定的檔案類型都用這個）。
+    pub tab_width: u8,
+    /// 依檔案類型（語法上色的語言名稱，例如 `Rust`、`Python`）個別設定的 Tab 欄數。
+    pub tab_widths: std::collections::BTreeMap<String, u8>,
+    /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
+    pub tab_spaces: bool,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
     pub terminal_font_size: f32,
     /// 終端機文字和底色的最低對比度；1 表示不調整。
@@ -184,6 +195,9 @@ impl Default for Settings {
             font_family: None,
             font_size: DEFAULT_FONT_SIZE,
             preview_font_size: DEFAULT_PREVIEW_FONT_SIZE,
+            tab_width: DEFAULT_TAB_COLUMNS,
+            tab_widths: Default::default(),
+            tab_spaces: false,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
@@ -201,6 +215,11 @@ impl Settings {
     /// 這個主題目前選的配色名稱（空字串表示預設）。
     pub fn scheme_name(&self, dark: bool) -> &str {
         if dark { &self.dark_scheme } else { &self.light_scheme }
+    }
+
+    /// 這個檔案類型（語法上色的語言名稱；純文字等沒有語言的是 `None`）的 Tab 欄數：有個別設定就用它，否則用預設的。
+    pub fn tab_width_for(&self, language: Option<&str>) -> usize {
+        language.and_then(|name| self.tab_widths.get(name)).copied().unwrap_or(self.tab_width) as usize
     }
 
     pub fn set_scheme_name(&mut self, dark: bool, name: &str) {
@@ -247,6 +266,23 @@ impl Settings {
                         } else {
                             DEFAULT_PREVIEW_FONT_SIZE
                         };
+                    }
+                }
+                "tab_width" => {
+                    if let Ok(n) = value.parse::<u32>() {
+                        settings.tab_width = n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8;
+                    }
+                }
+                // tab_width.語言名稱 = 欄數：這個檔案類型自己的 Tab 欄數
+                key if key.starts_with("tab_width.") => {
+                    let name = key["tab_width.".len()..].trim();
+                    if let (false, Ok(n)) = (name.is_empty(), value.parse::<u32>()) {
+                        settings.tab_widths.insert(name.to_owned(), n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8);
+                    }
+                }
+                "tab_spaces" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.tab_spaces = on;
                     }
                 }
                 "terminal_font_size" => {
@@ -316,6 +352,13 @@ impl Settings {
         }
         text.push_str(&format!("font_size = {}\n", self.font_size));
         text.push_str(&format!("preview_font_size = {}\n", self.preview_font_size));
+        text.push_str(&format!("tab_width = {}\ntab_spaces = {}\n", self.tab_width, self.tab_spaces));
+        for (name, width) in &self.tab_widths {
+            // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
+            if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
+                text.push_str(&format!("tab_width.{name} = {width}\n"));
+            }
+        }
         text.push_str(&format!("terminal_font_size = {}\n", self.terminal_font_size));
         text.push_str(&format!("terminal_min_contrast = {}\n", self.terminal_min_contrast));
         if !self.terminal_shell.is_empty() {
@@ -522,6 +565,36 @@ mod tests {
         s.view.ruler = true;
         assert_eq!(Settings::parse(&s.to_text()).view.ruler, true);
     }
+    #[test]
+    fn tab_settings_have_a_default_per_file_type_overrides_and_a_global_spaces_switch() {
+        let d = Settings::default();
+        assert_eq!((d.tab_width, d.tab_spaces, d.tab_widths.len()), (4, false, 0));
+        let s = Settings::parse("tab_width = 8\ntab_spaces = true\ntab_width.Python = 4\ntab_width.C/C++ = 2\n");
+        assert_eq!((s.tab_width, s.tab_spaces), (8, true));
+        assert_eq!(s.tab_width_for(Some("Python")), 4);
+        assert_eq!(s.tab_width_for(Some("C/C++")), 2);
+        assert_eq!(s.tab_width_for(Some("Go")), 8, "沒有個別設定的用預設的");
+        assert_eq!(s.tab_width_for(None), 8, "純文字也用預設的");
+        // 範圍與壞值
+        assert_eq!(Settings::parse("tab_width = 0").tab_width, MIN_TAB_COLUMNS);
+        assert_eq!(Settings::parse("tab_width = 99").tab_width, MAX_TAB_COLUMNS);
+        assert_eq!(Settings::parse("tab_width = wide").tab_width, DEFAULT_TAB_COLUMNS);
+        assert_eq!(Settings::parse("tab_width.Rust = 99").tab_widths["Rust"], MAX_TAB_COLUMNS);
+        assert!(Settings::parse("tab_width.Rust = x\ntab_width. = 3").tab_widths.is_empty());
+        // 存檔再讀回來（含名稱裡有空白、符號的語言）
+        let mut custom = Settings::default();
+        custom.tab_width = 2;
+        custom.tab_spaces = true;
+        custom.tab_widths.insert("Shell".to_owned(), 8);
+        custom.tab_widths.insert("My Lang+".to_owned(), 3);
+        custom.tab_widths.insert("bad=name".to_owned(), 5);
+        let back = Settings::parse(&custom.to_text());
+        assert_eq!((back.tab_width, back.tab_spaces), (2, true));
+        assert_eq!(back.tab_widths.get("Shell"), Some(&8));
+        assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
+        assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
     #[test]
     fn terminal_settings_are_validated_and_round_trip() {
         let d = Settings::default();

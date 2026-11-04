@@ -153,24 +153,26 @@ impl EditorState {
         true
     }
 
-    /// 縮排一層（每個非空行行首加一個 Tab）。
+    /// 縮排一層（每個非空行行首加一個 Tab；設定成用空白取代 Tab 時，加一個 Tab 欄寬的空白）。
     pub fn indent_lines(&mut self, buf: &mut Buffer) -> bool {
-        self.reindent(buf, |l| {
+        let indent = if motion::tab_uses_spaces() { " ".repeat(motion::tab_width()) } else { "\t".to_owned() };
+        let added = indent.chars().count() as isize;
+        self.reindent(buf, move |l| {
             if l.is_empty() {
                 (String::new(), 0)
             } else {
-                (format!("\t{l}"), 1)
+                (format!("{indent}{l}"), added)
             }
         })
     }
 
-    /// 反縮排一層（行首一個 Tab，或最多 [`motion::TAB_WIDTH`] 個空白）。
+    /// 反縮排一層（行首一個 Tab，或最多 [`motion::tab_width`] 個空白）。
     pub fn unindent_lines(&mut self, buf: &mut Buffer) -> bool {
         self.reindent(buf, |l| {
             let n = if l.starts_with('\t') {
                 1
             } else {
-                l.chars().take(motion::TAB_WIDTH).take_while(|c| *c == ' ').count()
+                l.chars().take(motion::tab_width()).take_while(|c| *c == ' ').count()
             };
             (l.chars().skip(n).collect(), -(n as isize))
         })
@@ -336,6 +338,25 @@ mod tests {
         s.unindent_lines(&mut b);
         assert_eq!(b.text(), "  x", "空白最多拿掉 TAB_WIDTH 個");
         assert_eq!(s.sel, Selection::collapsed(3));
+    }
+
+    #[test]
+    fn indenting_with_spaces_adds_a_tab_width_of_spaces_and_unindent_takes_them_back() {
+        let spaces = motion::set_tab_uses_spaces(true);
+        let width = motion::set_tab_width(2);
+        let (mut b, mut s) = setup("a\n\nb", 0, 4);
+        assert!(s.indent_lines(&mut b));
+        assert_eq!(b.text(), "  a\n\n  b", "一個 Tab 欄寬（2）的空白");
+        assert_eq!(s.sel, Selection { anchor: 2, head: 8 });
+        assert!(s.unindent_lines(&mut b));
+        assert_eq!(b.text(), "a\n\nb");
+        assert_eq!(s.sel, Selection { anchor: 0, head: 4 });
+        // 用空白縮排的檔案裡原有的 Tab 也一樣退得掉
+        let (mut b, mut s) = setup("\tx", 2, 2);
+        assert!(s.unindent_lines(&mut b));
+        assert_eq!(b.text(), "x");
+        motion::set_tab_width(width);
+        motion::set_tab_uses_spaces(spaces);
     }
 
     #[test]

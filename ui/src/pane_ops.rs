@@ -828,7 +828,7 @@ impl App {
                         let reveal = std::mem::take(&mut find.reveal);
                         let highlight = find.current_chars.clone();
                         // 使用者在編輯區改了文字：標成未儲存，之前找到的位置與筆數作廢
-                        if show_pane_editor(ui, id, doc, editor, options, highlight, reveal) {
+                        if show_pane_editor(ui, id, doc, editor, options, highlight, reveal, &*settings) {
                             find.invalidate();
                         }
                     }
@@ -837,7 +837,7 @@ impl App {
                     if let Some(terminal) = d.terminal.as_mut() {
                         crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
                     } else {
-                        show_pane_editor(ui, id, d, e, options, None, false);
+                        show_pane_editor(ui, id, d, e, options, None, false, &*settings);
                     }
                 }
             });
@@ -941,8 +941,11 @@ fn show_pane_editor(
     options: ViewOptions,
     highlight: Option<Range<usize>>,
     reveal: bool,
+    settings: &crate::settings::Settings,
 ) -> bool {
     let resolved = syntax::resolve(doc.lang, doc.path.as_deref(), &doc.buffer);
+    // Tab 欄寬依這份文件的檔案類型（沒有語言的純文字用預設的）；畫完還原，免得影響別的窗格與狀態列
+    let previous_tab = feditor_core::motion::set_tab_width(settings.tab_width_for(resolved.map(|l| l.name)));
     // 行註解符號：語言有就用語言的（手動選了語言、或沒有檔名時才有意義），否則看副檔名
     editor.comment_prefix = resolved
         .and_then(|l| l.line_comment())
@@ -958,5 +961,6 @@ fn show_pane_editor(
         language,
     }
     .show(ui);
+    feditor_core::motion::set_tab_width(previous_tab);
     doc.sync()
 }

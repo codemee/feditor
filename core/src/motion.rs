@@ -9,8 +9,39 @@ use std::ops::Range;
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 use unicode_width::UnicodeWidthChar;
 
-/// Tab 對齊的欄寬。
-pub const TAB_WIDTH: usize = 4;
+/// Tab 對齊的預設欄寬。
+pub const DEFAULT_TAB_WIDTH: usize = 4;
+/// Tab 欄寬的範圍。
+pub const MIN_TAB_WIDTH: usize = 1;
+pub const MAX_TAB_WIDTH: usize = 32;
+
+// Tab 的設定（欄寬、輸入 Tab 時是否改用空白）。編輯器只在畫面執行緒上跑，所以放在執行緒本地的變數：
+// 所有欄位換算函式（`display_col`、`expand_tabs`…）不用到處多傳一個參數。畫面在畫每一個編輯區、
+// 處理每一次輸入之前，依那份文件的檔案類型設好；測試的每個執行緒各有一份，預設是 4 欄、不用空白。
+thread_local! {
+    static TAB_WIDTH_CELL: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_TAB_WIDTH) };
+    static TAB_SPACES_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 目前的 Tab 欄寬。
+pub fn tab_width() -> usize {
+    TAB_WIDTH_CELL.get()
+}
+
+/// 設定 Tab 欄寬（拉回 [`MIN_TAB_WIDTH`]～[`MAX_TAB_WIDTH`]），回傳原本的值，方便用完還原。
+pub fn set_tab_width(width: usize) -> usize {
+    TAB_WIDTH_CELL.replace(width.clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH))
+}
+
+/// 輸入 Tab 時是不是改成輸入空白（縮排也用空白）。
+pub fn tab_uses_spaces() -> bool {
+    TAB_SPACES_CELL.get()
+}
+
+/// 設定輸入 Tab 時是否改用空白，回傳原本的值。
+pub fn set_tab_uses_spaces(on: bool) -> bool {
+    TAB_SPACES_CELL.replace(on)
+}
 
 fn chars_before(chunk: &str, byte_idx: usize) -> usize {
     chunk[..byte_idx].chars().count()
@@ -187,13 +218,13 @@ pub fn caret_column(rope: &Rope, line_start: usize, caret: usize, wide_cols: usi
 
 fn advance(col: usize, c: char) -> usize {
     if c == '\t' {
-        (col / TAB_WIDTH + 1) * TAB_WIDTH
+        (col / tab_width() + 1) * tab_width()
     } else {
         col + char_width(c)
     }
 }
 
-/// 這一行第 `char_idx` 個字元之前佔了幾欄（Tab 會對齊到 [`TAB_WIDTH`] 的倍數）。
+/// 這一行第 `char_idx` 個字元之前佔了幾欄（Tab 會對齊到 [`tab_width`] 的倍數）。
 /// 上下移動游標時要記住「想停在第幾欄」，就是用這個欄位。
 pub fn display_col(line: &str, char_idx: usize) -> usize {
     line.chars().take(char_idx).fold(0, advance)
@@ -219,7 +250,7 @@ pub fn char_at_display_col(line: &str, col: usize) -> usize {
 }
 
 /// 畫面上的位置（以欄為單位，可以是小數）對應到最近的字元邊界。
-/// 每個字元佔它的欄寬（Tab 對齊到 [`TAB_WIDTH`]），位置落在字元的前半就停在它前面、後半就停在後面。
+/// 每個字元佔它的欄寬（Tab 對齊到 [`tab_width`]），位置落在字元的前半就停在它前面、後半就停在後面。
 /// 超過行尾回傳行尾；零寬度的組合字元跟著前一個字元。
 pub fn char_index_at_col(line: &str, col: f32) -> usize {
     let mut start = 0usize;
@@ -240,7 +271,7 @@ pub fn expand_tabs(line: &str) -> String {
     let mut col = 0;
     for c in line.chars() {
         if c == '\t' {
-            let next = (col / TAB_WIDTH + 1) * TAB_WIDTH;
+            let next = (col / tab_width() + 1) * tab_width();
             out.extend(std::iter::repeat_n(' ', next - col));
             col = next;
         } else {
@@ -258,7 +289,7 @@ pub fn display_index(line: &str, char_idx: usize) -> usize {
     let mut col = 0;
     for c in line.chars().take(char_idx) {
         if c == '\t' {
-            let next = (col / TAB_WIDTH + 1) * TAB_WIDTH;
+            let next = (col / tab_width() + 1) * tab_width();
             index += next - col;
             col = next;
         } else {
@@ -277,7 +308,7 @@ pub fn char_index_from_display_index(line: &str, d: usize) -> usize {
     let mut col = 0;
     for (i, c) in line.chars().enumerate() {
         let width = if c == '\t' {
-            (col / TAB_WIDTH + 1) * TAB_WIDTH - col
+            (col / tab_width() + 1) * tab_width() - col
         } else {
             1
         };
@@ -314,7 +345,7 @@ pub fn wrap_rows(line: &str, max_cols: usize) -> Vec<Range<usize>> {
         while i < chars.len() {
             let c = chars[i];
             let w = if c == '\t' {
-                TAB_WIDTH - col % TAB_WIDTH
+                tab_width() - col % tab_width()
             } else {
                 char_width(c)
             };
@@ -568,6 +599,33 @@ mod tests {
         assert_eq!(char_index_from_display_index("a\tb", 2), 1, "Tab 的前半：停在 Tab 之前");
         assert_eq!(char_index_from_display_index("a\tb", 3), 2, "Tab 的後半：停在 Tab 之後");
         assert_eq!(char_index_from_display_index("abc", 99), 3, "超過行尾：行尾");
+    }
+
+    #[test]
+    fn the_tab_width_is_adjustable_clamped_and_restorable() {
+        assert_eq!(tab_width(), DEFAULT_TAB_WIDTH);
+        let before = set_tab_width(8);
+        assert_eq!(before, 4);
+        assert_eq!(tab_width(), 8);
+        assert_eq!(display_col("\tx", 1), 8);
+        assert_eq!(display_col("ab\tx", 3), 8);
+        assert_eq!(expand_tabs("a\tb"), format!("a{}b", " ".repeat(7)));
+        assert_eq!(display_index("a\tb", 2), 8, "Tab 展開成 7 個空白，b 在第 8 個");
+        assert_eq!(char_index_at_col("a\tb", 5.0), 2, "Tab 的後半：停在 Tab 之後");
+        set_tab_width(2);
+        assert_eq!(display_col("a\tb", 2), 2);
+        // 拉回範圍內
+        set_tab_width(0);
+        assert_eq!(tab_width(), MIN_TAB_WIDTH);
+        set_tab_width(999);
+        assert_eq!(tab_width(), MAX_TAB_WIDTH);
+        set_tab_width(before);
+        assert_eq!(tab_width(), 4);
+        // 空白取代 Tab 的設定
+        assert!(!tab_uses_spaces());
+        assert!(!set_tab_uses_spaces(true));
+        assert!(tab_uses_spaces());
+        set_tab_uses_spaces(false);
     }
 
     #[test]

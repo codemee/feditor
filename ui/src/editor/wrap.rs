@@ -14,6 +14,8 @@ pub const MAX_LINES: usize = 100_000;
 pub struct WrapMap {
     rev: u64,
     cols: usize,
+    /// 排版時的 Tab 欄寬：欄寬變了，行有幾列也跟著變。
+    tab: usize,
     chars: usize,
     /// `starts[line]` 是第 `line` 行的第一個畫面列的編號；最後多一項是總列數。
     starts: Vec<usize>,
@@ -26,12 +28,14 @@ impl WrapMap {
         if self.starts.len() == n + 1
             && self.rev == buf.revision()
             && self.cols == cols
+            && self.tab == motion::tab_width()
             && self.chars == buf.len_chars()
         {
             return;
         }
         self.rev = buf.revision();
         self.cols = cols;
+        self.tab = motion::tab_width();
         self.chars = buf.len_chars();
         self.starts.clear();
         self.starts.reserve(n + 1);
@@ -75,7 +79,7 @@ impl WrapMap {
 /// 某一行折成幾列。短的行不必讀文字內容。
 pub fn row_count(buf: &Buffer, line: usize, cols: usize) -> usize {
     // 每個字元最多佔 TAB_WIDTH 欄，字數乘上它還放得下就一定只有一列
-    if buf.line_len_chars(line) * motion::TAB_WIDTH <= cols {
+    if buf.line_len_chars(line) * motion::tab_width() <= cols {
         1
     } else {
         motion::wrap_rows(&buf.line_text(line), cols).len()
@@ -138,5 +142,24 @@ mod tests {
                 assert_eq!(rows_of(&b, line, cols).len(), row_count(&b, line, cols));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tab_width_tests {
+    use super::*;
+
+    #[test]
+    fn the_row_map_is_rebuilt_when_the_tab_width_changes() {
+        // 三個 Tab 加一個字：Tab 欄寬 4 是 13 欄，在 10 欄寬裡折成 2 列；欄寬 2 只要 7 欄，1 列
+        let buf = Buffer::from_text("\t\t\tx");
+        let mut map = WrapMap::default();
+        let before = motion::set_tab_width(4);
+        map.ensure(&buf, 10);
+        assert_eq!(map.total_rows(), 2);
+        motion::set_tab_width(2);
+        map.ensure(&buf, 10);
+        assert_eq!(map.total_rows(), 1, "Tab 欄寬變了，同一份文字、同樣的寬度也要重算");
+        motion::set_tab_width(before);
     }
 }

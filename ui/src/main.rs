@@ -412,6 +412,12 @@ enum Action {
     SetFontSize(f32),
     /// 設定預覽窗格的字級（點）。
     SetPreviewFontSize(f32),
+    /// 預設的 Tab 欄數。
+    SetTabWidth(u8),
+    /// 輸入 Tab 時是否改用空白。
+    SetTabSpaces(bool),
+    /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
+    SetLanguageTabWidth(String, Option<u8>),
     SetTerminalFontSize(f32),
     SetTerminalMinContrast(f32),
     SetTerminalShell(String),
@@ -1088,6 +1094,17 @@ impl App {
         }
     }
 
+    /// 依作用中那份文件的檔案類型，設好 Tab 欄寬與「用空白取代 Tab」（見 `feditor_core::motion::tab_width`）。
+    fn apply_tab_settings(&self) {
+        let language = if self.doc.terminal.is_some() {
+            None
+        } else {
+            syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).map(|l| l.name)
+        };
+        feditor_core::motion::set_tab_width(self.settings.tab_width_for(language));
+        feditor_core::motion::set_tab_uses_spaces(self.settings.tab_spaces);
+    }
+
     /// 作用中的是空白、沒存過、沒改過的文件：開新檔案時直接用掉它，不要多出一個空分頁。
     fn is_pristine(&self) -> bool {
         self.doc.terminal.is_none() && self.doc.path.is_none() && !self.doc.dirty && self.doc.buffer.is_empty()
@@ -1615,6 +1632,30 @@ impl App {
                     self.settings.wide_cols = n;
                     self.mark_settings_dirty();
                 }
+            }
+            Action::SetTabWidth(width) => {
+                let width = width.clamp(settings::MIN_TAB_COLUMNS, settings::MAX_TAB_COLUMNS);
+                if width != self.settings.tab_width {
+                    self.settings.tab_width = width;
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetTabSpaces(on) => {
+                if on != self.settings.tab_spaces {
+                    self.settings.tab_spaces = on;
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetLanguageTabWidth(name, width) => {
+                match width {
+                    Some(w) => {
+                        self.settings.tab_widths.insert(name, w.clamp(settings::MIN_TAB_COLUMNS, settings::MAX_TAB_COLUMNS));
+                    }
+                    None => {
+                        self.settings.tab_widths.remove(&name);
+                    }
+                }
+                self.mark_settings_dirty();
             }
             Action::SetTerminalFontSize(size) => {
                 let size = if size.is_finite() { clamp_font_size(size) } else { DEFAULT_TERMINAL_FONT_SIZE };
@@ -2583,6 +2624,63 @@ impl App {
                     action = Some(Action::SetView(settings::ViewOptions { ruler: on, ruler_column: column, ..v }));
                 }
             });
+            // Tab：預設的欄數、輸入 Tab 時是否改用空白（全部檔案類型共用），以及依檔案類型個別設定的欄數
+            form_row(ui, t("Tab 欄數"), |ui| {
+                let mut width = self.settings.tab_width;
+                let response = ui
+                    .add(egui::DragValue::new(&mut width).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
+                    .on_hover_text(t("一個 Tab 佔幾欄（沒有個別設定的檔案類型都用這個）"));
+                unit_label(ui, t("欄"));
+                if response.changed() {
+                    action = Some(Action::SetTabWidth(width));
+                }
+            });
+            form_row(ui, t("輸入 Tab"), |ui| {
+                let mut on = self.settings.tab_spaces;
+                let response = ui
+                    .checkbox(&mut on, t("改用空白"))
+                    .on_hover_text(t("按 Tab 鍵與縮排時輸入空白，不輸入 Tab 字元（檔案裡原有的 Tab 不會被改）"));
+                if response.changed() {
+                    action = Some(Action::SetTabSpaces(on));
+                }
+            });
+            form_row(ui, t("依檔案類型"), |ui| {
+                ui.vertical(|ui| {
+                    let overrides: Vec<(String, u8)> = self.settings.tab_widths.iter().map(|(n, w)| (n.clone(), *w)).collect();
+                    for (name, width) in &overrides {
+                        ui.horizontal(|ui| {
+                            ui.label(name);
+                            let mut w = *width;
+                            if ui
+                                .add(egui::DragValue::new(&mut w).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
+                                .changed()
+                            {
+                                action = Some(Action::SetLanguageTabWidth(name.clone(), Some(w)));
+                            }
+                            unit_label(ui, t("欄"));
+                            if icons::small_button(ui, Icon::Close, t("移除這個檔案類型的個別設定"), true).clicked() {
+                                action = Some(Action::SetLanguageTabWidth(name.clone(), None));
+                            }
+                        });
+                    }
+                    egui::ComboBox::from_id_salt("tab_width_add")
+                        .icon(icons::combo_chevron)
+                        .width(200.0)
+                        .selected_text(t("新增檔案類型…"))
+                        .show_ui(ui, |ui| {
+                            flat_list(ui, |ui| {
+                                for lang in syntax::all_languages() {
+                                    if !overrides.iter().any(|(n, _)| n == lang.name) && ui.selectable_label(false, lang.name).clicked() {
+                                        action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), Some(self.settings.tab_width)));
+                                    }
+                                }
+                            })
+                        })
+                        .response
+                        .on_hover_text(t("替某個檔案類型（語法上色的語言）設定自己的 Tab 欄數"));
+                });
+            });
+
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -3227,6 +3325,9 @@ impl eframe::App for App {
             }
         }
 
+        // Tab 的設定（欄寬、是否用空白取代）：先照作用中那份文件的檔案類型設好，後面的輸入、游標欄位換算都用它；
+        // 畫每個編輯區的時候會再依各自的文件調整，畫完還原
+        self.apply_tab_settings();
         // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
         self.terminal_input(&ctx);
         self.reap_terminals(&ctx);
@@ -4034,6 +4135,40 @@ mod tests {
         assert_eq!(app.settings.terminal_shell, "pwsh ");
         app.handle(Action::SetTerminalShell("a\nb".into()), &ctx);
         assert_eq!(app.settings.terminal_shell, "a b");
+    }
+
+    #[test]
+    fn tab_settings_change_through_actions_and_the_active_documents_file_type_decides_the_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let (rs, py, txt) = (dir.path().join("a.rs"), dir.path().join("b.py"), dir.path().join("c.txt"));
+        for p in [&rs, &py, &txt] {
+            std::fs::write(p, "x").unwrap();
+        }
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.handle(Action::SetTabWidth(8), &ctx);
+        app.handle(Action::SetLanguageTabWidth("Rust".to_owned(), Some(2)), &ctx);
+        app.handle(Action::SetLanguageTabWidth("Python".to_owned(), Some(4)), &ctx);
+        app.handle(Action::SetTabSpaces(true), &ctx);
+        assert_eq!((app.settings.tab_width, app.settings.tab_spaces), (8, true));
+        // 作用中的文件是什麼檔案類型，Tab 欄寬就是那一類的
+        let width_after_opening = |app: &mut App, path: &std::path::Path| {
+            app.open_path(path);
+            app.apply_tab_settings();
+            (feditor_core::motion::tab_width(), feditor_core::motion::tab_uses_spaces())
+        };
+        assert_eq!(width_after_opening(&mut app, &rs), (2, true));
+        assert_eq!(width_after_opening(&mut app, &py), (4, true));
+        assert_eq!(width_after_opening(&mut app, &txt), (8, true), "沒有個別設定的用預設的");
+        // 拿掉個別設定就回到預設；範圍也會拉回
+        app.handle(Action::SetLanguageTabWidth("Rust".to_owned(), None), &ctx);
+        assert!(!app.settings.tab_widths.contains_key("Rust"));
+        app.handle(Action::SetTabWidth(200), &ctx);
+        assert_eq!(app.settings.tab_width, settings::MAX_TAB_COLUMNS);
+        app.handle(Action::SetTabSpaces(false), &ctx);
+        app.apply_tab_settings();
+        assert!(!feditor_core::motion::tab_uses_spaces());
+        feditor_core::motion::set_tab_width(4);
     }
 
     #[test]
