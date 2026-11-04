@@ -199,6 +199,9 @@ fn tight_buttons(ui: &mut egui::Ui) {
 /// 設定面板左側的標籤（順序與 `settings_page` 的頁碼一致）。
 const SETTINGS_TABS: [&str; 5] = ["介面", "編輯區", "預覽", "終端機", "狀態列"];
 
+/// 設定面板每一頁至少這麼寬（內容更寬的頁面會把全部的頁面一起撐寬）。
+const SETTINGS_PAGE_MIN_WIDTH: f32 = 420.0;
+
 /// 設定面板的一個群組：兩欄的表單。所有群組的標籤欄一樣寬，控制項才會左緣對齊。
 fn settings_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id)
@@ -2527,11 +2530,19 @@ impl App {
                 }
             });
             ui.separator();
-            ui.vertical(|ui| {
-                ui.set_min_width(340.0);
+            // 各頁的內容寬度不一樣：記下看過最寬的那一頁，之後每一頁都至少那麼寬，切換標籤時面板寬度才一致
+            let width_id = ui.make_persistent_id("settings_page_width");
+            let min_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(0.0).max(SETTINGS_PAGE_MIN_WIDTH);
+            let page = ui.vertical(|ui| {
+                ui.set_min_width(min_width);
                 ui.set_min_height(300.0);
                 action = self.settings_page(ui, tab);
             });
+            let width = page.response.rect.width();
+            if width > min_width + 0.5 {
+                ui.data_mut(|d| d.insert_temp(width_id, width));
+                ui.ctx().request_repaint();
+            }
         });
         ui.data_mut(|d| d.insert_temp(tab_id, tab));
         action
