@@ -178,6 +178,11 @@ mod tests {
         assert!(matches!(claim_at(port, &[file.clone(), folder.clone()]), Claim::Forwarded));
         let got = rx.recv_timeout(Duration::from_secs(3)).unwrap();
         assert_eq!(got, vec![file, folder], "路徑原樣送到（含空白與中文）");
+        // 路徑先進通道、之後才喚醒畫面（畫面醒來一定拿得到路徑），所以收到路徑時喚醒可能還沒執行：稍等一下
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while woken.load(std::sync::atomic::Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert_eq!(woken.load(std::sync::atomic::Ordering::SeqCst), 1, "每一批喚醒畫面一次");
     }
 
