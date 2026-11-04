@@ -1163,6 +1163,8 @@ impl App {
         feditor_core::motion::set_tab_width(self.settings.tab_width_for(language));
         feditor_core::motion::set_tab_uses_spaces(self.settings.tab_spaces);
         feditor_core::motion::set_auto_indent(self.settings.auto_indent);
+        let view = self.settings.view;
+        feditor_core::motion::set_wrap_margin(view.ruler.then_some(view.ruler_column as usize));
     }
 
     /// 作用中的是空白、沒存過、沒改過的文件：開新檔案時直接用掉它，不要多出一個空分頁。

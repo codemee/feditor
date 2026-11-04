@@ -100,11 +100,43 @@ pub enum IndentStyle {
     Python,
 }
 
+/// 括號內的內容太長要斷行時，下一行怎麼排。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WrapStyle {
+    /// 對齊開括號後的第一個參數；裝不下的參數接著排，閉括號接在最後一個參數後面。
+    #[default]
+    Align,
+    /// 開括號後直接換行，每個參數一行並縮排一層，閉括號獨立一行。
+    Hang,
+}
+
+impl WrapStyle {
+    /// 設定檔、語言檔裡的寫法。
+    pub fn name(self) -> &'static str {
+        match self {
+            WrapStyle::Align => "align",
+            WrapStyle::Hang => "hang",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "align" => Some(WrapStyle::Align),
+            "hang" => Some(WrapStyle::Hang),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Language {
     pub name: &'static str,
     /// 縮排規則；自訂語言檔用 `indent = brace|python|none` 指定。
     pub indent: IndentStyle,
+    /// 括號內斷行的風格；自訂語言檔用 `wrap = align|hang` 指定。
+    pub wrap: WrapStyle,
+    /// 一個參數一行（`Hang`）斷行時，最後一個參數後面也加逗號（Rust、JavaScript、Go、Python 可以；Go 還必須）。
+    pub trailing_comma: bool,
     mode: Mode,
     line_comments: &'static [&'static str],
     block: Option<(&'static str, &'static str)>,
@@ -128,6 +160,8 @@ const fn lang(name: &'static str) -> Language {
     Language {
         name,
         indent: IndentStyle::None,
+        wrap: WrapStyle::Align,
+        trailing_comma: false,
         mode: Mode::Code,
         line_comments: &[],
         block: None,
@@ -158,6 +192,8 @@ static RUST: Language = Language {
         "true", "type", "unsafe", "use", "where", "while",
     ],
     indent: IndentStyle::Brace,
+    wrap: WrapStyle::Hang,
+    trailing_comma: true,
     ..lang("Rust")
 };
 
@@ -209,6 +245,8 @@ static JAVASCRIPT: Language = Language {
     ],
     interp: Some(Interp { open: "${", close: "}", backtick: true, double: false, fstring: false }),
     indent: IndentStyle::Brace,
+    wrap: WrapStyle::Hang,
+    trailing_comma: true,
     ..lang("JavaScript/TypeScript")
 };
 
@@ -224,6 +262,7 @@ static PYTHON: Language = Language {
     ],
     interp: Some(Interp { open: "{", close: "}", backtick: false, double: false, fstring: true }),
     indent: IndentStyle::Python,
+    trailing_comma: true,
     ..lang("Python")
 };
 
@@ -239,6 +278,8 @@ static GO: Language = Language {
     ],
     capital_types: true,
     indent: IndentStyle::Brace,
+    wrap: WrapStyle::Hang,
+    trailing_comma: true,
     ..lang("Go")
 };
 
@@ -358,6 +399,8 @@ fn parse_flag(key: &str, value: &str) -> Result<bool, String> {
 /// backtick_strings = false         # 反引號字串（JavaScript）
 /// mode = code                      # code／markup（HTML）／markdown／config（ini）
 /// indent = brace                   # 縮排規則：none／brace（{ ( [ ）／python（行尾 :）
+/// wrap = align                     # 括號內太長要斷行時：align（對齊第一個參數）／hang（換行後縮排一層）
+/// trailing_comma = false           # hang 斷行時最後一個參數後面也加逗號
 /// ```
 ///
 /// `#` 開頭的整行是註解；`keywords` 可以重複出現，內容會合併。
@@ -410,6 +453,11 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
                 "python" => lang.indent = IndentStyle::Python,
                 _ => return Err(tf!("第 {} 行：indent 只能是 none、brace、python", n + 1)),
             },
+            "wrap" => match WrapStyle::parse(value) {
+                Some(w) => lang.wrap = w,
+                None => return Err(tf!("第 {} 行：wrap 只能是 align、hang", n + 1)),
+            },
+            "trailing_comma" => lang.trailing_comma = parse_flag(key, value)?,
             "capital_types" => lang.capital_types = parse_flag(key, value)?,
             "case_insensitive" => lang.case_insensitive = parse_flag(key, value)?,
             "triple_quotes" => lang.triple_quotes = parse_flag(key, value)?,

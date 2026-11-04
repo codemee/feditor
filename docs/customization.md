@@ -64,4 +64,6 @@
   | `interpolation` | 字串內嵌運算式的開頭與結尾，例如 `${, }`（JavaScript）、`#{, }`（Ruby）、`{, }`（Python f-string） |
   | `interpolation_in` | 哪些字串裡有內嵌運算式，逗號分隔：`backtick`（反引號字串）、`double`（雙引號字串）、`fstring`（帶 `f` 或 `$` 前綴的字串，`{{` 視為跳脫）。沒寫就是 `backtick, double` |
   | `indent` | 縮排規則（Enter 自動縮排與排列格式用）：`none`（預設，只沿用上一行的縮排）、`brace`（依 `{ ( [` 與 `} ) ]`）、`python`（行尾 `:` 也開啟一層） |
+  | `wrap` | 排列格式時，括號內太長要斷行，下一行怎麼排：`align`（預設，對齊開括號後的第一個參數）、`hang`（開括號後換行，每個參數一行並縮排一層） |
+  | `trailing_comma` | `true` 時，`hang` 斷行的最後一個參數後面也加逗號（預設 `false`） |
   | `mode` | `code`（預設）、`markup`（HTML/XML）、`markdown`、`config`（ini／toml 的 `[區段]` 與「鍵 =」） |

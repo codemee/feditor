@@ -64,4 +64,6 @@ The **interface language** is a three-state button in the settings panel: "Follo
   | `interpolation` | Start and end of an embedded expression in a string, e.g. `${, }` (JavaScript), `#{, }` (Ruby), `{, }` (Python f-string) |
   | `interpolation_in` | Which strings contain embedded expressions, comma-separated: `backtick` (backtick strings), `double` (double-quoted strings), `fstring` (strings with an `f` or `$` prefix; `{{` is an escape). Default: `backtick, double` |
   | `indent` | Indentation rule (used by auto indent on Enter and by Reformat): `none` (default; just copy the previous line's indent), `brace` (by `{ ( [` and `} ) ]`), `python` (a trailing `:` also opens a level) |
+  | `wrap` | How the next line lines up when Reformat breaks a long bracket group: `align` (default; line up with the first argument after the opening bracket) or `hang` (break after the opening bracket, one argument per line indented one level) |
+  | `trailing_comma` | `true` adds a comma after the last argument when `hang` breaks a group (default `false`) |
   | `mode` | `code` (default), `markup` (HTML/XML), `markdown`, `config` (`[section]` and `key =` in ini/toml) |

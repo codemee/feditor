@@ -22,6 +22,17 @@ thread_local! {
     static TAB_WIDTH_CELL: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_TAB_WIDTH) };
     static TAB_SPACES_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static AUTO_INDENT_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static WRAP_MARGIN_CELL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// 排列格式時一行不要超過的欄數（安全界線）；沒有啟用安全界線就是 `None`。
+pub fn wrap_margin() -> Option<usize> {
+    Some(WRAP_MARGIN_CELL.get()).filter(|m| *m > 0)
+}
+
+/// 設定排列格式的行寬上限（`None` 表示不限），回傳原本的值。
+pub fn set_wrap_margin(margin: Option<usize>) -> Option<usize> {
+    Some(WRAP_MARGIN_CELL.replace(margin.unwrap_or(0))).filter(|m| *m > 0)
 }
 
 /// 按 Enter 時是不是依語言自動加深／減淺縮排（關閉時只沿用上一行的縮排）。

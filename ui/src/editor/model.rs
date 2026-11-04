@@ -122,6 +122,8 @@ pub struct EditorState {
     /// 這份文件的語言（決定 Enter 自動縮排、排列格式的規則）；沒有語言就只沿用上一行的縮排。
     /// 由畫面每一幀依檔案類型設定。
     pub language: Option<&'static crate::syntax::Language>,
+    /// 使用者替這個語言指定的括號內斷行風格（設定檔的 `wrap_style.<語言>`）；沒指定就用語言本身的。
+    pub wrap_style: Option<crate::syntax::WrapStyle>,
     /// 自動換行的折行寬度（欄數）；None 表示不換行。由畫面每一幀更新，上下移動、Home、End
     /// 要依畫面上的「列」而不是文字的「行」。
     pub wrap_cols: Option<usize>,

@@ -5,6 +5,7 @@ pub mod indent;
 pub mod lineops;
 pub mod model;
 pub mod multi;
+pub mod rewrap;
 pub mod view;
 pub mod wrap;
 

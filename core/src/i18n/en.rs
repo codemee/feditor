@@ -291,6 +291,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ),
     ("沒有需要重排的內容", "Nothing to reformat"),
     ("第 {} 行：indent 只能是 none、brace、python", "Line {}: indent must be none, brace or python"),
+    ("第 {} 行：wrap 只能是 align、hang", "Line {}: wrap must be align or hang"),
     ("用 FEditor 開啟", "Open with FEditor"),
     ("用 FEditor 選取檔案開啟…", "Pick files to open with FEditor..."),
     ("檔案總管", "File Explorer"),

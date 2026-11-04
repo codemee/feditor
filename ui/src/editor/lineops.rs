@@ -226,7 +226,19 @@ impl EditorState {
             }
             None => {
                 let how = super::indent::scan(self.language, &all);
-                (a..=b).map(|i| super::indent::format_line(&all[i], how[i], &unit)).collect()
+                match (self.language, motion::wrap_margin()) {
+                    // 有安全界線、而且語言有縮排規則：括號內多餘的斷行接回去，太長的在括號內斷開
+                    (Some(lang), Some(margin)) if lang.indent != crate::syntax::IndentStyle::None => {
+                        let opts = super::rewrap::Opts {
+                            margin,
+                            style: self.wrap_style.unwrap_or(lang.wrap),
+                            trailing_comma: lang.trailing_comma,
+                            unit: &unit,
+                        };
+                        super::rewrap::reformat_lines(lang, &all, &how, a, b, &opts)
+                    }
+                    _ => (a..=b).map(|i| super::indent::format_line(&all[i], how[i], &unit)).collect(),
+                }
             }
         };
         if new == old {
@@ -576,6 +588,36 @@ mod tests {
         s.language = crate::syntax::language_for_name("a.json");
         assert!(s.reformat(&mut b));
         assert_eq!(b.text(), "{\n  // c\n  \"a\": 1\n}");
+    }
+
+    #[test]
+    fn reformat_joins_and_breaks_calls_by_the_safe_margin_in_one_undo_step() {
+        let _t = Tabs::set(4, true);
+        let margin = motion::set_wrap_margin(Some(30));
+        let text = "fn a() {\n    let v = foo(\n        1,\n        2,\n    );\n    let w = bar(first_argument, second_argument);\n}";
+        let (mut b, mut s) = setup(text, 0, 0);
+        s.language = crate::syntax::language_for_name("a.rs");
+        assert!(s.reformat(&mut b));
+        assert_eq!(
+            b.text(),
+            "fn a() {\n    let v = foo(1, 2);\n    let w = bar(\n        first_argument,\n        second_argument,\n    );\n}"
+        );
+        assert!(!s.reformat(&mut b), "排好之後再排沒有變化");
+        // 換成對齊風格（使用者的設定覆蓋）：從頭再排一次
+        b.undo();
+        assert_eq!(b.text(), text);
+        s.wrap_style = Some(crate::syntax::WrapStyle::Align);
+        assert!(s.reformat(&mut b));
+        assert_eq!(
+            b.text(),
+            "fn a() {\n    let v = foo(1, 2);\n    let w = bar(first_argument,\n                second_argument);\n}"
+        );
+        // 沒有安全界線：只重排縮排，不接合也不斷行
+        b.undo();
+        motion::set_wrap_margin(None);
+        assert!(!s.reformat(&mut b), "原本的縮排就是對的：不接合也不斷行，所以沒有變化");
+        assert_eq!(b.text(), text);
+        motion::set_wrap_margin(margin);
     }
 
     #[test]

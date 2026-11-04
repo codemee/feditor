@@ -167,6 +167,8 @@ pub struct Settings {
     pub tab_width: u8,
     /// 依檔案類型（語法上色的語言名稱，例如 `Rust`、`Python`）個別設定的 Tab 欄數。
     pub tab_widths: std::collections::BTreeMap<String, u8>,
+    /// 依檔案類型指定括號內斷行的風格（排列格式用）。鍵是語言名稱；沒有的用語言本身的預設。
+    pub wrap_styles: std::collections::BTreeMap<String, crate::syntax::WrapStyle>,
     /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
     pub tab_spaces: bool,
     /// 按 Enter 時依語言自動加深／減淺縮排（預設開）。
@@ -201,6 +203,7 @@ impl Default for Settings {
             preview_font_size: DEFAULT_PREVIEW_FONT_SIZE,
             tab_width: DEFAULT_TAB_COLUMNS,
             tab_widths: Default::default(),
+            wrap_styles: Default::default(),
             tab_spaces: false,
             auto_indent: true,
             shell_menu: false,
@@ -226,6 +229,11 @@ impl Settings {
     /// 這個檔案類型（語法上色的語言名稱；純文字等沒有語言的是 `None`）的 Tab 欄數：有個別設定就用它，否則用預設的。
     pub fn tab_width_for(&self, language: Option<&str>) -> usize {
         language.and_then(|name| self.tab_widths.get(name)).copied().unwrap_or(self.tab_width) as usize
+    }
+
+    /// 使用者替這個檔案類型指定的括號內斷行風格；沒指定回傳 `None`（用語言本身的）。
+    pub fn wrap_style_for(&self, language: &str) -> Option<crate::syntax::WrapStyle> {
+        self.wrap_styles.get(language).copied()
     }
 
     pub fn set_scheme_name(&mut self, dark: bool, name: &str) {
@@ -284,6 +292,13 @@ impl Settings {
                     let name = key["tab_width.".len()..].trim();
                     if let (false, Ok(n)) = (name.is_empty(), value.parse::<u32>()) {
                         settings.tab_widths.insert(name.to_owned(), n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8);
+                    }
+                }
+                // wrap_style.語言名稱 = align|hang：這個檔案類型括號內斷行的風格
+                key if key.starts_with("wrap_style.") => {
+                    let name = key["wrap_style.".len()..].trim();
+                    if let (false, Some(style)) = (name.is_empty(), crate::syntax::WrapStyle::parse(value)) {
+                        settings.wrap_styles.insert(name.to_owned(), style);
                     }
                 }
                 "shell_menu" => {
@@ -375,6 +390,11 @@ impl Settings {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
             if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
                 text.push_str(&format!("tab_width.{name} = {width}\n"));
+            }
+        }
+        for (name, style) in &self.wrap_styles {
+            if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
+                text.push_str(&format!("wrap_style.{name} = {}\n", style.name()));
             }
         }
         text.push_str(&format!("terminal_font_size = {}\n", self.terminal_font_size));
@@ -621,6 +641,19 @@ mod tests {
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
         assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
+    #[test]
+    fn wrap_styles_are_per_language_and_round_trip() {
+        use crate::syntax::WrapStyle;
+        assert!(Settings::default().wrap_styles.is_empty());
+        let s = Settings::parse("wrap_style.Rust = align\nwrap_style.Python = HANG\nwrap_style.Go = zigzag\nwrap_style. = hang\n");
+        assert_eq!(s.wrap_style_for("Rust"), Some(WrapStyle::Align));
+        assert_eq!(s.wrap_style_for("Python"), Some(WrapStyle::Hang));
+        assert_eq!(s.wrap_style_for("Go"), None, "看不懂的值忽略");
+        assert_eq!(s.wrap_styles.len(), 2);
+        let back = Settings::parse(&s.to_text());
+        assert_eq!(back.wrap_styles, s.wrap_styles);
     }
 
     #[test]

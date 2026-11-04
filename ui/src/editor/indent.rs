@@ -38,7 +38,7 @@ fn active(lang: Option<&Language>) -> Option<&Language> {
 }
 
 /// 一行的字元、每個字元的種類、行尾的跨行狀態。
-fn analyze(lang: &Language, line: &str, state: State) -> (Vec<char>, Vec<Kind>, State) {
+pub(super) fn analyze(lang: &Language, line: &str, state: State) -> (Vec<char>, Vec<Kind>, State) {
     let chars: Vec<char> = line.chars().collect();
     let (spans, end) = highlight_line(lang, line, state);
     let mut kinds = vec![Kind::Plain; chars.len()];
@@ -141,38 +141,51 @@ pub fn scan(lang: Option<&Language>, lines: &[String]) -> Vec<LineIndent> {
     };
     let brace = lang.indent == IndentStyle::Brace;
     let mut out = Vec::with_capacity(lines.len());
-    let (mut depth, mut state) = (0usize, State::Normal);
+    // 每一個「某一行開了還沒關的括號」是一層縮排（記錄這一行還有幾個沒關）：
+    // `foo(a, |x| {` 一行開了兩個括號，也只縮排一層，`});` 一行關兩個也只少一層
+    let mut frames: Vec<usize> = Vec::new();
+    let mut state = State::Normal;
     for line in lines {
         let (chars, kinds, end) = analyze(lang, line, state);
-        let plain_bracket = |j: usize| kinds[j] == Kind::Plain;
-        let mut leading_closers = 0;
-        if let Some(first) = chars.iter().position(|c| !c.is_whitespace()) {
-            leading_closers =
-                chars[first..].iter().enumerate().take_while(|(k, c)| is_closer(**c) && plain_bracket(first + k)).count();
+        let start_depth = frames.len();
+        let (mut local, mut popped_leading, mut leading) = (0usize, 0usize, true);
+        for (j, &c) in chars.iter().enumerate() {
+            if c.is_whitespace() {
+                continue;
+            }
+            let plain = kinds[j] == Kind::Plain;
+            if plain && is_closer(c) {
+                if local > 0 {
+                    local -= 1;
+                } else if let Some(top) = frames.last_mut() {
+                    *top = top.saturating_sub(1);
+                    if *top == 0 {
+                        frames.pop();
+                        if leading {
+                            popped_leading += 1;
+                        }
+                    }
+                }
+            } else if plain && matches!(c, '{' | '(' | '[') {
+                local += 1;
+                leading = false;
+            } else {
+                leading = false;
+            }
+        }
+        if local > 0 && brace {
+            frames.push(local);
         }
         let item = if state != State::Normal {
             LineIndent::Keep
         } else if line.trim().is_empty() {
             LineIndent::Blank
         } else if brace {
-            LineIndent::Depth(depth.saturating_sub(leading_closers))
+            LineIndent::Depth(start_depth.saturating_sub(popped_leading))
         } else {
             LineIndent::Same
         };
         out.push(item);
-        // 括號只在 Python 與用括號決定縮排的語言裡計算；Python 不重算層數，所以只有 brace 要累計
-        if brace {
-            for (j, c) in chars.iter().enumerate() {
-                if !plain_bracket(j) {
-                    continue;
-                }
-                match c {
-                    '{' | '(' | '[' => depth += 1,
-                    '}' | ')' | ']' => depth = depth.saturating_sub(1),
-                    _ => {}
-                }
-            }
-        }
         state = end;
     }
     out
