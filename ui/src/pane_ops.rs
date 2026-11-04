@@ -360,7 +360,7 @@ impl App {
                     }
                     // 終端機：開一個新的 shell，放回同樣的位置、取同樣的名字
                     SessionEntry::Terminal(t) => {
-                        let mut doc = Document::new_terminal(t.number, terminal_dir.clone());
+                        let mut doc = Document::new_terminal(t.number, terminal_dir.clone(), self.settings.terminal_shell.clone());
                         if let (Some(name), Some(terminal)) = (&t.name, doc.terminal.as_mut()) {
                             terminal.set_custom_name(name);
                         }

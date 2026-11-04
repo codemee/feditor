@@ -37,16 +37,14 @@ pub const NEW_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
 static NEXT_UID: AtomicU64 = AtomicU64::new(1);
 
 /// 畫終端機時用到的設定（來自設定檔）。
-pub struct TerminalOptions<'a> {
+pub struct TerminalOptions {
     pub font_size: f32,
     pub min_contrast: f32,
-    /// 新開的 shell：空字串是系統預設。
-    pub shell: &'a str,
 }
 
-impl<'a> TerminalOptions<'a> {
-    pub fn from_settings(s: &'a crate::settings::Settings) -> Self {
-        Self { font_size: s.terminal_font_size, min_contrast: s.terminal_min_contrast, shell: &s.terminal_shell }
+impl TerminalOptions {
+    pub fn from_settings(s: &crate::settings::Settings) -> Self {
+        Self { font_size: s.terminal_font_size, min_contrast: s.terminal_min_contrast }
     }
 }
 
@@ -61,6 +59,8 @@ pub struct TerminalPane {
     error: Option<String>,
     /// shell 的起始資料夾。
     dir: Option<std::path::PathBuf>,
+    /// 這個終端機要執行的 shell（程式加參數）；空字串是系統預設。開的時候就決定了，之後改設定不影響已經開著的。
+    shell: String,
     /// 下一個畫面要把鍵盤焦點給它。
     want_focus: bool,
     /// 滑鼠滾輪累積的捲動量（行）。
@@ -187,7 +187,7 @@ impl std::fmt::Debug for TerminalPane {
 }
 
 impl TerminalPane {
-    pub fn new(dir: Option<std::path::PathBuf>, number: usize) -> Self {
+    pub fn new(dir: Option<std::path::PathBuf>, number: usize, shell: String) -> Self {
         Self {
             uid: NEXT_UID.fetch_add(1, Ordering::Relaxed),
             number,
@@ -195,6 +195,7 @@ impl TerminalPane {
             term: None,
             error: None,
             dir,
+            shell,
             want_focus: true,
             scroll_acc: 0.0,
             preedit: String::new(),
@@ -206,6 +207,11 @@ impl TerminalPane {
 
     pub fn number(&self) -> usize {
         self.number
+    }
+
+    /// 這個終端機要執行的 shell（空字串是系統預設）。
+    pub fn shell(&self) -> &str {
+        &self.shell
     }
 
     /// 分頁上的名稱：使用者取的名字，沒有就是「終端機 2」。
@@ -284,6 +290,11 @@ impl App {
     /// 新增一個終端機：在有焦點的窗格下方切出新窗格放它；那裡放不下就依序試其他窗格（大的先）。
     /// 全都放不下才提示。
     pub(crate) fn new_terminal(&mut self) {
+        self.new_terminal_with(None);
+    }
+
+    /// 新增一個終端機，指定要執行的 shell（程式加參數）；`None` 用設定裡的預設終端機。
+    pub(crate) fn new_terminal_with(&mut self, shell: Option<String>) {
         let rect_of = |app: &App, id: PaneId| app.pane_rects.iter().find(|(p, _)| *p == id).map(|(_, r)| *r);
         let focus = self.layout.focus;
         let mut others: Vec<PaneId> = self.layout.root.leaves().into_iter().filter(|id| *id != focus && !self.is_preview(*id)).collect();
@@ -307,7 +318,8 @@ impl App {
             }
         }
         let dir = self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
-        let doc = Document::new_terminal(lowest_free_number(numbers), dir.or_else(|| std::env::current_dir().ok()));
+        let shell = shell.unwrap_or_else(|| self.settings.terminal_shell.clone());
+        let doc = Document::new_terminal(lowest_free_number(numbers), dir.or_else(|| std::env::current_dir().ok()), shell);
         self.open_tab_in_new_pane(target, PaneSide::Bottom, Tab { doc, editor: EditorState::default() });
     }
 
@@ -454,7 +466,7 @@ impl App {
 }
 
 /// 畫終端機的畫面（分頁列下面那一塊）；第一次畫的時候才開 shell。
-pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::Rect, opts: &TerminalOptions<'_>) {
+pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::Rect, opts: &TerminalOptions) {
     let ctx = ui.ctx().clone();
     let dark = ui.visuals().dark_mode;
     let bg = ui.visuals().extreme_bg_color;
@@ -467,7 +479,7 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
 
         if pane.term.is_none() && pane.error.is_none() {
-            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), opts.shell) {
+            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell) {
                 Ok(t) => pane.term = Some(t),
                 Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
             }

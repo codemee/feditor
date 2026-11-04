@@ -219,9 +219,9 @@ impl Document {
             .unwrap_or_else(|| t("未命名").to_owned())
     }
 
-    /// 終端機分頁：`number` 是標題上的編號，`dir` 是 shell 的起始資料夾。
-    pub fn new_terminal(number: usize, dir: Option<PathBuf>) -> Self {
-        Self { terminal: Some(Box::new(crate::terminal_pane::TerminalPane::new(dir, number))), ..Default::default() }
+    /// 終端機分頁：`number` 是標題上的編號，`dir` 是 shell 的起始資料夾，`shell` 是要執行的程式與參數（空字串是系統預設）。
+    pub fn new_terminal(number: usize, dir: Option<PathBuf>, shell: String) -> Self {
+        Self { terminal: Some(Box::new(crate::terminal_pane::TerminalPane::new(dir, number, shell))), ..Default::default() }
     }
 
     /// 開啟檔案，回傳文件與需要告知使用者的警告。

@@ -148,6 +148,103 @@ pub fn resolve_shell(custom: &str, env: &dyn Fn(&str) -> Option<String>, exists_
     }
 }
 
+/// 偵測到的一個 shell：顯示名稱，與「指令」（程式加參數，格式同設定裡的 `terminal_shell`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShellOption {
+    pub label: String,
+    pub command: String,
+}
+
+/// 路徑有空白就用雙引號包起來，才能放進「程式 參數…」的指令裡。
+fn quote_if_needed(path: &str) -> String {
+    if path.contains(' ') { format!("\"{path}\"") } else { path.to_owned() }
+}
+
+/// `/etc/shells`：每行一個 shell 的絕對路徑，`#` 開頭的是註解。
+pub fn parse_etc_shells(text: &str) -> Vec<String> {
+    text.lines().map(str::trim).filter(|l| l.starts_with('/')).map(str::to_owned).collect()
+}
+
+/// 這台機器上可以用的 shell（依常用程度排序）。`windows` 決定找法：
+/// Windows 找 PowerShell 7、Windows PowerShell、cmd、Git Bash、WSL、Nushell；
+/// 其他系統用 `$SHELL` 加上 `/etc/shells`（內容放在 `etc_shells`）裡實際存在的 shell。
+pub fn shells_for(
+    windows: bool,
+    env: &dyn Fn(&str) -> Option<String>,
+    in_path: &dyn Fn(&str) -> bool,
+    file_exists: &dyn Fn(&str) -> bool,
+    etc_shells: &str,
+) -> Vec<ShellOption> {
+    let mut out: Vec<ShellOption> = Vec::new();
+    let mut add = |label: &str, command: String| {
+        if !out.iter().any(|o| o.command == command || o.label == label) {
+            out.push(ShellOption { label: label.to_owned(), command });
+        }
+    };
+    if windows {
+        if in_path("pwsh.exe") {
+            add("PowerShell 7", "pwsh -NoLogo".to_owned());
+        }
+        if in_path("powershell.exe") {
+            add("Windows PowerShell", "powershell -NoLogo".to_owned());
+        }
+        if in_path("cmd.exe") || env("COMSPEC").is_some_and(|c| !c.is_empty()) {
+            add("Command Prompt (cmd)", "cmd".to_owned());
+        }
+        let var = |name: &str| env(name).filter(|v| !v.is_empty());
+        let mut git_bash: Vec<String> = Vec::new();
+        for (name, rest) in [("ProgramFiles", "Git\\bin\\bash.exe"), ("ProgramFiles(x86)", "Git\\bin\\bash.exe"), ("LOCALAPPDATA", "Programs\\Git\\bin\\bash.exe"), ("USERPROFILE", "scoop\\apps\\git\\current\\bin\\bash.exe")] {
+            if let Some(base) = var(name) {
+                git_bash.push(format!("{}\\{rest}", base.trim_end_matches('\\')));
+            }
+        }
+        if let Some(path) = git_bash.into_iter().find(|p| file_exists(p)) {
+            add("Git Bash", format!("{} --login -i", quote_if_needed(&path)));
+        }
+        if in_path("wsl.exe") {
+            add("WSL", "wsl".to_owned());
+        }
+        if in_path("nu.exe") {
+            add("Nushell", "nu".to_owned());
+        }
+    } else {
+        let mut paths: Vec<String> = env("SHELL").filter(|s| !s.is_empty()).into_iter().collect();
+        for p in parse_etc_shells(etc_shells) {
+            if !paths.contains(&p) {
+                paths.push(p);
+            }
+        }
+        for p in paths.into_iter().filter(|p| file_exists(p)) {
+            let name = p.rsplit('/').next().unwrap_or(&p).to_owned();
+            add(&name, quote_if_needed(&p));
+        }
+    }
+    out
+}
+
+/// 偵測這台機器上可以用的 shell。
+pub fn detect_shells() -> Vec<ShellOption> {
+    let etc = if cfg!(windows) { String::new() } else { std::fs::read_to_string("/etc/shells").unwrap_or_default() };
+    shells_for(cfg!(windows), &|k| std::env::var(k).ok(), &exists_in_path, &|p| std::path::Path::new(p).is_file(), &etc)
+}
+
+/// 沒有指定 shell 時實際會用的（系統預設的）shell。
+pub fn system_default_shell() -> ShellCommand {
+    default_shell(&|k| std::env::var(k).ok(), &exists_in_path)
+}
+
+/// 這個選項是不是目前的預設：設定裡有指定就比對指令；沒指定就看它的程式是不是系統預設的 shell。
+pub fn is_default_shell(option: &ShellOption, configured: &str, system: &ShellCommand) -> bool {
+    let configured = split_command(configured);
+    let option_words = split_command(&option.command);
+    if configured.is_empty() {
+        let stem = |s: &str| std::path::Path::new(s).file_stem().map(|x| x.to_string_lossy().to_lowercase());
+        option_words.first().is_some_and(|p| stem(p) == stem(&system.program))
+    } else {
+        option_words == configured
+    }
+}
+
 fn exists_in_path(exe: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(exe).is_file()))
 }
@@ -430,6 +527,54 @@ mod tests {
         let custom = resolve_shell("nu --no-config", &env, &any);
         assert_eq!((custom.program.as_str(), custom.args.as_slice()), ("nu", &["--no-config".to_owned()][..]));
         assert_eq!(resolve_shell("", &env, &any), default_shell(&env, &any), "沒指定就用系統預設的");
+    }
+
+    #[test]
+    fn windows_shells_are_found_from_the_path_and_known_git_bash_locations() {
+        let env = |k: &str| match k {
+            "ProgramFiles" => Some("C:\\Program Files".to_owned()),
+            "COMSPEC" => Some("C:\\Windows\\System32\\cmd.exe".to_owned()),
+            _ => None,
+        };
+        let in_path = |exe: &str| matches!(exe, "pwsh.exe" | "powershell.exe" | "cmd.exe" | "wsl.exe");
+        let exists = |p: &str| p == "C:\\Program Files\\Git\\bin\\bash.exe";
+        let list = shells_for(true, &env, &in_path, &exists, "");
+        let labels: Vec<&str> = list.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, vec!["PowerShell 7", "Windows PowerShell", "Command Prompt (cmd)", "Git Bash", "WSL"]);
+        assert_eq!(list[0].command, "pwsh -NoLogo");
+        assert_eq!(list[3].command, "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i", "路徑有空白要加引號");
+        // 指令可以被拆回程式與參數
+        assert_eq!(split_command(&list[3].command), vec!["C:\\Program Files\\Git\\bin\\bash.exe", "--login", "-i"]);
+        // 什麼都沒有：清單是空的（不會報錯）
+        assert!(shells_for(true, &|_| None, &|_| false, &|_| false, "").is_empty());
+    }
+
+    #[test]
+    fn unix_shells_come_from_the_shell_variable_and_etc_shells_without_duplicates() {
+        let env = |k: &str| (k == "SHELL").then(|| "/usr/bin/zsh".to_owned());
+        let exists = |p: &str| matches!(p, "/usr/bin/zsh" | "/bin/bash" | "/usr/bin/bash" | "/bin/sh");
+        let etc = "# 可用的 shell\n/bin/sh\n/bin/bash\n/usr/bin/bash\n/usr/bin/zsh\n/usr/bin/fish\nnologin\n";
+        assert_eq!(parse_etc_shells(etc), vec!["/bin/sh", "/bin/bash", "/usr/bin/bash", "/usr/bin/zsh", "/usr/bin/fish"]);
+        let list = shells_for(false, &env, &|_| false, &exists, etc);
+        let labels: Vec<&str> = list.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, vec!["zsh", "sh", "bash"], "$SHELL 排第一；不存在的（fish）略過；同名的只留第一個");
+        assert_eq!(list[0].command, "/usr/bin/zsh");
+        // 沒有 /etc/shells 也至少有 $SHELL
+        assert_eq!(shells_for(false, &env, &|_| false, &exists, "").len(), 1);
+    }
+
+    #[test]
+    fn the_default_option_follows_the_setting_or_the_system_default_program() {
+        let pwsh = ShellOption { label: "PowerShell 7".into(), command: "pwsh -NoLogo".into() };
+        let cmd = ShellOption { label: "Command Prompt (cmd)".into(), command: "cmd".into() };
+        let system = ShellCommand { program: "pwsh.exe".into(), args: vec!["-NoLogo".into()] };
+        // 沒指定：看程式是不是系統預設的（不分大小寫與副檔名）
+        assert!(is_default_shell(&pwsh, "", &system));
+        assert!(!is_default_shell(&cmd, "  ", &system));
+        // 有指定：比對指令（空白的差異不算）
+        assert!(is_default_shell(&cmd, "cmd", &system));
+        assert!(is_default_shell(&pwsh, "pwsh   -NoLogo", &system));
+        assert!(!is_default_shell(&pwsh, "pwsh", &system), "參數不同就是不同的選項");
     }
 
     #[test]

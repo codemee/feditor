@@ -5,6 +5,7 @@
 ## Unreleased
 
 ### Added
+- **A list of shells and a default terminal**: the shells available on this machine are found automatically (Windows: PowerShell 7, Windows PowerShell, cmd, Git Bash, WSL, Nushell; macOS / Linux: `$SHELL` and `/etc/shells`). A dropdown next to the toolbar's terminal button adds a terminal with the shell you pick (affecting only that terminal); the button itself uses the "Default terminal" in the "Terminal" group of the settings panel (choose from the list or write your own command).
 - **Terminal: clickable URLs**: hold Ctrl and hover a URL to underline it, and click to open it in the default browser (including URLs that wrap over several rows).
 - **Links to local files in the preview**: relative paths (relative to the document's folder), absolute paths and file:// URLs open in a new editor tab, and every other link (URLs, e-mail addresses, ...) goes to the default browser.
 - **Search inside the terminal**: press Ctrl+F (as in the editor; a full-screen program still gets it while it runs) while a terminal has the focus to open a search bar; it searches live, ignoring case and including the history scrolled out of view, highlights the matches, moves between them with Enter / Shift+Enter, and closes with Esc.

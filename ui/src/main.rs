@@ -425,8 +425,10 @@ enum Action {
     ClosePane(panes::PaneId),
     /// 開啟或關閉有焦點的窗格的預覽。
     TogglePreview,
-    /// 新增一個終端機窗格。
+    /// 新增一個終端機（用設定裡的預設終端機）。
     NewTerminal,
+    /// 新增一個終端機，指定要執行的 shell（程式加參數）。
+    NewTerminalWith(String),
     /// 關閉一個預覽窗格。
     ClosePreview(panes::PaneId),
     /// 開啟預覽外掛的資料夾。
@@ -557,6 +559,8 @@ struct App {
     previews: std::collections::HashMap<panes::PaneId, preview_pane::PreviewPane>,
     /// 按 Ctrl+` 從編輯區跳進終端機之前所在的（窗格, 分頁），繞完一圈之後回到這裡。
     terminal_return: Option<(panes::PaneId, usize)>,
+    /// 這台機器上偵測到的 shell（工具列的下拉清單與設定面板用）。
+    shells: Vec<terminal::ShellOption>,
     /// 使用者的預覽外掛（設定資料夾的 `previews/*.js`）。
     preview_plugins: Vec<std::sync::Arc<preview::Plugin>>,
     /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
@@ -623,6 +627,7 @@ impl App {
             pick_files_in: pick_files_in_dialog,
             previews: Default::default(),
             terminal_return: None,
+            shells: terminal::detect_shells(),
             preview_plugins: Vec::new(),
             pane_rects: Vec::new(),
             last_macro: None,
@@ -1561,6 +1566,7 @@ impl App {
             Action::ClosePane(pane) => self.close_pane(pane),
             Action::TogglePreview => self.toggle_preview(),
             Action::NewTerminal => self.new_terminal(),
+            Action::NewTerminalWith(shell) => self.new_terminal_with(Some(shell)),
 
             Action::ClosePreview(id) => self.close_preview(id),
             Action::OpenPreviewsDir => self.open_folder(preview::previews_dir()),
@@ -1677,9 +1683,26 @@ impl App {
 
             group_separator(ui);
 
-            // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式
+            // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式；
+            // 按下去用設定裡的預設終端機，旁邊的下拉清單可以改選別的 shell 來新增
             if icons::button(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), true).clicked() {
                 action = Some(Action::NewTerminal);
+            }
+            if !self.shells.is_empty() {
+                let choose = icons::small_button(ui, Icon::ChevronDown, t("選擇 shell 來新增終端機"), true);
+                let (configured, system) = (self.settings.terminal_shell.clone(), terminal::system_default_shell());
+                egui::Popup::menu(&choose).show(|ui| {
+                    no_hover_outline(ui);
+                    flat_list(ui, |ui| {
+                        for option in &self.shells {
+                            // 目前的預設終端機有選取的底色
+                            if ui.selectable_label(terminal::is_default_shell(option, &configured, &system), &option.label).clicked() {
+                                action = Some(Action::NewTerminalWith(option.command.clone()));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
             }
 
             group_separator(ui);
@@ -1728,6 +1751,7 @@ impl App {
                         // 使用者可能剛在 themes 資料夾放了新的配色檔
                         self.refresh_schemes();
                         self.refresh_preview_plugins();
+                        self.shells = terminal::detect_shells(); // 使用者可能剛裝了新的 shell
                         self.apply_schemes(ui.ctx());
                     }
                 }
@@ -2631,7 +2655,40 @@ impl App {
                     action = Some(Action::SetTerminalMinContrast(ratio));
                 }
             });
-            form_row(ui, t("Shell"), |ui| {
+            // 預設終端機：按工具列的終端機鈕時執行的 shell，從偵測到的清單選，也可以在下面自己寫指令
+            form_row(ui, t("預設終端機"), |ui| {
+                let configured = self.settings.terminal_shell.clone();
+                let system = terminal::system_default_shell();
+                let in_use = !configured.trim().is_empty();
+                let selected = if !in_use {
+                    t("系統預設").to_owned()
+                } else {
+                    self.shells
+                        .iter()
+                        .find(|o| terminal::is_default_shell(o, &configured, &system))
+                        .map(|o| o.label.clone())
+                        .unwrap_or_else(|| tf!("自訂：{cmd}", cmd = configured.trim()))
+                };
+                egui::ComboBox::from_id_salt("terminal_shell")
+                    .icon(icons::combo_chevron)
+                    .width(250.0)
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            if ui.selectable_label(!in_use, t("系統預設")).clicked() {
+                                action = Some(Action::SetTerminalShell(String::new()));
+                            }
+                            for option in &self.shells {
+                                if ui.selectable_label(in_use && terminal::is_default_shell(option, &configured, &system), &option.label).clicked() {
+                                    action = Some(Action::SetTerminalShell(option.command.clone()));
+                                }
+                            }
+                        })
+                    })
+                    .response
+                    .on_hover_text(t("按工具列的終端機鈕時執行的 shell；工具列旁的下拉清單可以臨時改選別的"));
+            });
+            form_row(ui, t("自訂指令"), |ui| {
                 let mut shell = self.settings.terminal_shell.clone();
                 let response = ui
                     .add(egui::TextEdit::singleline(&mut shell).hint_text(t("留空使用系統預設")).desired_width(250.0))
@@ -3959,6 +4016,31 @@ mod tests {
         assert_eq!(app.settings.terminal_shell, "pwsh ");
         app.handle(Action::SetTerminalShell("a\nb".into()), &ctx);
         assert_eq!(app.settings.terminal_shell, "a b");
+    }
+
+    #[test]
+    fn the_plain_terminal_button_uses_the_default_shell_and_the_dropdown_picks_another_one_for_that_terminal_only() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        let shell_of = |app: &App| app.doc.terminal.as_ref().map(|t| t.shell().to_owned());
+        // 沒設定：系統預設（空字串）
+        app.handle(Action::NewTerminal, &ctx);
+        assert_eq!(shell_of(&app).as_deref(), Some(""));
+        // 設了預設終端機：按鈕用它；下拉清單選別的只影響那一個
+        app.settings.terminal_shell = "pwsh -NoLogo".to_owned();
+        app.handle(Action::NewTerminal, &ctx);
+        assert_eq!(shell_of(&app).as_deref(), Some("pwsh -NoLogo"));
+        app.handle(Action::NewTerminalWith("cmd".to_owned()), &ctx);
+        assert_eq!(shell_of(&app).as_deref(), Some("cmd"));
+        assert_eq!(app.settings.terminal_shell, "pwsh -NoLogo", "預設沒有被改掉");
+        app.handle(Action::NewTerminal, &ctx);
+        assert_eq!(shell_of(&app).as_deref(), Some("pwsh -NoLogo"), "下一次按鈕還是用預設的");
+        // 開著的終端機不受之後改的設定影響
+        let first = app.terminal_tabs()[0];
+        app.focus_pane(first.0);
+        app.switch_tab(first.1);
+        app.settings.terminal_shell = "nu".to_owned();
+        assert_eq!(shell_of(&app).as_deref(), Some(""), "已經開著的還是當初的 shell");
     }
 
     #[test]

@@ -277,8 +277,12 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("最低對比度", "Minimum contrast"),
     ("不調整", "Off"),
     ("終端機文字和底色的對比低於這個值時，自動把文字調整到看得清楚；拉到最小就是不調整", "When the contrast between terminal text and its background is below this value, the text is adjusted until it is readable; the minimum means no adjustment"),
-    ("Shell", "Shell"),
     ("留空使用系統預設", "Leave empty for the system default"),
+    ("預設終端機", "Default terminal"),
+    ("自訂：{cmd}", "Custom: {cmd}"),
+    ("自訂指令", "Custom command"),
+    ("按工具列的終端機鈕時執行的 shell；工具列旁的下拉清單可以臨時改選別的", "The shell the toolbar's terminal button runs; the dropdown next to it picks another one for a single terminal"),
+    ("選擇 shell 來新增終端機", "Choose a shell to add a terminal with"),
     ("新開的終端機要執行的程式，可以加參數（例如 pwsh -NoLogo）；路徑有空白要用雙引號包起來。已經開著的終端機不受影響", "The program new terminals run, with optional arguments (for example pwsh -NoLogo); wrap a path containing spaces in double quotes. Terminals that are already open are not affected"),
     ("預覽字級", "Preview font size"),
     // ── 分頁、尋找列 ──
