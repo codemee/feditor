@@ -682,10 +682,15 @@ mod tests {
         assert_eq!(kind("sub/a%20b.md#section"), LinkTarget::File(base.join("sub/a b.md")));
         assert_eq!(kind("./x.txt?raw=1"), LinkTarget::File(base.join("./x.txt")));
         assert_eq!(kind("%E4%B8%AD.md"), LinkTarget::File(base.join("中.md")));
-        // 絕對路徑與 file:// 網址（含 Windows 的磁碟機代號）
-        assert_eq!(kind("C:/data/n.txt"), LinkTarget::File(PathBuf::from("C:/data/n.txt")));
-        assert_eq!(kind("C:\\data\\n.txt"), LinkTarget::File(PathBuf::from("C:\\data\\n.txt")));
-        assert_eq!(kind("file:///C:/data/a%20b.txt"), LinkTarget::File(PathBuf::from("C:/data/a b.txt")));
+        // 絕對路徑與 file:// 網址：Windows 的磁碟機代號只在 Windows 上算絕對路徑，其他系統看 / 開頭的
+        if cfg!(windows) {
+            assert_eq!(kind("C:/data/n.txt"), LinkTarget::File(PathBuf::from("C:/data/n.txt")));
+            assert_eq!(kind("C:\\data\\n.txt"), LinkTarget::File(PathBuf::from("C:\\data\\n.txt")));
+            assert_eq!(kind("file:///C:/data/a%20b.txt"), LinkTarget::File(PathBuf::from("C:/data/a b.txt")));
+        } else {
+            assert_eq!(kind("/etc/hosts"), LinkTarget::File(PathBuf::from("/etc/hosts")));
+            assert_eq!(kind("file:///home/me/a%20b.txt"), LinkTarget::File(PathBuf::from("/home/me/a b.txt")));
+        }
         // 文件內的段落連結與空連結
         assert_eq!(kind("#top"), LinkTarget::Anchor);
         assert_eq!(kind(""), LinkTarget::Anchor);
