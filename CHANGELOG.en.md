@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## [0.6.0] - 2026-11-04
 
 ### Added
 - **Run the current file in the terminal**: a new "Run" toolbar button (a terminal prompt with a small play triangle; the dropdown beside it sets command-line arguments, remembered per file, settings key `run_args.<file path>`) runs the current file in a terminal tab with the detected (or manually chosen) runtime environment (Python for now). Unsaved changes are saved first; the same terminal is reused, and before running again the previous run is interrupted and the shell changes to the file's folder; the command is quoted for the shell (bash/zsh, PowerShell, cmd).
@@ -174,6 +174,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0
 [0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
 [0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
 [0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1

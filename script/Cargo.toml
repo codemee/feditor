@@ -4,4 +4,4 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-feditor-core = { version = "0.5.1", path = "../core" }
+feditor-core = { version = "0.6.0", path = "../core" }

@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.6.0] - 2026-11-04
 
 ### 新增
 - **在終端機執行目前的檔案**：工具列新增「執行」鈕（終端機提示字元加右下角播放三角形；旁邊的下拉清單可設定命令列參數，依檔案記住，設定檔 `run_args.<檔案路徑>`），用偵測到（或手動選的）執行環境在終端機分頁執行目前的檔案（目前支援 Python）。有未儲存的修改先存檔；重複使用同一個終端機，再次執行前先中斷上一次並切到檔案所在的資料夾；指令依 shell（bash／zsh、PowerShell、cmd）加引號。
@@ -174,6 +174,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0
 [0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
 [0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
 [0.4.1]: https://github.com/codemee/feditor/releases/tag/v0.4.1
