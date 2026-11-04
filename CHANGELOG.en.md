@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## [0.3.0] - 2026-11-04
 
 ### Added
 - **Settings panel with tabs on the left**: Interface, Editor, Preview, Terminal and Status bar each get a page instead of one long scrolling list; the "Per file type" list no longer overlaps the items below it.
@@ -139,6 +139,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0
 [0.1.5]: https://github.com/codemee/feditor/releases/tag/v0.1.5

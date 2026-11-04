@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.3.0] - 2026-11-04
 
 ### 新增
 - **設定面板改用左側標籤分頁**：介面、編輯區、預覽、終端機、狀態列各一頁，不再一整排往下捲；「依檔案類型」的清單也不再疊到下面的項目。
@@ -139,6 +139,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.3.0]: https://github.com/codemee/feditor/releases/tag/v0.3.0
 [0.2.1]: https://github.com/codemee/feditor/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codemee/feditor/releases/tag/v0.2.0
 [0.1.5]: https://github.com/codemee/feditor/releases/tag/v0.1.5
