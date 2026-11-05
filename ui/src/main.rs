@@ -89,6 +89,36 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
 }
 
+/// 結果表格標題列的高度。
+const TABLE_HEADER_H: f32 = 20.0;
+
+/// 要讓第 `row` 列在表格中置中而且完整顯示，垂直捲動要捲多少：egui_extras 的 `scroll_to_row`
+/// 沒把標題列的高度算進去，選到前面幾列時會被標題列蓋掉一部分，所以自己算。
+fn centered_offset(row: usize, total: usize, row_h: f32, gap_y: f32, avail_h: f32) -> f32 {
+    let pitch = row_h + gap_y;
+    let view = (avail_h - TABLE_HEADER_H - gap_y).max(row_h);
+    let max = (total as f32 * pitch - view).max(0.0);
+    (row as f32 * pitch - (view - row_h) / 2.0).clamp(0.0, max)
+}
+
+/// 結果表格每一列的底色：選取的那列用選取色，其餘奇數列用淡淡的交錯色（egui 內建的條紋在多數配色下看不出來）。
+fn row_background(index: usize, selected: bool, stripe: egui::Color32) -> impl Fn(&egui::Ui) {
+    move |ui: &egui::Ui| {
+        let color = if selected {
+            Some(ui.visuals().selection.bg_fill)
+        } else if index % 2 == 1 {
+            Some(stripe)
+        } else {
+            None
+        };
+        if let Some(color) = color {
+            let gap = ui.spacing().item_spacing;
+            let rect = ui.max_rect().expand2(egui::vec2(gap.x / 2.0, gap.y / 2.0));
+            ui.painter().rect_filled(rect, 0.0, color);
+        }
+    }
+}
+
 /// 兩個路徑是不是同一個檔案：先直接比，不同再比正規化後的路徑（大小寫、斜線、相對路徑寫法不同）。
 fn same_file(doc: Option<&std::path::Path>, hit: &std::path::Path) -> bool {
     let Some(doc) = doc else { return false };
@@ -4000,16 +4030,16 @@ impl App {
             }
         });
         ui.separator();
-        if let Some(a) = self.hits_table(ui) {
+        if let Some(a) = self.results_ui(ui) {
             action = Some(a);
         }
         action
     }
 
-    /// 結果表格：檔名、行數、命中處附近的文字（命中的字用選取色標出）。搜尋進行中結果就會一筆筆加進來；
-    /// 點一列就開啟那個檔案並跳到命中處。
-    fn hits_table(&mut self, ui: &mut egui::Ui) -> Option<Action> {
-        use egui_extras::{Column, TableBuilder};
+    /// 結果區：資料夾範圍左邊是檔案表格（檔名、命中筆數），右邊是選取的那個檔案的命中表格（行數、命中處附近的文字）；
+    /// 目前文件範圍只有一個檔案，只顯示命中表格。搜尋進行中結果就會一筆筆加進來；點檔案或命中就開啟並跳到命中處，
+    /// 表格有焦點時可以用鍵盤移動。
+    fn results_ui(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
         // 滑鼠按在表格外面：表格不再有鍵盤焦點
         let pressed_outside = ui.input(|i| {
@@ -4019,7 +4049,7 @@ impl App {
             self.folder.table_focus = false;
         }
         self.folder.table_rect = ui.available_rect_before_wrap();
-        // 表格有焦點時用鍵盤移動選取的那一筆
+        // 表格有焦點時用鍵盤移動選取的那一筆（跨檔案連續移動）
         let total = self.folder.hits.len();
         if self.folder.table_focus && total > 0 {
             use egui::Key::{ArrowDown, ArrowUp, End, Home, PageDown, PageUp};
@@ -4047,36 +4077,115 @@ impl App {
                 action = Some(Action::GotoHit(i));
             }
         }
-        let scroll = self.folder.scroll_to.take();
+        let groups = self.folder.file_groups();
+        let in_group = |g: &folder_search::FileGroup, i: usize| i >= g.start && i < g.start + g.count;
+        let shown = self
+            .folder
+            .selected
+            .and_then(|s| groups.iter().position(|g| in_group(g, s)))
+            .unwrap_or(0);
+        let scroll = self.folder.scroll_to.take().map(|(i, _)| i);
+        if !self.folder.text_scope && !groups.is_empty() {
+            let target = scroll.and_then(|i| groups.iter().position(|g| in_group(g, i)));
+            egui::Panel::left("search_files")
+                .resizable(true)
+                .default_size(260.0)
+                .size_range(150.0..=520.0)
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    if let Some(a) = self.files_table(ui, &groups, shown, target) {
+                        action = Some(a);
+                    }
+                });
+        }
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+            let (start, count) = groups.get(shown).map_or((0, 0), |g| (g.start, g.count));
+            let rel = scroll.filter(|i| *i >= start && *i < start + count).map(|i| i - start);
+            if let Some(a) = self.hits_table(ui, start, count, rel) {
+                action = Some(a);
+            }
+        });
+        action
+    }
+
+    /// 檔案表格：檔名與命中筆數，點一列就開啟那個檔案的第一筆命中。
+    fn files_table(
+        &mut self,
+        ui: &mut egui::Ui,
+        groups: &[folder_search::FileGroup],
+        shown: usize,
+        scroll: Option<usize>,
+    ) -> Option<Action> {
+        use egui_extras::{Column, TableBuilder};
+        let mut action = None;
+        let folder = &self.folder;
+        let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
+        let stripe = ui.visuals().text_color().gamma_multiply(0.07);
+        let (avail_h, gap_y) = (ui.available_height(), ui.spacing().item_spacing.y);
+        let mut table = TableBuilder::new(ui)
+            .id_salt("search_files_table")
+            .sense(egui::Sense::click())
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::remainder().at_least(60.0).clip(true))
+            .column(Column::exact(52.0));
+        if let Some(i) = scroll {
+            table = table.vertical_scroll_offset(centered_offset(i, groups.len(), row_h, gap_y, avail_h));
+        }
+        table
+            .header(TABLE_HEADER_H, |mut header| {
+                header.col(|ui| {
+                    ui.strong(t("檔名"));
+                });
+                header.col(|ui| {
+                    ui.strong(t("筆數"));
+                });
+            })
+            .body(|body| {
+                body.rows(row_h, groups.len(), |mut row| {
+                    let i = row.index();
+                    let group = &groups[i];
+                    let hit = &folder.hits[group.start];
+                    let paint = row_background(i, shown == i, stripe);
+                    row.set_selected(shown == i);
+                    row.col(|ui| {
+                        paint(ui);
+                        ui.add(egui::Label::new(folder.display_path(hit)).truncate().selectable(false))
+                            .on_hover_text(hit.path.display().to_string());
+                    });
+                    row.col(|ui| {
+                        paint(ui);
+                        ui.add(egui::Label::new(egui::RichText::new(group.count.to_string()).monospace()).selectable(false));
+                    });
+                    if row.response().clicked() {
+                        action = Some(Action::GotoHit(group.start));
+                    }
+                });
+            });
+        action
+    }
+
+    /// 命中表格：目前選取的那個檔案的命中（`start` 起算 `count` 筆），行數與命中處附近的文字，命中的字標色。
+    /// `scroll` 是要捲到的那一列（相對於這個檔案）。
+    fn hits_table(&mut self, ui: &mut egui::Ui, start: usize, count: usize, scroll: Option<usize>) -> Option<Action> {
+        use egui_extras::{Column, TableBuilder};
+        let mut action = None;
         let folder = &self.folder;
         let selected = folder.selected;
         let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
         let stripe = ui.visuals().text_color().gamma_multiply(0.07);
-        const HEADER_H: f32 = 20.0;
-        let avail_h = ui.available_height();
-        let item_gap_y = ui.spacing().item_spacing.y;
+        let (avail_h, gap_y) = (ui.available_height(), ui.spacing().item_spacing.y);
         let mut table = TableBuilder::new(ui)
             .id_salt("search_hits")
             .resizable(true)
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(220.0).at_least(80.0).clip(true))
             .column(Column::initial(64.0).at_least(40.0).clip(true))
             .column(Column::remainder().at_least(120.0).clip(true));
-        if let Some((i, _)) = scroll {
-            // 自己算捲動位置，讓那一列置中而且完整顯示：egui_extras 的 scroll_to_row 沒把標題列的高度
-            // 算進去，選到前面幾列時會被標題列蓋掉一部分
-            let pitch = row_h + item_gap_y;
-            let view = (avail_h - HEADER_H - item_gap_y).max(row_h);
-            let max = (folder.hits.len() as f32 * pitch - view).max(0.0);
-            let offset = (i as f32 * pitch - (view - row_h) / 2.0).clamp(0.0, max);
-            table = table.vertical_scroll_offset(offset);
+        if let Some(r) = scroll {
+            table = table.vertical_scroll_offset(centered_offset(r, count, row_h, gap_y, avail_h));
         }
         table
-            .header(HEADER_H, |mut header| {
-                header.col(|ui| {
-                    ui.strong(t("檔名"));
-                });
+            .header(TABLE_HEADER_H, |mut header| {
                 header.col(|ui| {
                     ui.strong(t("行數"));
                 });
@@ -4085,32 +4194,12 @@ impl App {
                 });
             })
             .body(|body| {
-                body.rows(row_h, folder.hits.len(), |mut row| {
-                    let i = row.index();
+                body.rows(row_h, count, |mut row| {
+                    let r = row.index();
+                    let i = start + r;
                     let hit = &folder.hits[i];
+                    let paint = row_background(r, selected == Some(i), stripe);
                     row.set_selected(selected == Some(i));
-                    // 交錯的列底色（egui 內建的條紋在多數配色下看不出來）；選取的那列用選取色
-                    let paint = move |ui: &egui::Ui| {
-                        let color = if selected == Some(i) {
-                            Some(ui.visuals().selection.bg_fill)
-                        } else if i % 2 == 1 {
-                            Some(stripe)
-                        } else {
-                            None
-                        };
-                        if let Some(color) = color {
-                            let gap = ui.spacing().item_spacing;
-                            let rect = ui.max_rect().expand2(egui::vec2(gap.x / 2.0, gap.y / 2.0));
-                            ui.painter().rect_filled(rect, 0.0, color);
-                        }
-                    };
-                    row.col(|ui| {
-                        paint(ui);
-                        let name = ui.add(egui::Label::new(folder.display_path(hit)).truncate().selectable(false));
-                        if !folder.text_scope {
-                            name.on_hover_text(hit.path.display().to_string());
-                        }
-                    });
                     row.col(|ui| {
                         paint(ui);
                         ui.add(

@@ -37,6 +37,13 @@ pub struct Stamp {
     pub len: usize,
 }
 
+/// 同一個檔案的一段連續命中：`hits[start..start + count]`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileGroup {
+    pub start: usize,
+    pub count: usize,
+}
+
 pub struct FolderSearch {
     pub open: bool,
     /// 搜尋範圍：`true` 是資料夾，`false` 是目前文件。
@@ -266,6 +273,18 @@ impl FolderSearch {
         Some(next)
     }
 
+    /// 結果依檔案分組：同一個檔案的命中是連續的（搜尋是一個檔案一個檔案掃的，更新單一檔案時也放回原位）。
+    pub fn file_groups(&self) -> Vec<FileGroup> {
+        let mut out: Vec<FileGroup> = Vec::new();
+        for (i, h) in self.hits.iter().enumerate() {
+            match out.last_mut() {
+                Some(g) if self.hits[g.start].path == h.path => g.count += 1,
+                _ => out.push(FileGroup { start: i, count: 1 }),
+            }
+        }
+        out
+    }
+
     /// 結果裡出現過的檔案（依出現順序、不重複）。
     pub fn distinct_paths(&self) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = Vec::new();
@@ -428,6 +447,18 @@ mod tests {
         assert_eq!(fs.step(true), Some(2));
         fs.clear();
         assert_eq!(fs.step(false), None);
+    }
+
+    #[test]
+    fn hits_are_grouped_by_file() {
+        let (_d, mut fs) = setup(&[("a.txt", "foo\nfoo"), ("b.txt", "x"), ("c.txt", "foo")]);
+        go(&mut fs, "foo");
+        assert_eq!(
+            fs.file_groups(),
+            vec![FileGroup { start: 0, count: 2 }, FileGroup { start: 2, count: 1 }]
+        );
+        fs.clear();
+        assert!(fs.file_groups().is_empty());
     }
 
     #[test]
