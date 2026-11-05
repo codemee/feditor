@@ -66,6 +66,14 @@ fn editor_id(pane: panes::PaneId) -> egui::Id {
     egui::Id::unique(("editor", pane))
 }
 
+fn folder_dir_id() -> egui::Id {
+    egui::Id::unique("folder_dir_input")
+}
+
+fn folder_filter_id() -> egui::Id {
+    egui::Id::unique("folder_filter_input")
+}
+
 fn find_input_id() -> egui::Id {
     egui::Id::unique("find_input")
 }
@@ -1063,6 +1071,9 @@ impl App {
             return;
         }
         self.folder.anchored = true;
+        if std::mem::take(&mut self.folder.focus_after_search) {
+            self.folder.focus_table_pending = true;
+        }
         self.sync_table_selection();
         if let Some(i) = self.folder.selected {
             self.folder.scroll_to = Some((i, true));
@@ -2205,6 +2216,7 @@ impl App {
                 self.clear_hit_highlight();
                 let (query, opts) = (self.find.query.clone(), self.find.opts);
                 self.folder.start(ctx, &query, opts);
+                self.folder.focus_after_search = true;
             }
             Action::StopFolderSearch => self.folder.stop(),
             Action::PickSearchFolder => self.pick_search_folder(),
@@ -3986,6 +3998,7 @@ impl App {
                 let filter_w = (room * 0.4).clamp(40.0, 150.0);
                 let dir = ui.add(
                     egui::TextEdit::singleline(&mut self.folder.dir)
+                        .id(folder_dir_id())
                         .hint_text(t("資料夾"))
                         .desired_width((room - filter_w - 8.0).max(30.0)),
                 );
@@ -3998,6 +4011,7 @@ impl App {
                 ui.label(t("檔名"));
                 let filter = ui.add(
                     egui::TextEdit::singleline(&mut self.folder.filter)
+                        .id(folder_filter_id())
                         .hint_text("*.rs;*.toml")
                         .desired_width(filter_w),
                 );
@@ -4722,6 +4736,25 @@ impl eframe::App for App {
             }
             self.sync_table_selection();
             self.anchor_results();
+            // 按 Enter／搜尋鈕開始搜尋，結果出來之後輸入焦點移到命中項目（上下鍵可以直接移動、Esc 關閉）
+            if std::mem::take(&mut self.folder.focus_table_pending) {
+                self.folder.table_focus = true;
+                ctx.memory_mut(|m| {
+                    if let Some(id) = m.focused() {
+                        m.surrender_focus(id);
+                    }
+                });
+            }
+            // 輸入焦點在搜尋面板裡（任何一個輸入框、或結果表格）時，按 Esc 關閉面板
+            let in_panel = self.folder.table_focus
+                || ctx.memory(|m| {
+                    [find_input_id(), replace_input_id(), folder_dir_id(), folder_filter_id()]
+                        .into_iter()
+                        .any(|id| m.has_focus(id))
+                });
+            if in_panel && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.close_find(&ctx);
+            }
         }
 
         // 快捷鍵（Ctrl+Shift+S 要先於 Ctrl+S 檢查，因為 egui 比對修飾鍵時 Ctrl+S 也會吃到它）

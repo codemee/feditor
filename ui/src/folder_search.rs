@@ -65,6 +65,10 @@ pub struct FolderSearch {
     pub scroll_to: Option<(usize, bool)>,
     /// 這次搜尋的結果出齊後，表格是否已經先捲到目前畫面上的那一筆了。
     pub anchored: bool,
+    /// 使用者按 Enter／搜尋鈕開始了搜尋：結果出來之後，輸入焦點要移到命中項目。
+    pub focus_after_search: bool,
+    /// 結果出來了，下一個畫面把輸入焦點移到結果表格。
+    pub focus_table_pending: bool,
     /// 鍵盤焦點在結果表格上：上下鍵、PageUp／PageDown、Home／End 移動選取的那一筆。
     pub table_focus: bool,
     /// 檔案表格佔整個結果區的比例（使用者拖分隔條調的）；`None` 是預設：上下排依檔案數決定高度，左右排 40%。
@@ -97,6 +101,8 @@ impl Default for FolderSearch {
             status: String::new(),
             scroll_to: None,
             anchored: false,
+            focus_after_search: false,
+            focus_table_pending: false,
             table_focus: false,
             split: None,
             table_rect: egui::Rect::NOTHING,
@@ -125,6 +131,7 @@ impl FolderSearch {
         self.stamp = None;
         self.anchored = false;
         self.scroll_to = None;
+        self.focus_after_search = false;
     }
 
     /// 開始在資料夾裡搜尋（背景執行緒）。上一次還沒結束就先取消它。
