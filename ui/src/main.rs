@@ -666,6 +666,8 @@ struct App {
     cli_backend: fn(bool) -> Result<(), String>,
     /// 讓選到的檔案類別預設用 FEditor 開啟（測試時換成不碰系統的替身）。
     assoc_backend: fn(&std::collections::BTreeSet<String>, bool) -> Result<file_assoc::Outcome, String>,
+    /// 開啟系統的「預設應用程式」頁（測試時換成不開視窗的替身）。
+    open_default_apps: fn(),
     /// 自動搜尋的執行環境（Python 的虛擬環境等）：背景搜尋與快取。
     runtime: runtime_env::Resolver,
     /// 「執行目前檔案」上次用的終端機（識別編號）；還在就重複使用，不會每次都多開一個。
@@ -741,6 +743,7 @@ impl App {
             shell_menu_backend: apply_shell_menu,
             cli_backend: cli_command::apply,
             assoc_backend: file_assoc::apply,
+            open_default_apps: file_assoc::open_default_apps_page,
             runtime: runtime_env::Resolver::default(),
             run_terminal: None,
             allow_close: false,
@@ -1280,9 +1283,9 @@ impl App {
                         t("有些檔案要請你自己確認"),
                         tf!("下面這些副檔名沒辦法由 FEditor 直接設成預設程式（你已經在系統裡自己選過，系統不允許程式改掉）：\n\n{}\n\n{}", outcome.blocked.join(" "), hint),
                     );
-                    if cfg!(windows) && !was_on {
-                        // 剛打開這個功能：順手開啟系統的預設應用程式頁，直接停在 FEditor
-                        let _ = std::process::Command::new("explorer").arg("ms-settings:defaultapps?registeredAppUser=FEditor").spawn();
+                    if !was_on {
+                        // 剛打開這個功能：順手開啟系統的預設應用程式頁，直接停在 FEditor（只有 Windows 有這一頁）
+                        (self.open_default_apps)();
                     }
                 }
             }
@@ -4941,6 +4944,14 @@ mod tests {
         Ok(file_assoc::Outcome::default())
     }
 
+    thread_local! {
+        static PAGE_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn count_page_open() {
+        PAGE_OPENS.with(|c| c.set(c.get() + 1));
+    }
+
     fn blocked_assoc(_: &std::collections::BTreeSet<String>, _: bool) -> Result<file_assoc::Outcome, String> {
         Ok(file_assoc::Outcome { blocked: vec![".py".to_owned(), ".json".to_owned()] })
     }
@@ -4952,11 +4963,14 @@ mod tests {
     #[test]
     fn the_file_association_switch_and_categories_call_the_backend_and_only_stick_when_it_works() {
         ASSOC_CALLS.with(|c| c.borrow_mut().clear());
+        PAGE_OPENS.with(|c| c.set(0));
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
+        app.open_default_apps = count_page_open; // 測試不能真的開出系統設定視窗
         app.assoc_backend = record_assoc;
         app.handle(Action::SetFileAssoc(true), &ctx);
         assert!(app.settings.file_assoc);
+        assert_eq!(PAGE_OPENS.with(|c| c.get()), 0, "沒有副檔名被擋：不用開系統設定");
         // 取消勾選一類、再勾選另一類：每次都用目前的總開關與類別重新套用
         app.handle(Action::SetFileAssocGroup("config".to_owned(), false), &ctx);
         app.handle(Action::SetFileAssocGroup("text".to_owned(), true), &ctx);
@@ -4981,6 +4995,11 @@ mod tests {
         app.handle(Action::SetFileAssoc(true), &ctx);
         let message = &app.modal.as_ref().expect("要提示").spec.message;
         assert!(message.contains(".py .json"), "{message}");
+        assert_eq!(PAGE_OPENS.with(|c| c.get()), 1, "剛打開、有副檔名被擋：開啟系統的預設應用程式頁");
+        app.modal = None;
+        // 已經開著時再勾選類別、又有副檔名被擋：只提示，不再開系統設定
+        app.handle(Action::SetFileAssocGroup("text".to_owned(), false), &ctx);
+        assert_eq!(PAGE_OPENS.with(|c| c.get()), 1);
         app.modal = None;
         // 失敗：不記成已開啟、顯示錯誤
         app.handle(Action::SetFileAssoc(false), &ctx);

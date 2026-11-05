@@ -132,6 +132,12 @@ pub fn apply(selected: &BTreeSet<String>, on: bool) -> Result<Outcome, String> {
     imp::apply(&exe, &selected)
 }
 
+/// 開啟系統的「預設應用程式」頁（Windows，停在 FEditor）：使用者自己選過預設程式的副檔名要請他在那裡確認。
+/// 其他系統沒有這一頁，什麼也不做。
+pub fn open_default_apps_page() {
+    imp::open_default_apps_page();
+}
+
 /// 備份檔放在設定資料夾（macOS 記原本的處理程式用）。
 fn backup_path() -> Option<std::path::PathBuf> {
     crate::settings::Settings::default_path().and_then(|p| p.parent().map(|d| d.join("file-assoc-backup.txt")))
@@ -360,6 +366,17 @@ mod imp {
         user_choice.is_some_and(|c| !c.is_empty() && !c.eq_ignore_ascii_case(progid))
     }
 
+    /// 用系統的方式開啟 `ms-settings:` 網址（不能交給 explorer.exe：它會把帶查詢字串的網址當成路徑，只開出「文件」資料夾）。
+    pub fn open_default_apps_page() {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let verb = wide("open");
+        // registeredAppUser 是 RegisteredApplications 裡登記的名稱：頁面直接停在 FEditor
+        let uri = wide(&format!("ms-settings:defaultapps?registeredAppUser={}", NAMES.registered));
+        // SAFETY: 參數都是以 0 結尾的 UTF-16 字串，其餘是空指標
+        unsafe { ShellExecuteW(null_mut(), verb.as_ptr(), uri.as_ptr(), null(), null(), SW_SHOWNORMAL) };
+    }
+
     /// 請檔案總管重新讀取檔案關聯（不然圖示與預設程式要過一陣子才更新）。
     fn notify() {
         // SAFETY: 單純的通知，沒有要傳的項目
@@ -586,6 +603,8 @@ mod imp {
         std::fs::write(path, text).map_err(|e| e.to_string())
     }
 
+    pub fn open_default_apps_page() {}
+
     pub fn apply(_exe: &Path, selected: &BTreeSet<String>) -> Result<Outcome, String> {
         let backup_file = backup_path().ok_or_else(|| "找不到設定資料夾".to_owned())?;
         let mut backup = read_backup(&backup_file);
@@ -634,6 +653,8 @@ mod imp {
             .ok_or_else(|| "找不到使用者的家目錄".to_owned())
     }
 
+    pub fn open_default_apps_page() {}
+
     pub fn apply(exe: &Path, selected: &BTreeSet<String>) -> Result<Outcome, String> {
         let applications = dir_from("XDG_DATA_HOME", ".local/share")?.join("applications");
         let mimeapps = dir_from("XDG_CONFIG_HOME", ".config")?.join("mimeapps.list");
@@ -663,6 +684,8 @@ mod imp {
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 mod imp {
     use super::*;
+
+    pub fn open_default_apps_page() {}
 
     pub fn apply(_: &Path, selected: &BTreeSet<String>) -> Result<Outcome, String> {
         if selected.is_empty() { Ok(Outcome::default()) } else { Err("這個系統不支援".to_owned()) }
