@@ -97,20 +97,20 @@ impl App {
         self.previews.get(&id).is_some_and(|p| p.search)
     }
 
-    /// 讓版面裡有沒有尋找面板的窗格跟 `folder.open` 一致：要開就在有焦點的窗格下方切出來
+    /// 讓版面裡有沒有尋找面板的窗格跟 `folder.open` 一致：要開就在有焦點的窗格右邊切出來
     /// （之後可以拖到別的位置），要關就拿掉。
     pub(crate) fn sync_search_pane(&mut self) {
         match (self.folder.open, self.search_pane_id()) {
             (true, None) => {
                 let focus = self.layout.focus;
                 let rect = self.pane_rects.iter().find(|(id, _)| *id == focus).map(|(_, r)| *r);
-                if rect.is_some_and(|r| !panes::can_split(r, Side::Bottom)) {
+                if rect.is_some_and(|r| !panes::can_split(r, Side::Right)) {
                     self.push(LogKind::Warn, t("窗格太小，放不下尋找面板"));
                     self.folder.open = false;
                     return;
                 }
                 let id = self.layout.alloc_id();
-                if self.layout.root.split_with_ratio(focus, Side::Bottom, id, Some(0.62)) {
+                if self.layout.root.split_with_ratio(focus, Side::Right, id, Some(0.6)) {
                     self.previews.insert(id, PreviewPane::search_pane(focus));
                 } else {
                     self.folder.open = false;

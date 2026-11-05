@@ -4036,7 +4036,7 @@ impl App {
         action
     }
 
-    /// 結果區：資料夾範圍左邊是檔案表格（檔名、命中筆數），右邊是選取的那個檔案的命中表格（行數、命中處附近的文字）；
+    /// 結果區：資料夾範圍上面是檔案表格（檔名、命中筆數），下面是選取的那個檔案的命中表格（行數、命中處附近的文字）；
     /// 目前文件範圍只有一個檔案，只顯示命中表格。搜尋進行中結果就會一筆筆加進來；點檔案或命中就開啟並跳到命中處，
     /// 表格有焦點時可以用鍵盤移動。
     fn results_ui(&mut self, ui: &mut egui::Ui) -> Option<Action> {
@@ -4087,10 +4087,10 @@ impl App {
         let scroll = self.folder.scroll_to.take().map(|(i, _)| i);
         if !self.folder.text_scope && !groups.is_empty() {
             let target = scroll.and_then(|i| groups.iter().position(|g| in_group(g, i)));
-            egui::Panel::left("search_files")
+            egui::Panel::top("search_files")
                 .resizable(true)
-                .default_size(260.0)
-                .size_range(150.0..=520.0)
+                .default_size(130.0)
+                .size_range(60.0..=400.0)
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
                     if let Some(a) = self.files_table(ui, &groups, shown, target) {
@@ -4931,7 +4931,7 @@ mod tests {
         app.sync_search_pane();
         let id = app.search_pane_id().expect("開啟後版面裡多了尋找窗格");
         assert!(app.is_preview(id) && app.is_search_pane(id));
-        assert_eq!(app.layout.root.leaves(), vec![editor_pane, id], "在有焦點的窗格下方");
+        assert_eq!(app.layout.root.leaves(), vec![editor_pane, id], "在有焦點的窗格右邊");
         assert_eq!((app.tab_pane_count(), app.preview_id()), (1, None), "不算一般窗格，也不是預覽");
         let session = app.session_all();
         assert!(session.previews.is_empty());
