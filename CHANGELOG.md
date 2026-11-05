@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## 未發布
+## [0.7.0] - 2026-11-05
 
 ### 新增
 - **預設開啟（雙按檔案就用 FEditor 開啟）**：設定面板「介面」新增「預設開啟」開關與類別勾選（程式碼、設定檔、標記語言、純文字，預設只勾前兩類；`.bat`／`.cmd`／`.exe` 這類雙按就是執行的檔案不在裡面）。Windows 登記在目前使用者的登錄檔，FEditor 出現在「開啟方式」與「預設應用程式」，還沒有預設程式的副檔名直接設成 FEditor，使用者已經自己選過的系統不允許程式改，會列出來並開啟系統的「預設應用程式」頁請使用者確認；macOS 設定 Launch Services 的預設處理程式（原本的備份起來，取消時還原）；Linux 寫 `feditor.desktop` 與 `mimeapps.list`。設定檔新增 `file_assoc`、`file_assoc_groups`。
@@ -185,6 +185,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.7.0]: https://github.com/codemee/feditor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0
 [0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
 [0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0

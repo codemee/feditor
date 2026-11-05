@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## [0.7.0] - 2026-11-05
 
 ### Added
 - **Open by default (double-click opens in FEditor)**: the settings panel's Interface page gains an "Open by default" switch with category ticks (source code, config files, markup, plain text; only the first two are ticked by default; files that are run when double-clicked, such as `.bat`/`.cmd`/`.exe`, are not included). On Windows it is registered in the current user's registry: FEditor appears under "Open with" and "Default apps", extensions with no default program yet are set to FEditor, and the ones the user already chose a program for (which the system does not let programs change) are listed with the system's "Default apps" page opened for the user to confirm; on macOS it sets the Launch Services default handler (the original is backed up and restored when unticked); on Linux it writes `feditor.desktop` and `mimeapps.list`. The settings file gains `file_assoc` and `file_assoc_groups`.
@@ -185,6 +185,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.7.0]: https://github.com/codemee/feditor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0
 [0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
 [0.5.0]: https://github.com/codemee/feditor/releases/tag/v0.5.0
