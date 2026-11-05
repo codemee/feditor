@@ -4134,7 +4134,9 @@ impl App {
             let files_w = (size.x * self.folder.split.unwrap_or(0.4)).clamp(120.0, size.x - 120.0 - HANDLE);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                ui.allocate_ui(egui::vec2(files_w, size.y), |ui| {
+                // 水平排列的父容器裡，子區塊要明確指定由上往下排，標題才會在框的上面
+                let down = egui::Layout::top_down(egui::Align::Min);
+                ui.allocate_ui_with_layout(egui::vec2(files_w, size.y), down, |ui| {
                     captioned_group(ui, t("檔案"), true, |ui| {
                         if let Some(a) = self.files_table(ui, &groups, shown, target, None) {
                             action = Some(a);
@@ -4147,7 +4149,7 @@ impl App {
                     new_split = ui.input(|i| i.pointer.interact_pos()).map(|p| (p.x - area.min.x) / size.x);
                 }
                 reset = resp.double_clicked();
-                ui.allocate_ui(egui::vec2((size.x - files_w - HANDLE).max(60.0), size.y), |ui| {
+                ui.allocate_ui_with_layout(egui::vec2((size.x - files_w - HANDLE).max(60.0), size.y), down, |ui| {
                     captioned_group(ui, t("命中項目"), true, |ui| {
                         if let Some(a) = self.hits_table(ui, start, count, rel) {
                             action = Some(a);
@@ -4219,7 +4221,8 @@ impl App {
         let avail_h = max_height.map_or(avail_h, |h| h + TABLE_HEADER_H + gap_y);
         // 筆數欄固定寬度，檔名欄吃剩下的（窄的時候先縮檔名，筆數不會被擠出去）
         const COUNT_W: f32 = 44.0;
-        let name_w = (ui.available_width() - COUNT_W - ui.spacing().item_spacing.x).max(30.0);
+        // 要扣掉欄與欄之間的間距、表格的垂直捲軸與框內的邊距，不然筆數欄會被擠出表格外面
+        let name_w = (ui.available_width() - COUNT_W - 28.0).max(30.0);
         set_stripe(ui);
         let mut table = TableBuilder::new(ui)
             .id_salt("search_files_table")
@@ -4241,7 +4244,9 @@ impl App {
                     ui.strong(t("檔名"));
                 });
                 header.col(|ui| {
-                    ui.strong(t("筆數"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.strong(t("筆數"));
+                    });
                 });
             })
             .body(|body| {
@@ -4255,7 +4260,10 @@ impl App {
                             .on_hover_text(hit.path.display().to_string());
                     });
                     row.col(|ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(group.count.to_string()).monospace()).selectable(false));
+                        // 數字靠右對齊
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(egui::RichText::new(group.count.to_string()).monospace()).selectable(false));
+                        });
                     });
                     if row.response().clicked() {
                         action = Some(Action::GotoHit(group.start));
