@@ -140,8 +140,8 @@ fn set_stripe(ui: &mut egui::Ui) {
     ui.visuals_mut().faint_bg_color = stripe;
 }
 
-/// 尋找面板第一列，搜尋框以外的東西（展開鈕、三個選項、搜尋、上一筆、下一筆、關閉與間距）佔的寬度。
-const SEARCH_ROW_BUTTONS_W: f32 = 240.0;
+/// 小圖示按鈕的寬度（見 `icons::Size::Small`）。
+const SMALL_BUTTON_W: f32 = 22.0;
 
 /// 結果表格標題列的高度。
 const TABLE_HEADER_H: f32 = 20.0;
@@ -3910,7 +3910,11 @@ impl App {
             }
 
             // 搜尋框吃剩下的寬度（窄的時候先縮搜尋框，右邊的按鈕才不會被擠出窗格）
-            let query_w = (visible_width(ui) - SEARCH_ROW_BUTTONS_W).clamp(40.0, 260.0);
+            // 右邊的按鈕：三個選項、（資料夾範圍的）搜尋鈕、上一筆、下一筆、關閉，每個 22 像素加間距。
+            // 精確扣掉它們需要的寬度：寬度夠就讓搜尋框維持原本的大小（選項緊接在後面、多餘的空間留在右邊），
+            // 窄到沒有空間了才縮減搜尋框
+            let buttons = if folder_scope { 7.0 } else { 6.0 };
+            let query_w = (visible_width(ui) - buttons * (SMALL_BUTTON_W + BUTTON_GAP) - 2.0).clamp(40.0, 260.0);
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.find.query)
                     .id(find_input_id())
