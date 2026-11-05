@@ -822,6 +822,10 @@ struct App {
 
 impl App {
     fn new(initial: Option<PathBuf>, settings: Settings) -> Self {
+        // 尋找面板上次的位置、大小與表格分隔比例
+        let dock = search_dock::SearchDock::from_settings(&settings);
+        let mut folder = folder_search::FolderSearch::default();
+        folder.split = settings.search_split;
         let mut app = Self {
             doc: Document::new(),
             tabs: tabs::TabSet::new(),
@@ -867,8 +871,8 @@ impl App {
             macro_open: false,
             macro_anchor: None,
             capturing_shortcut: None,
-            folder: folder_search::FolderSearch::default(),
-            dock: search_dock::SearchDock::default(),
+            folder,
+            dock,
             session_enabled: false,
             last_disk_check: Instant::now(),
             was_focused: true,
@@ -926,6 +930,24 @@ impl App {
 
     /// 記下「設定有變更、還沒存檔」。字級會隨著拖曳連續變動，所以不是每次都寫磁碟，
     /// 而是停下來一小段時間後才寫（見 `ui()`），關閉視窗時一定會寫。
+    /// 尋找面板的位置、大小與兩個表格的分隔比例有變就記進設定（儲存有延遲合併，拖曳中不會一直寫檔）。
+    fn sync_search_dock_settings(&mut self) {
+        let (dock, split) = (&self.dock, self.folder.split);
+        let s = &mut self.settings;
+        let far = |a: f32, b: f32| (a - b).abs() > 0.5;
+        let split_changed = match (s.search_split, split) {
+            (Some(a), Some(b)) => (a - b).abs() > 0.002,
+            (a, b) => a != b,
+        };
+        if s.search_dock_edge != dock.edge || far(s.search_dock_width, dock.width) || far(s.search_dock_height, dock.height) || split_changed {
+            s.search_dock_edge = dock.edge;
+            s.search_dock_width = dock.width;
+            s.search_dock_height = dock.height;
+            s.search_split = split;
+            self.mark_settings_dirty();
+        }
+    }
+
     fn mark_settings_dirty(&mut self) {
         self.settings_dirty_since = Some(Instant::now());
     }
@@ -4731,6 +4753,7 @@ impl eframe::App for App {
         }
         // 使用者在編輯區點了別的地方（選取離開了命中的那一筆）：命中的底色就拿掉
         self.drop_stale_highlight();
+        self.sync_search_dock_settings();
         if self.folder.open {
             if self.folder.folder {
                 self.sync_search_dir();

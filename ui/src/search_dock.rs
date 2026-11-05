@@ -17,8 +17,29 @@ pub enum DockEdge {
 }
 
 /// 左右邊停靠時面板至少多寬、上下邊停靠時至少多高（再小面板裡的東西就放不下了）。
-const MIN_WIDTH: f32 = 260.0;
-const MIN_HEIGHT: f32 = 170.0;
+pub const MIN_WIDTH: f32 = 260.0;
+pub const MIN_HEIGHT: f32 = 170.0;
+/// 預設的寬度（左右邊停靠）與高度（上下邊停靠）。
+pub const DEFAULT_WIDTH: f32 = 380.0;
+pub const DEFAULT_HEIGHT: f32 = 280.0;
+
+impl DockEdge {
+    /// 設定檔裡的名稱。
+    pub fn name(self) -> &'static str {
+        match self {
+            DockEdge::Left => "left",
+            DockEdge::Right => "right",
+            DockEdge::Top => "top",
+            DockEdge::Bottom => "bottom",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom]
+            .into_iter()
+            .find(|e| e.name().eq_ignore_ascii_case(s.trim()))
+    }
+}
 
 pub struct SearchDock {
     pub edge: DockEdge,
@@ -31,7 +52,14 @@ pub struct SearchDock {
 
 impl Default for SearchDock {
     fn default() -> Self {
-        Self { edge: DockEdge::Right, width: 380.0, height: 280.0, dragging: false }
+        Self { edge: DockEdge::Right, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, dragging: false }
+    }
+}
+
+impl SearchDock {
+    /// 用設定檔記住的位置與大小。
+    pub fn from_settings(s: &crate::settings::Settings) -> Self {
+        Self { edge: s.search_dock_edge, width: s.search_dock_width, height: s.search_dock_height, dragging: false }
     }
 }
 
@@ -237,6 +265,15 @@ mod tests {
         dock.edge = DockEdge::Top;
         dock.resize_to(area(), pos2(500.0, 150.0));
         assert!((dock.height - (150.0 - DIVIDER / 2.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn edge_names_round_trip() {
+        for e in [DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom] {
+            assert_eq!(DockEdge::parse(e.name()), Some(e));
+        }
+        assert_eq!(DockEdge::parse(" TOP "), Some(DockEdge::Top));
+        assert_eq!(DockEdge::parse("middle"), None);
     }
 
     #[test]

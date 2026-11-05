@@ -186,6 +186,11 @@ pub struct Settings {
     pub file_assoc: bool,
     /// 要讓 FEditor 接手的檔案類別（`file_assoc::GROUPS` 的 `key`）；預設是程式碼與設定檔。
     pub file_assoc_groups: std::collections::BTreeSet<String>,
+    /// 尋找面板停靠的邊、左右邊停靠時的寬度、上下邊停靠時的高度，以及兩個結果表格的分隔比例（None 是預設）。
+    pub search_dock_edge: crate::search_dock::DockEdge,
+    pub search_dock_width: f32,
+    pub search_dock_height: f32,
+    pub search_split: Option<f32>,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
     pub terminal_font_size: f32,
     /// 終端機文字和底色的最低對比度；1 表示不調整。
@@ -223,6 +228,10 @@ impl Default for Settings {
             cli_command: false,
             file_assoc: false,
             file_assoc_groups: crate::file_assoc::default_groups(),
+            search_dock_edge: crate::search_dock::DockEdge::Right,
+            search_dock_width: crate::search_dock::DEFAULT_WIDTH,
+            search_dock_height: crate::search_dock::DEFAULT_HEIGHT,
+            search_split: None,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
@@ -356,6 +365,26 @@ impl Settings {
                         .map(str::to_owned)
                         .collect();
                 }
+                "search_dock" => {
+                    if let Some(edge) = crate::search_dock::DockEdge::parse(value) {
+                        settings.search_dock_edge = edge;
+                    }
+                }
+                "search_dock_width" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        settings.search_dock_width = v.clamp(crate::search_dock::MIN_WIDTH, 4000.0);
+                    }
+                }
+                "search_dock_height" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        settings.search_dock_height = v.clamp(crate::search_dock::MIN_HEIGHT, 4000.0);
+                    }
+                }
+                "search_split" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        settings.search_split = v.is_finite().then(|| v.clamp(0.1, 0.9));
+                    }
+                }
                 "tab_spaces" => {
                     if let Some(on) = parse_bool(value) {
                         settings.tab_spaces = on;
@@ -440,6 +469,10 @@ impl Settings {
         text.push_str(&format!("file_assoc = {}\n", self.file_assoc));
         let groups: Vec<&str> = self.file_assoc_groups.iter().map(String::as_str).collect();
         text.push_str(&format!("file_assoc_groups = {}\n", groups.join(",")));
+        text.push_str(&format!("search_dock = {}\nsearch_dock_width = {}\nsearch_dock_height = {}\n", self.search_dock_edge.name(), self.search_dock_width.round(), self.search_dock_height.round()));
+        if let Some(split) = self.search_split {
+            text.push_str(&format!("search_split = {split:.3}\n"));
+        }
         for (name, width) in &self.tab_widths {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
             if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
@@ -726,6 +759,27 @@ mod tests {
         assert_eq!(back.file_assoc_groups, custom.file_assoc_groups);
         custom.file_assoc_groups.clear();
         assert!(Settings::parse(&custom.to_text()).file_assoc_groups.is_empty(), "全部取消勾選也會記住");
+    }
+
+    #[test]
+    fn the_search_panel_layout_is_remembered() {
+        use crate::search_dock::DockEdge;
+        let d = Settings::default();
+        assert_eq!((d.search_dock_edge, d.search_split), (DockEdge::Right, None));
+        let mut s = Settings::default();
+        s.search_dock_edge = DockEdge::Bottom;
+        s.search_dock_width = 412.0;
+        s.search_dock_height = 301.0;
+        s.search_split = Some(0.35);
+        let back = Settings::parse(&s.to_text());
+        assert_eq!(back.search_dock_edge, DockEdge::Bottom);
+        assert_eq!((back.search_dock_width, back.search_dock_height), (412.0, 301.0));
+        assert_eq!(back.search_split, Some(0.35));
+        let odd = Settings::parse("search_dock = middle\nsearch_dock_width = 5\nsearch_dock_height = abc\nsearch_split = 7\n");
+        assert_eq!(odd.search_dock_edge, DockEdge::Right, "不認得的邊用預設");
+        assert_eq!(odd.search_dock_width, crate::search_dock::MIN_WIDTH, "太小的寬度調回最小值");
+        assert_eq!(odd.search_dock_height, crate::search_dock::DEFAULT_HEIGHT, "不是數字就用預設");
+        assert_eq!(odd.search_split, Some(0.9));
     }
 
     #[test]

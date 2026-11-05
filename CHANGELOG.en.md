@@ -10,6 +10,8 @@
 - **Results are shown in two stacked tables**: files on top (file name, hit count) and the hits of the selected file below (line number and the text around the match, highlighted), and rows appear one by one while the search is still running; clicking a row opens the file and puts the caret on the match, scrolled into view; F3 / Shift+F3 move to the next / previous result.
 - **Folder scope can replace too**: "replace this match" opens the file, replaces in its tab and moves on to the next result; "replace all" asks first, files open in tabs are changed in their tabs (undoable) and the others are written to disk directly (keeping encoding and line endings).
 
+- **The search panel position is remembered**: the edge it is docked to, its width (left/right edge) or height (top/bottom edge), and the split between the two result tables are saved in the settings file (`search_dock`, `search_dock_width`, `search_dock_height`, `search_split`) and restored on the next start; whether the panel is open is not remembered, it always starts closed.
+
 ### Fixed
 - The search button of the folder search panel did not match the other search options in size and position; it is now the same size and sits right after the options.
 
