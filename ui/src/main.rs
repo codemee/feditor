@@ -1482,6 +1482,8 @@ impl App {
                 if self.is_pristine() {
                     self.doc = doc;
                     self.text_replaced();
+                    // 直接用掉空白文件、沒有換分頁：也要把鍵盤焦點移進編輯區（不然焦點還在剛才點的「開啟」鈕上）
+                    self.pending_editor_focus = true;
                 } else {
                     self.tabs.push(&mut self.doc, &mut self.editor, doc);
                     self.tab_changed();
@@ -5079,6 +5081,28 @@ mod tests {
         app.pending_editor_focus = false;
         app.close_tab(app.tabs.active());
         assert!(app.pending_editor_focus, "關閉分頁");
+    }
+
+    #[test]
+    fn opening_a_file_hands_the_keyboard_focus_to_the_editor_in_every_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "aaa").unwrap();
+        std::fs::write(&b, "bbb").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.pending_editor_focus = false;
+        app.open_path(&a); // 目前是空白文件：直接用掉它，沒有新分頁
+        assert_eq!(app.tabs.len(), 1);
+        assert!(app.pending_editor_focus, "開在原本空白的文件裡");
+        app.pending_editor_focus = false;
+        app.open_path(&b); // 開在新分頁
+        assert!(app.pending_editor_focus, "開在新分頁");
+        app.pending_editor_focus = false;
+        app.open_path(&a); // 已經開著：切過去
+        assert!(app.pending_editor_focus, "已經開著、切過去");
+        app.pending_editor_focus = false;
+        app.open_dropped(vec![b.clone()]); // 拖進來／檔案總管轉交的
+        assert!(app.pending_editor_focus, "拖進視窗或從檔案總管轉交");
     }
 
     #[test]
