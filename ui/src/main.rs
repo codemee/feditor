@@ -993,6 +993,7 @@ impl App {
             return;
         }
         self.folder.anchored = true;
+        self.sync_table_selection();
         if let Some(i) = self.folder.selected {
             self.folder.scroll_to = Some((i, true));
             return;
@@ -1009,7 +1010,16 @@ impl App {
                 break;
             }
         }
-        self.folder.scroll_to = target.map(|i| (i, true));
+        match target {
+            Some(i) => self.folder.scroll_to = Some((i, true)),
+            // 資料夾範圍而且目前的檔案沒有命中：直接開啟第一筆（焦點留在搜尋面板，不搶去給編輯區）
+            None if self.folder.folder => {
+                self.goto_hit(0);
+                self.pending_editor_focus = false;
+                self.folder.scroll_to = Some((0, true));
+            }
+            None => {}
+        }
     }
 
     /// 重新搜尋或換搜尋範圍之前：取消目前命中的反白（編輯區的標示，以及停在那一筆上的選取）。
@@ -1083,19 +1093,32 @@ impl App {
                 self.folder.stamp = Some(want);
             }
         }
-        if !self.folder.hits.is_empty() && !self.folder.is_running() {
-            let sel = self.editor.sel.range();
-            let buf = &self.doc.buffer;
-            let len = buf.len_chars();
-            self.folder.selected = if sel.is_empty() || sel.end > len {
-                None
-            } else {
-                let line = buf.line_of_char(sel.start);
-                let start = buf.line_start(line);
-                self.folder.hits.iter().position(|h| {
-                    h.line == line && start + h.range.start == sel.start && start + h.range.end == sel.end
-                })
-            };
+    }
+
+    /// 表格選取的那一列跟著編輯區選取的那一筆走。目前文件範圍：選取離開命中就沒有選取的列；
+    /// 資料夾範圍：只認目前這個檔案的結果，而且選取離開命中時保留原本的列（鍵盤移動才不會失去位置）。
+    fn sync_table_selection(&mut self) {
+        if self.folder.hits.is_empty() || self.folder.is_running() {
+            return;
+        }
+        let sel = self.editor.sel.range();
+        let buf = &self.doc.buffer;
+        let found = if sel.is_empty() || sel.end > buf.len_chars() {
+            None
+        } else {
+            let line = buf.line_of_char(sel.start);
+            let start = buf.line_start(line);
+            let doc_path = self.doc.path.as_deref();
+            let text_scope = self.folder.text_scope;
+            self.folder.hits.iter().position(|h| {
+                (text_scope || doc_path == Some(h.path.as_path()))
+                    && h.line == line
+                    && start + h.range.start == sel.start
+                    && start + h.range.end == sel.end
+            })
+        };
+        if found.is_some() || self.folder.text_scope {
+            self.folder.selected = found;
         }
     }
 
@@ -3984,8 +4007,9 @@ impl App {
             .column(Column::initial(220.0).at_least(80.0).clip(true))
             .column(Column::initial(64.0).at_least(40.0).clip(true))
             .column(Column::remainder().at_least(120.0).clip(true));
-        if let Some((i, center)) = scroll {
-            table = table.scroll_to_row(i, center.then_some(egui::Align::Center));
+        if let Some((i, _)) = scroll {
+            // 一律置中：貼著表格邊緣捲動時，那一列會只露出一半
+            table = table.scroll_to_row(i, Some(egui::Align::Center));
         }
         table
             .header(20.0, |mut header| {
@@ -4419,6 +4443,7 @@ impl eframe::App for App {
             } else {
                 self.refresh_doc_search(&ctx);
             }
+            self.sync_table_selection();
             self.anchor_results();
         }
 
@@ -4723,6 +4748,32 @@ mod tests {
     }
 
     #[test]
+    fn folder_results_open_the_first_hit_when_the_current_file_has_none() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "nothing").unwrap();
+        std::fs::write(&b, "x\ncat").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&a);
+        app.find.query = "cat".to_owned();
+        app.folder.open = true;
+        app.folder.folder = true;
+        app.folder.dir = dir.path().display().to_string();
+        app.handle(Action::RunFolderSearch, &ctx);
+        wait_search(&mut app);
+        app.anchor_results();
+        assert_eq!(app.doc.path.as_deref(), Some(b.as_path()), "開啟第一筆命中的檔案");
+        assert_eq!(app.folder.selected, Some(0));
+        assert_eq!(app.folder.scroll_to, Some((0, true)));
+        // 目前的檔案有命中：不換檔，表格選取跟著編輯區
+        app.folder.anchored = false;
+        app.sync_table_selection();
+        app.anchor_results();
+        assert_eq!(app.doc.path.as_deref(), Some(b.as_path()));
+    }
+
+    #[test]
     fn the_hit_highlight_goes_away_when_the_selection_moves_elsewhere() {
         let mut app = app_with("cat dog cat");
         app.find.query = "cat".to_owned();
@@ -4742,10 +4793,10 @@ mod tests {
         app.refresh_doc_search(&ctx);
         wait_search(&mut app);
         app.find_step(false);
-        app.refresh_doc_search(&ctx);
+        app.sync_table_selection();
         assert_eq!(app.folder.selected, Some(0));
         app.find_step(false);
-        app.refresh_doc_search(&ctx);
+        app.sync_table_selection();
         assert_eq!(app.folder.selected, Some(1));
     }
 
