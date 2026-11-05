@@ -89,6 +89,12 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
 }
 
+/// 兩個路徑是不是同一個檔案：先直接比，不同再比正規化後的路徑（大小寫、斜線、相對路徑寫法不同）。
+fn same_file(doc: Option<&std::path::Path>, hit: &std::path::Path) -> bool {
+    let Some(doc) = doc else { return false };
+    doc == hit || matches!((doc.canonicalize(), hit.canonicalize()), (Ok(a), Ok(b)) if a == b)
+}
+
 /// 結果表格「內容」欄的一行文字：去掉行首空白，命中的字用選取色標出。
 fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJob {
     let chars: Vec<char> = hit.text.chars().collect();
@@ -1003,7 +1009,7 @@ impl App {
         let caret = buf.line_of_char(self.editor.sel.head.min(buf.len_chars()));
         let mut target = None;
         for (i, h) in self.folder.hits.iter().enumerate() {
-            if !self.folder.text_scope && self.doc.path.as_deref() != Some(h.path.as_path()) {
+            if !self.folder.text_scope && !same_file(self.doc.path.as_deref(), &h.path) {
                 continue;
             }
             target = Some(i);
@@ -1112,10 +1118,10 @@ impl App {
             let doc_path = self.doc.path.as_deref();
             let text_scope = self.folder.text_scope;
             self.folder.hits.iter().position(|h| {
-                (text_scope || doc_path == Some(h.path.as_path()))
-                    && h.line == line
+                h.line == line
                     && start + h.range.start == sel.start
                     && start + h.range.end == sel.end
+                    && (text_scope || same_file(doc_path, &h.path))
             })
         };
         if found.is_some() || self.folder.text_scope {
@@ -4000,6 +4006,9 @@ impl App {
         let selected = folder.selected;
         let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
         let stripe = ui.visuals().text_color().gamma_multiply(0.07);
+        const HEADER_H: f32 = 20.0;
+        let avail_h = ui.available_height();
+        let item_gap_y = ui.spacing().item_spacing.y;
         let mut table = TableBuilder::new(ui)
             .id_salt("search_hits")
             .resizable(true)
@@ -4009,11 +4018,16 @@ impl App {
             .column(Column::initial(64.0).at_least(40.0).clip(true))
             .column(Column::remainder().at_least(120.0).clip(true));
         if let Some((i, _)) = scroll {
-            // 一律置中：貼著表格邊緣捲動時，那一列會只露出一半
-            table = table.scroll_to_row(i, Some(egui::Align::Center));
+            // 自己算捲動位置，讓那一列置中而且完整顯示：egui_extras 的 scroll_to_row 沒把標題列的高度
+            // 算進去，選到前面幾列時會被標題列蓋掉一部分
+            let pitch = row_h + item_gap_y;
+            let view = (avail_h - HEADER_H - item_gap_y).max(row_h);
+            let max = (folder.hits.len() as f32 * pitch - view).max(0.0);
+            let offset = (i as f32 * pitch - (view - row_h) / 2.0).clamp(0.0, max);
+            table = table.vertical_scroll_offset(offset);
         }
         table
-            .header(20.0, |mut header| {
+            .header(HEADER_H, |mut header| {
                 header.col(|ui| {
                     ui.strong(t("檔名"));
                 });
