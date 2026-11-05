@@ -1019,9 +1019,11 @@ impl App {
         }
         match target {
             Some(i) => {
-                // 資料夾範圍：游標不在命中上時，也把目前檔案裡最近的那一筆標成選取的列（不移動編輯區）
+                // 資料夾範圍：游標不在命中上時，把目前檔案裡最近的那一筆選起來、捲到可見處
+                // （焦點留在搜尋面板，不搶去給編輯區）
                 if self.folder.folder {
-                    self.folder.selected = Some(i);
+                    self.goto_hit(i);
+                    self.pending_editor_focus = false;
                 }
                 self.folder.scroll_to = Some((i, true));
             }
