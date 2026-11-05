@@ -1208,18 +1208,28 @@ impl App {
         runtime_env::terminal_env_here(&runtime_env::PYTHON, dir, manual)
     }
 
-    /// 目前這份文件能不能「在終端機執行」：不是終端機分頁、已經存成檔案、而且它的語言有執行環境的規則（目前是 Python）。
+    /// 目前這份文件能不能「在終端機執行」、用哪份規則找執行環境：不是終端機分頁、已經存成檔案、
+    /// 而且是 Python，或是能判斷出直譯器的 shell 腳本（見 [`runtime_env::rule_for_file`]）。
     fn run_rule(&self) -> Option<&'static runtime_env::Rule> {
-        if self.doc.terminal.is_some() || self.doc.path.is_none() {
+        if self.doc.terminal.is_some() {
             return None;
         }
-        syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).and_then(|l| runtime_env::rule_for(l.name))
+        let path = self.doc.path.as_deref()?;
+        let lang = syntax::resolve(self.doc.lang, Some(path), &self.doc.buffer).or_else(|| {
+            // 沒有副檔名的檔案（`deploy`）：自動模式下看 shebang 判斷是什麼腳本；使用者指定了純文字就不猜
+            if self.doc.lang != syntax::LangChoice::Auto {
+                return None;
+            }
+            let n = self.doc.buffer.len_chars().min(400);
+            if n == 0 { None } else { syntax::detect(&self.doc.buffer.slice(0..n)) }
+        })?;
+        runtime_env::rule_for_file(lang.name, path, &self.doc.buffer.line_text(0))
     }
 
     /// 在終端機執行目前的檔案：有未儲存的修改先存檔，用狀態列上選定（或自動找到）的直譯器。
     fn run_current_file(&mut self, ctx: &egui::Context) {
         let Some(rule) = self.run_rule() else {
-            let message = if self.doc.path.is_none() { t("請先儲存檔案再執行") } else { t("這個檔案類型還不支援在終端機執行") };
+            let message = if self.doc.path.is_none() { t("請先儲存檔案再執行") } else { t("這個檔案不能在終端機執行：支援 Python，以及有 shebang 或副檔名明確的 shell 腳本（.sh、.zsh、.ps1、.bat…）") };
             self.push(LogKind::Info, message.to_owned());
             return;
         };
@@ -1228,8 +1238,8 @@ impl App {
             return; // 存檔失敗或取消：不要執行舊的內容
         }
         let Some(dir) = path.parent() else { return };
-        let project = runtime_env::project_root(dir).display().to_string();
-        let manual = self.settings.runtime_choices.get(&project).cloned();
+        let choice = runtime_env::choice_key(rule, &runtime_env::project_root(dir).display().to_string());
+        let manual = self.settings.runtime_choices.get(&choice).cloned();
         let Some(found) = self.runtime.get(ctx, rule, dir) else {
             self.push(LogKind::Info, t("正在搜尋執行環境，請稍後再按一次").to_owned());
             return;
@@ -2087,7 +2097,7 @@ impl App {
             let run_tip = if can_run {
                 t("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）")
             } else {
-                t("在終端機執行目前的檔案（要先儲存成檔案，而且目前只支援 Python）")
+                t("在終端機執行目前的檔案（要先儲存成檔案，而且是 Python，或有 shebang／副檔名明確的 shell 腳本）")
             };
             ui.spacing_mut().item_spacing.x = 0.0; // 和下拉箭頭同一組：中間不留縫
             if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
@@ -3688,19 +3698,20 @@ impl App {
                     self.doc.lang = choice;
                 }
 
-                // 執行環境（語言的左邊，前後各有分隔線自成一組）：有找環境規則的語言才顯示（目前是 Python）。
+                // 執行環境（語言的左邊，前後各有分隔線自成一組）：Python、能判斷出直譯器的 shell 腳本才顯示。
                 // 做成和語言、編碼一樣的下拉清單，看得出來可以點；清單裡有所有候選、手動改選、重新搜尋
-                if let (Some(lang), Some(file)) = (resolved, self.doc.path.as_deref())
-                    && let Some(rule) = runtime_env::rule_for(lang.name)
+                if let Some(rule) = self.run_rule()
+                    && let Some(file) = self.doc.path.as_deref()
                     && let Some(dir) = file.parent()
                 {
-                    let project = runtime_env::project_root(dir).display().to_string();
+                    // 手動選擇依專案、依直譯器種類記住（Python 與各種 shell 各選各的）
+                    let project = runtime_env::choice_key(rule, &runtime_env::project_root(dir).display().to_string());
                     let manual = self.settings.runtime_choices.get(&project).cloned();
                     let found = self.runtime.get(ui.ctx(), rule, dir);
                     let text = match &found {
                         None => format!("{}…", rule.label),
                         Some(r) => match r.chosen(manual.as_deref()) {
-                            Some(item) => format!("{} {} · {}", rule.label, item.version.as_deref().unwrap_or("?"), item.candidate.origin),
+                            Some(item) => format!("{} · {}", runtime_env::describe(rule, item), item.candidate.origin),
                             None => tf!("{}：找不到", rule.label),
                         },
                     };
@@ -3723,7 +3734,7 @@ impl App {
                                 for item in found.iter().flat_map(|r| r.items.iter()) {
                                     let c = &item.candidate;
                                     let label = match &item.version {
-                                        Some(v) => format!("{} {} · {}  ({})", rule.label, v, c.origin, c.program.display()),
+                                        Some(_) => format!("{} · {}  ({})", runtime_env::describe(rule, item), c.origin, c.program.display()),
                                         None => format!("{}（{}）", c.program.display(), t("無法執行")),
                                     };
                                     let selected = manual.as_deref() == Some(c.key().as_str());
@@ -4799,6 +4810,39 @@ mod tests {
         assert!(app.run_rule().is_none(), "沒有存檔");
         app.open_path(&rs);
         assert!(app.run_rule().is_none(), "Rust 還沒有執行規則");
+    }
+
+    #[test]
+    fn shell_scripts_are_runnable_by_shebang_or_extension_but_unclear_ones_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, text: &str| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, text).unwrap();
+            p
+        };
+        let label = |app: &App| app.run_rule().map(|r| r.label);
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&write("run.sh", "echo hi\n"));
+        assert_eq!(label(&app), Some("bash"), "副檔名 .sh");
+        app.open_path(&write("go.ps1", "Write-Host hi\n"));
+        assert_eq!(label(&app), Some("PowerShell"));
+        app.open_path(&write("build.bat", "@echo off\n"));
+        assert_eq!(label(&app), Some("cmd"));
+        app.open_path(&write("deploy", "#!/usr/bin/env zsh\necho hi\n"));
+        assert_eq!(label(&app), Some("zsh"), "沒有副檔名，靠 shebang");
+        app.open_path(&write("tool", "#!/usr/bin/env python3\nprint(1)\n"));
+        assert_eq!(label(&app), Some("Python"), "沒有副檔名的 Python 腳本也行");
+        app.open_path(&write("notes", "echo hi\n"));
+        assert_eq!(label(&app), None, "沒有副檔名、也沒有 shebang：不是可以執行的腳本");
+        app.open_path(&write("a.txt", "just notes\n"));
+        assert_eq!(label(&app), None, "不是 shell 的副檔名、也沒有 shebang");
+        app.open_path(&write("b.txt", "#!/bin/bash\necho hi\n"));
+        assert_eq!(label(&app), Some("bash"), "有明確的 shebang 就算，不管副檔名");
+        // 手動指定純文字：不猜
+        app.open_path(&write("plain", "#!/bin/bash\n"));
+        assert_eq!(label(&app), Some("bash"));
+        app.doc.lang = syntax::LangChoice::Plain;
+        assert_eq!(label(&app), None);
     }
 
     #[test]

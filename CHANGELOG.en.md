@@ -5,6 +5,7 @@
 ## Unreleased
 
 ### Added
+- **Shell scripts can be run too, and the status bar shows their interpreter**: the interpreter comes from the shebang (`#!/bin/bash`, `#!/usr/bin/env zsh`...), then from the extension when there is no shebang (`.sh`/`.bash` bash, `.zsh` zsh, `.ps1`/`.psm1` PowerShell, `.bat`/`.cmd` cmd); it is looked up on `PATH` (for bash on Windows also Git's install folders), checked in the background with its version shown, and can be changed by hand. A file with an unclear extension and no shebang is not treated as a runnable script. Files without an extension but with a shebang (Python, shell) can be run too.
 - **A non-existent file given on the command line**: `feditor new.py` with a file that does not exist yet opens a blank document whose tab is named after it and is marked unsaved; the file is created when you save (like vim). A running FEditor that receives the forwarded path does the same. Until the file is created it is never reported as deleted, and emptying the text again still counts as unsaved; an invalid file name (e.g. a Windows reserved name) is not opened, and a missing folder gets a warning that saving will fail.
 
 ### Fixed
