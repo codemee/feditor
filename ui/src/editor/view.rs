@@ -773,19 +773,22 @@ impl EditorView<'_> {
                     }
 
                     // 搜尋結果與選取
-                    let paint_span = |range: &Range<usize>, color: Color32| {
+                    let paint_span = |range: &Range<usize>, color: Color32, radius: f32| {
                         if let Some(r) = span_rect(layout, range, line_start, y, text_left, row_h) {
-                            painter.rect_filled(r, 0.0, color);
+                            painter.rect_filled(r, radius, color);
                         }
                     };
+                    // 搜尋命中的那一筆（包含已經被選取的）用圓角色框，其他選取維持方角
+                    const HIT_RADIUS: f32 = 3.0;
                     if let Some(h) = &highlight {
                         // 已經被選取的那一筆由選取色負責，不要疊兩層
                         if !(has_selection && state.sel.range() == *h) {
-                            paint_span(h, find_color);
+                            paint_span(h, find_color, HIT_RADIUS);
                         }
                     }
                     for s in all_sels.iter().filter(|s| !s.is_empty()) {
-                        paint_span(&s.range(), sel_color);
+                        let is_hit = highlight.as_ref() == Some(&s.range());
+                        paint_span(&s.range(), sel_color, if is_hit { HIT_RADIUS } else { 0.0 });
                     }
 
                     for seg in &layout.segments {

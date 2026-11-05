@@ -89,14 +89,28 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
 }
 
-/// 一個有標題、有外框的區塊：上面是區塊名稱，下面是框起來的內容（填滿剩下的空間）。
-fn captioned_group(ui: &mut egui::Ui, caption: &str, add: impl FnOnce(&mut egui::Ui)) {
+/// 一個有標題、有外框的區塊：上面是區塊名稱，下面是框起來的內容。`fill` 為真時填滿剩下的空間，
+/// 否則只有寬度撐滿、高度依內容。
+fn captioned_group(ui: &mut egui::Ui, caption: &str, fill: bool, add: impl FnOnce(&mut egui::Ui)) {
     ui.label(egui::RichText::new(caption).strong());
     egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_min_size(ui.available_size());
+        if fill {
+            ui.set_min_size(ui.available_size());
+        } else {
+            ui.set_min_width(ui.available_width());
+        }
         add(ui);
     });
 }
+
+/// 結果表格的交錯列底色（egui 內建的條紋用的 `faint_bg_color` 在多數配色下和背景幾乎一樣，看不出來）。
+fn set_stripe(ui: &mut egui::Ui) {
+    let stripe = ui.visuals().text_color().gamma_multiply(0.07);
+    ui.visuals_mut().faint_bg_color = stripe;
+}
+
+/// 尋找面板第一列，搜尋框以外的東西（展開鈕、三個選項、搜尋、上一筆、下一筆、關閉與間距）佔的寬度。
+const SEARCH_ROW_BUTTONS_W: f32 = 240.0;
 
 /// 結果表格標題列的高度。
 const TABLE_HEADER_H: f32 = 20.0;
@@ -108,24 +122,6 @@ fn centered_offset(row: usize, total: usize, row_h: f32, gap_y: f32, avail_h: f3
     let view = (avail_h - TABLE_HEADER_H - gap_y).max(row_h);
     let max = (total as f32 * pitch - view).max(0.0);
     (row as f32 * pitch - (view - row_h) / 2.0).clamp(0.0, max)
-}
-
-/// 結果表格每一列的底色：選取的那列用選取色，其餘奇數列用淡淡的交錯色（egui 內建的條紋在多數配色下看不出來）。
-fn row_background(index: usize, selected: bool, stripe: egui::Color32) -> impl Fn(&egui::Ui) {
-    move |ui: &egui::Ui| {
-        let color = if selected {
-            Some(ui.visuals().selection.bg_fill)
-        } else if index % 2 == 1 {
-            Some(stripe)
-        } else {
-            None
-        };
-        if let Some(color) = color {
-            let gap = ui.spacing().item_spacing;
-            let rect = ui.max_rect().expand2(egui::vec2(gap.x / 2.0, gap.y / 2.0));
-            ui.painter().rect_filled(rect, 0.0, color);
-        }
-    }
 }
 
 /// 兩個路徑是不是同一個檔案：先直接比，不同再比正規化後的路徑（大小寫、斜線、相對路徑寫法不同）。
@@ -148,8 +144,8 @@ fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJo
         color: ui.visuals().text_color(),
         ..Default::default()
     };
-    // 命中的字只用一層淡淡的文字色當底（跟著配色走、不搶眼）；選取的那一列底色是選取色，疊上去仍分得出來
-    let marked = egui::TextFormat { background: ui.visuals().text_color().gamma_multiply(0.16), ..plain.clone() };
+    // 命中的字只改文字顏色，不加底色
+    let marked = egui::TextFormat { color: ui.visuals().warn_fg_color, ..plain.clone() };
     let mut job = egui::text::LayoutJob::default();
     job.append(&seg(lead, start), 0.0, plain.clone());
     job.append(&seg(start, end), 0.0, marked);
@@ -3848,11 +3844,13 @@ impl App {
                 self.focus_find = false;
             }
 
+            // 搜尋框吃剩下的寬度（窄的時候先縮搜尋框，右邊的按鈕才不會被擠出窗格）
+            let query_w = (ui.available_width() - SEARCH_ROW_BUTTONS_W).clamp(40.0, 260.0);
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.find.query)
                     .id(find_input_id())
                     .hint_text(t("尋找"))
-                    .desired_width(240.0),
+                    .desired_width(query_w),
             );
             // 目前文件範圍：邊打字邊搜尋（結果表格自己會跟著更新）；資料夾範圍要按 Enter 才開始
             if input.changed() && !folder_scope {
@@ -3954,10 +3952,13 @@ impl App {
                 if option_toggle(ui, Icon::Subfolders, t("包含子資料夾"), &mut recursive) {
                     action = Some(Action::SetRecursive(recursive));
                 }
+                // 窄的時候資料夾與檔名過濾的輸入框一起縮（選擇資料夾鈕與「檔名」標籤固定要有位置）
+                let room = (ui.available_width() - 80.0).max(60.0);
+                let filter_w = (room * 0.4).clamp(40.0, 150.0);
                 let dir = ui.add(
                     egui::TextEdit::singleline(&mut self.folder.dir)
                         .hint_text(t("資料夾"))
-                        .desired_width((ui.available_width() - 262.0).max(120.0)),
+                        .desired_width((room - filter_w - 8.0).max(30.0)),
                 );
                 if dir.changed() {
                     self.folder.dir_custom = true;
@@ -3969,7 +3970,7 @@ impl App {
                 let filter = ui.add(
                     egui::TextEdit::singleline(&mut self.folder.filter)
                         .hint_text("*.rs;*.toml")
-                        .desired_width(150.0),
+                        .desired_width(filter_w),
                 );
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if enter && (dir.lost_focus() || filter.lost_focus()) {
@@ -4099,29 +4100,36 @@ impl App {
         let side_by_side = size.x >= 560.0 && size.x > size.y * 1.3;
         if !self.folder.text_scope && !groups.is_empty() {
             let target = scroll.and_then(|i| groups.iter().position(|g| in_group(g, i)));
-            let panel = if side_by_side {
+            if side_by_side {
                 egui::Panel::left("search_files_left")
                     .default_size((size.x * 0.4).clamp(220.0, 420.0))
                     .size_range(160.0..=size.x * 0.7)
+                    .resizable(true)
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        captioned_group(ui, t("檔案"), true, |ui| {
+                            if let Some(a) = self.files_table(ui, &groups, shown, target, None) {
+                                action = Some(a);
+                            }
+                        });
+                        ui.add_space(4.0); // 與右邊的表格隔開，看得出是兩個獨立的區塊
+                    });
             } else {
-                egui::Panel::top("search_files_top")
-                    .default_size(150.0)
-                    .size_range(80.0..=(size.y - 100.0).max(80.0))
-            };
-            panel.resizable(true).frame(egui::Frame::NONE).show(ui, |ui| {
-                captioned_group(ui, t("檔案"), |ui| {
-                    if let Some(a) = self.files_table(ui, &groups, shown, target) {
+                // 上下排：檔案表格只要剛好放得下所有檔案的高度（有上限），命中表格緊接在後面
+                let pitch = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0 + ui.spacing().item_spacing.y;
+                let body_h = (groups.len() as f32 * pitch).min((size.y * 0.4 - TABLE_HEADER_H).max(pitch * 2.0));
+                captioned_group(ui, t("檔案"), false, |ui| {
+                    if let Some(a) = self.files_table(ui, &groups, shown, target, Some(body_h)) {
                         action = Some(a);
                     }
                 });
-                // 與下一個（或右邊的）表格隔開一點，才看得出是兩個獨立的區塊
                 ui.add_space(4.0);
-            });
+            }
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             let (start, count) = groups.get(shown).map_or((0, 0), |g| (g.start, g.count));
             let rel = scroll.filter(|i| *i >= start && *i < start + count).map(|i| i - start);
-            captioned_group(ui, t("命中項目"), |ui| {
+            captioned_group(ui, t("命中項目"), true, |ui| {
                 if let Some(a) = self.hits_table(ui, start, count, rel) {
                     action = Some(a);
                 }
@@ -4137,21 +4145,31 @@ impl App {
         groups: &[folder_search::FileGroup],
         shown: usize,
         scroll: Option<usize>,
+        max_height: Option<f32>,
     ) -> Option<Action> {
         use egui_extras::{Column, TableBuilder};
         let mut action = None;
         let folder = &self.folder;
         let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
-        let stripe = ui.visuals().text_color().gamma_multiply(0.07);
         let (avail_h, gap_y) = (ui.available_height(), ui.spacing().item_spacing.y);
+        let avail_h = max_height.map_or(avail_h, |h| h + TABLE_HEADER_H + gap_y);
+        // 筆數欄固定寬度，檔名欄吃剩下的（窄的時候先縮檔名，筆數不會被擠出去）
+        const COUNT_W: f32 = 44.0;
+        let name_w = (ui.available_width() - COUNT_W - ui.spacing().item_spacing.x).max(30.0);
+        set_stripe(ui);
         let mut table = TableBuilder::new(ui)
             .id_salt("search_files_table")
+            .striped(true)
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::remainder().at_least(60.0).clip(true))
-            .column(Column::exact(52.0));
+            .column(Column::exact(name_w).clip(true))
+            .column(Column::exact(COUNT_W));
         if let Some(i) = scroll {
             table = table.vertical_scroll_offset(centered_offset(i, groups.len(), row_h, gap_y, avail_h));
+        }
+        if let Some(max_h) = max_height {
+            // 上下排列：只要剛好放得下所有檔案的高度（有上限），不要撐滿
+            table = table.auto_shrink([false, true]).max_scroll_height(max_h);
         }
         table
             .header(TABLE_HEADER_H, |mut header| {
@@ -4167,15 +4185,12 @@ impl App {
                     let i = row.index();
                     let group = &groups[i];
                     let hit = &folder.hits[group.start];
-                    let paint = row_background(i, shown == i, stripe);
                     row.set_selected(shown == i);
                     row.col(|ui| {
-                        paint(ui);
                         ui.add(egui::Label::new(folder.display_path(hit)).truncate().selectable(false))
                             .on_hover_text(hit.path.display().to_string());
                     });
                     row.col(|ui| {
-                        paint(ui);
                         ui.add(egui::Label::new(egui::RichText::new(group.count.to_string()).monospace()).selectable(false));
                     });
                     if row.response().clicked() {
@@ -4194,15 +4209,16 @@ impl App {
         let folder = &self.folder;
         let selected = folder.selected;
         let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
-        let stripe = ui.visuals().text_color().gamma_multiply(0.07);
         let (avail_h, gap_y) = (ui.available_height(), ui.spacing().item_spacing.y);
+        set_stripe(ui);
         let mut table = TableBuilder::new(ui)
             .id_salt("search_hits")
+            .striped(true)
             .resizable(true)
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(64.0).at_least(40.0).clip(true))
-            .column(Column::remainder().at_least(120.0).clip(true));
+            .column(Column::initial(56.0).at_least(40.0).clip(true))
+            .column(Column::remainder().at_least(40.0).clip(true));
         if let Some(r) = scroll {
             table = table.vertical_scroll_offset(centered_offset(r, count, row_h, gap_y, avail_h));
         }
@@ -4220,17 +4236,14 @@ impl App {
                     let r = row.index();
                     let i = start + r;
                     let hit = &folder.hits[i];
-                    let paint = row_background(r, selected == Some(i), stripe);
                     row.set_selected(selected == Some(i));
                     row.col(|ui| {
-                        paint(ui);
                         ui.add(
                             egui::Label::new(egui::RichText::new((hit.line + 1).to_string()).monospace())
                                 .selectable(false),
                         );
                     });
                     row.col(|ui| {
-                        paint(ui);
                         ui.add(egui::Label::new(hit_job(ui, hit)).truncate().selectable(false));
                     });
                     if row.response().clicked() {
