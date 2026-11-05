@@ -182,6 +182,10 @@ pub struct Settings {
     pub shell_menu: bool,
     /// 在 `~/.local/bin` 加入 `feditor` 指令（macOS、Linux）。
     pub cli_command: bool,
+    /// 雙按檔案時，讓選到的類別（[`Settings::file_assoc_groups`]）預設用 FEditor 開啟。
+    pub file_assoc: bool,
+    /// 要讓 FEditor 接手的檔案類別（`file_assoc::GROUPS` 的 `key`）；預設是程式碼與設定檔。
+    pub file_assoc_groups: std::collections::BTreeSet<String>,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
     pub terminal_font_size: f32,
     /// 終端機文字和底色的最低對比度；1 表示不調整。
@@ -217,6 +221,8 @@ impl Default for Settings {
             auto_indent: true,
             shell_menu: false,
             cli_command: false,
+            file_assoc: false,
+            file_assoc_groups: crate::file_assoc::default_groups(),
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
@@ -336,6 +342,20 @@ impl Settings {
                         settings.cli_command = on;
                     }
                 }
+                "file_assoc" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.file_assoc = on;
+                    }
+                }
+                // 逗號分隔的類別名稱；寫了就以它為準（可以是空的：一類都不接手），不認得的名稱略過
+                "file_assoc_groups" => {
+                    settings.file_assoc_groups = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|k| crate::file_assoc::GROUPS.iter().any(|g| g.key == *k))
+                        .map(str::to_owned)
+                        .collect();
+                }
                 "tab_spaces" => {
                     if let Some(on) = parse_bool(value) {
                         settings.tab_spaces = on;
@@ -417,6 +437,9 @@ impl Settings {
         text.push_str(&format!("auto_indent = {}\n", self.auto_indent));
         text.push_str(&format!("shell_menu = {}\n", self.shell_menu));
         text.push_str(&format!("cli_command = {}\n", self.cli_command));
+        text.push_str(&format!("file_assoc = {}\n", self.file_assoc));
+        let groups: Vec<&str> = self.file_assoc_groups.iter().map(String::as_str).collect();
+        text.push_str(&format!("file_assoc_groups = {}\n", groups.join(",")));
         for (name, width) in &self.tab_widths {
             // 名稱是單行文字，也不能含等號（會被當成鍵值的分隔）；正常的語言名稱不會有
             if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
@@ -683,6 +706,26 @@ mod tests {
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
         assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+    }
+
+    #[test]
+    fn file_association_is_off_by_default_picks_code_and_config_and_round_trips() {
+        let d = Settings::default();
+        assert!(!d.file_assoc);
+        assert_eq!(d.file_assoc_groups.iter().map(String::as_str).collect::<Vec<_>>(), ["code", "config"]);
+        let s = Settings::parse("file_assoc = true\nfile_assoc_groups = text, markup , nonsense\n");
+        assert!(s.file_assoc);
+        assert_eq!(s.file_assoc_groups.iter().map(String::as_str).collect::<Vec<_>>(), ["markup", "text"], "不認得的名稱略過");
+        assert!(Settings::parse("file_assoc_groups =\n").file_assoc_groups.is_empty(), "寫了空的就是一類都不接手");
+        assert_eq!(Settings::parse("file_assoc = maybe").file_assoc_groups, d.file_assoc_groups, "沒寫就用預設");
+        let mut custom = Settings::default();
+        custom.file_assoc = true;
+        custom.file_assoc_groups = ["text".to_owned()].into();
+        let back = Settings::parse(&custom.to_text());
+        assert!(back.file_assoc);
+        assert_eq!(back.file_assoc_groups, custom.file_assoc_groups);
+        custom.file_assoc_groups.clear();
+        assert!(Settings::parse(&custom.to_text()).file_assoc_groups.is_empty(), "全部取消勾選也會記住");
     }
 
     #[test]

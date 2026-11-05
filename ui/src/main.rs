@@ -23,6 +23,7 @@ mod scheme;
 mod session;
 mod settings;
 mod cli_command;
+mod file_assoc;
 mod runtime_env;
 mod shell_integration;
 #[cfg(target_os = "macos")]
@@ -467,6 +468,10 @@ enum Action {
     SetShellMenu(bool),
     /// 在 `~/.local/bin` 加入或移除 `feditor` 指令。
     SetCliCommand(bool),
+    /// 雙按檔案時，讓選到的類別預設用 FEditor 開啟（總開關）。
+    SetFileAssoc(bool),
+    /// 勾選或取消某一類檔案（`file_assoc::GROUPS` 的名稱）。
+    SetFileAssocGroup(String, bool),
     /// 手動選這個專案（專案資料夾）用的執行環境；`None` 是回到自動搜尋。
     SetRuntime(String, Option<String>),
     /// 丟掉這個資料夾的搜尋結果重新搜尋。
@@ -659,6 +664,8 @@ struct App {
     shell_menu_backend: fn(bool, &shell_integration::Labels) -> Result<(), String>,
     /// 在 `~/.local/bin` 加入／移除 `feditor` 指令（測試時換成不碰系統的替身）。
     cli_backend: fn(bool) -> Result<(), String>,
+    /// 讓選到的檔案類別預設用 FEditor 開啟（測試時換成不碰系統的替身）。
+    assoc_backend: fn(&std::collections::BTreeSet<String>, bool) -> Result<file_assoc::Outcome, String>,
     /// 自動搜尋的執行環境（Python 的虛擬環境等）：背景搜尋與快取。
     runtime: runtime_env::Resolver,
     /// 「執行目前檔案」上次用的終端機（識別編號）；還在就重複使用，不會每次都多開一個。
@@ -733,6 +740,7 @@ impl App {
             incoming: None,
             shell_menu_backend: apply_shell_menu,
             cli_backend: cli_command::apply,
+            assoc_backend: file_assoc::apply,
             runtime: runtime_env::Resolver::default(),
             run_terminal: None,
             allow_close: false,
@@ -1251,6 +1259,44 @@ impl App {
         let candidate = item.candidate.clone();
         let extra = self.settings.run_args.get(&path.display().to_string()).cloned().unwrap_or_default();
         self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path, &extra);
+    }
+
+    /// 套用「預設開啟」的設定（總開關 `on`、類別 `groups`）。成功才記進設定；失敗就維持原樣並顯示錯誤。
+    /// 有些副檔名沒辦法由程式設成預設（Windows：使用者已經自己選過），會提示使用者到系統設定確認。
+    fn update_file_assoc(&mut self, on: bool, groups: std::collections::BTreeSet<String>) {
+        let was_on = self.settings.file_assoc;
+        match (self.assoc_backend)(&groups, on) {
+            Ok(outcome) => {
+                self.settings.file_assoc = on;
+                self.settings.file_assoc_groups = groups;
+                self.mark_settings_dirty();
+                if on && !outcome.blocked.is_empty() {
+                    let hint = if cfg!(windows) {
+                        t("請到「設定 → 應用程式 → 預設應用程式」，找到 FEditor，把這些副檔名改成 FEditor。")
+                    } else {
+                        t("macOS 需要用打包好的 FEditor.app（放在「應用程式」資料夾）才能設定；請確認後再試一次。")
+                    };
+                    self.show_notice(
+                        t("有些檔案要請你自己確認"),
+                        tf!("下面這些副檔名沒辦法由 FEditor 直接設成預設程式（你已經在系統裡自己選過，系統不允許程式改掉）：\n\n{}\n\n{}", outcome.blocked.join(" "), hint),
+                    );
+                    if cfg!(windows) && !was_on {
+                        // 剛打開這個功能：順手開啟系統的預設應用程式頁，直接停在 FEditor
+                        let _ = std::process::Command::new("explorer").arg("ms-settings:defaultapps?registeredAppUser=FEditor").spawn();
+                    }
+                }
+            }
+            Err(e) => self.push(LogKind::Error, tf!("無法更新檔案關聯：{}", e)),
+        }
+    }
+
+    /// 設定裡有開「預設開啟」時，啟動時再套用一次（程式搬了位置也會跟上）。
+    fn sync_file_assoc(&mut self) {
+        if self.settings.file_assoc
+            && let Err(e) = (self.assoc_backend)(&self.settings.file_assoc_groups, true)
+        {
+            self.push(LogKind::Warn, tf!("無法更新檔案關聯：{}", e));
+        }
     }
 
     /// 設定裡有開 feditor 指令時，把它更新成目前的執行檔位置（程式搬了位置也會跟上）。
@@ -1887,6 +1933,23 @@ impl App {
                 if width != self.settings.tab_width {
                     self.settings.tab_width = width;
                     self.mark_settings_dirty();
+                }
+            }
+            Action::SetFileAssoc(on) => {
+                if on != self.settings.file_assoc {
+                    let groups = self.settings.file_assoc_groups.clone();
+                    self.update_file_assoc(on, groups);
+                }
+            }
+            Action::SetFileAssocGroup(key, on) => {
+                let mut groups = self.settings.file_assoc_groups.clone();
+                if on {
+                    groups.insert(key);
+                } else {
+                    groups.remove(&key);
+                }
+                if groups != self.settings.file_assoc_groups {
+                    self.update_file_assoc(self.settings.file_assoc, groups);
                 }
             }
             Action::SetRuntime(project, choice) => {
@@ -2940,6 +3003,30 @@ impl App {
                     if response.changed() {
                         action = Some(Action::SetShellMenu(on));
                     }
+                });
+            }
+            // 預設開啟：雙按選到的類別的檔案時直接用 FEditor 開啟；類別在下面一個一個勾
+            if file_assoc::supported() {
+                form_row(ui, t("預設開啟"), |ui| {
+                    ui.vertical(|ui| {
+                        let mut on = self.settings.file_assoc;
+                        let response = ui
+                            .checkbox(&mut on, t("雙按檔案時用 FEditor 開啟"))
+                            .on_hover_text(t("雙按選到的類別的檔案時，直接用 FEditor 開啟（Windows 登記在「預設應用程式」、macOS 設定預設處理程式、Linux 寫 mimeapps.list）；取消勾選就還原"));
+                        if response.changed() {
+                            action = Some(Action::SetFileAssoc(on));
+                        }
+                        for group in file_assoc::GROUPS {
+                            let mut checked = self.settings.file_assoc_groups.contains(group.key);
+                            let extensions: Vec<String> = group.extensions.iter().map(|e| format!(".{e}")).collect();
+                            let response = ui
+                                .add_enabled(self.settings.file_assoc, egui::Checkbox::new(&mut checked, group.label()))
+                                .on_hover_text(extensions.join(" "));
+                            if response.changed() {
+                                action = Some(Action::SetFileAssocGroup(group.key.to_owned(), checked));
+                            }
+                        }
+                    });
                 });
             }
             // 終端機指令（macOS、Linux）：在 ~/.local/bin 放一個 feditor 指令
@@ -4845,6 +4932,64 @@ mod tests {
         assert_eq!(label(&app), None);
     }
 
+    thread_local! {
+        static ASSOC_CALLS: std::cell::RefCell<Vec<(Vec<String>, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn record_assoc(groups: &std::collections::BTreeSet<String>, on: bool) -> Result<file_assoc::Outcome, String> {
+        ASSOC_CALLS.with(|c| c.borrow_mut().push((groups.iter().cloned().collect(), on)));
+        Ok(file_assoc::Outcome::default())
+    }
+
+    fn blocked_assoc(_: &std::collections::BTreeSet<String>, _: bool) -> Result<file_assoc::Outcome, String> {
+        Ok(file_assoc::Outcome { blocked: vec![".py".to_owned(), ".json".to_owned()] })
+    }
+
+    fn failing_assoc(_: &std::collections::BTreeSet<String>, _: bool) -> Result<file_assoc::Outcome, String> {
+        Err("寫不進去".to_owned())
+    }
+
+    #[test]
+    fn the_file_association_switch_and_categories_call_the_backend_and_only_stick_when_it_works() {
+        ASSOC_CALLS.with(|c| c.borrow_mut().clear());
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.assoc_backend = record_assoc;
+        app.handle(Action::SetFileAssoc(true), &ctx);
+        assert!(app.settings.file_assoc);
+        // 取消勾選一類、再勾選另一類：每次都用目前的總開關與類別重新套用
+        app.handle(Action::SetFileAssocGroup("config".to_owned(), false), &ctx);
+        app.handle(Action::SetFileAssocGroup("text".to_owned(), true), &ctx);
+        app.handle(Action::SetFileAssocGroup("text".to_owned(), true), &ctx); // 沒變：不用再套用
+        app.handle(Action::SetFileAssoc(false), &ctx);
+        let calls = ASSOC_CALLS.with(|c| c.borrow().clone());
+        let names = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            calls,
+            vec![
+                (names(&["code", "config"]), true),
+                (names(&["code"]), true),
+                (names(&["code", "text"]), true),
+                (names(&["code", "text"]), false),
+            ]
+        );
+        assert!(!app.settings.file_assoc);
+        assert_eq!(app.settings.file_assoc_groups.len(), 2, "關掉總開關之後類別的勾選還在");
+        assert!(app.modal.is_none());
+        // 有副檔名程式沒辦法設定（使用者已經自己選過）：提示使用者自己確認，列出是哪些
+        app.assoc_backend = blocked_assoc;
+        app.handle(Action::SetFileAssoc(true), &ctx);
+        let message = &app.modal.as_ref().expect("要提示").spec.message;
+        assert!(message.contains(".py .json"), "{message}");
+        app.modal = None;
+        // 失敗：不記成已開啟、顯示錯誤
+        app.handle(Action::SetFileAssoc(false), &ctx);
+        app.assoc_backend = failing_assoc;
+        app.handle(Action::SetFileAssoc(true), &ctx);
+        assert!(!app.settings.file_assoc);
+        assert!(app.log.iter().any(|(k, m)| *k == LogKind::Error && m.contains("寫不進去")));
+    }
+
     #[test]
     fn the_cli_command_switch_calls_the_backend_reminds_about_path_and_only_sticks_when_it_works() {
         fn works(_: bool) -> Result<(), String> {
@@ -5935,6 +6080,7 @@ fn main() -> eframe::Result {
             }
             app.sync_shell_menu();
             app.sync_cli_command();
+            app.sync_file_assoc();
             for m in syntax_msgs {
                 app.push(LogKind::Warn, m);
             }
