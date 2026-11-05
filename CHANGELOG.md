@@ -5,10 +5,11 @@
 ## 未發布
 
 ### 新增
-- **shell 腳本也能執行，狀態列顯示直譯器**：依 shebang（`#!/bin/bash`、`#!/usr/bin/env zsh`…）、沒有 shebang 再依副檔名（`.sh`／`.bash` 用 bash、`.zsh` 用 zsh、`.ps1`／`.psm1` 用 PowerShell、`.bat`／`.cmd` 用 cmd）決定直譯器，在 `PATH` 找（Windows 的 bash 另外找 Git 的安裝位置），背景確認能執行並顯示版本，可手動改選。副檔名不明確又沒有 shebang 的不當成可執行的腳本。沒有副檔名但有 shebang 的檔案（Python、shell）也能執行。
+- **shell 腳本也能執行，狀態列顯示直譯器**：依 shebang（`#!/bin/bash`、`#!/usr/bin/env zsh`…）、沒有 shebang 再依副檔名（`.sh`／`.bash` 用 bash、`.zsh` 用 zsh、`.ps1`／`.psm1` 用 PowerShell、`.bat`／`.cmd` 用 cmd）決定直譯器，在 `PATH` 找，背景確認能執行並顯示版本，可手動改選。Windows 的 bash 會略過 `system32`、`WindowsApps` 裡 WSL 的 `bash.exe`，改用 `git-bash`（scoop 的 shim 也行）所在的 Git 裡真正的 `bash.exe`。副檔名不明確又沒有 shebang 的不當成可執行的腳本。沒有副檔名但有 shebang 的檔案（Python、shell）也能執行。
 - **命令列指定不存在的檔案**：`feditor new.py` 這種指定了還不存在的檔案，會開一份空白文件，分頁用指定的檔名、標成尚未儲存，存檔時才建立檔案（和 vim 的行為一樣）。已經開著的 FEditor 收到轉交的路徑也一樣處理。檔案還沒建立前不會被當成「被刪除」，內容改回空白也還是未儲存；檔名不合法（例如 Windows 保留名）不會開，資料夾不存在會提醒存檔會失敗。
 
 ### 修正
+- **cmd 的版本讀不出來**：沒有主控台視窗時，`cmd /c ver` 會印出本地語系的「[版本 10.0…]」（Big5 編碼），原本只認英文的 `[Version ` 又讀成 UTF-8，結果 `.bat` 檔找不到 cmd。現在輸出照位元組讀、找不到英文前綴就找第一個點分數字。
 - **開啟檔案後，輸入焦點立刻移到編輯區**：目前是空白的新文件時，開啟的檔案會直接用掉這份文件、不另開分頁，這種情況焦點原本還停在「開啟」按鈕上，要再點一下編輯區才能打字。
 
 ## [0.6.0] - 2026-11-04

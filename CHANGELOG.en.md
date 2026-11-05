@@ -5,10 +5,11 @@
 ## Unreleased
 
 ### Added
-- **Shell scripts can be run too, and the status bar shows their interpreter**: the interpreter comes from the shebang (`#!/bin/bash`, `#!/usr/bin/env zsh`...), then from the extension when there is no shebang (`.sh`/`.bash` bash, `.zsh` zsh, `.ps1`/`.psm1` PowerShell, `.bat`/`.cmd` cmd); it is looked up on `PATH` (for bash on Windows also Git's install folders), checked in the background with its version shown, and can be changed by hand. A file with an unclear extension and no shebang is not treated as a runnable script. Files without an extension but with a shebang (Python, shell) can be run too.
+- **Shell scripts can be run too, and the status bar shows their interpreter**: the interpreter comes from the shebang (`#!/bin/bash`, `#!/usr/bin/env zsh`...), then from the extension when there is no shebang (`.sh`/`.bash` bash, `.zsh` zsh, `.ps1`/`.psm1` PowerShell, `.bat`/`.cmd` cmd); it is looked up on `PATH`, checked in the background with its version shown, and can be changed by hand. On Windows, bash skips WSL's `bash.exe` in `system32` and `WindowsApps` and uses the real `bash.exe` inside the Git folder that `git-bash` (a scoop shim also works) belongs to. A file with an unclear extension and no shebang is not treated as a runnable script. Files without an extension but with a shebang (Python, shell) can be run too.
 - **A non-existent file given on the command line**: `feditor new.py` with a file that does not exist yet opens a blank document whose tab is named after it and is marked unsaved; the file is created when you save (like vim). A running FEditor that receives the forwarded path does the same. Until the file is created it is never reported as deleted, and emptying the text again still counts as unsaved; an invalid file name (e.g. a Windows reserved name) is not opened, and a missing folder gets a warning that saving will fail.
 
 ### Fixed
+- **cmd's version could not be read**: without a console window `cmd /c ver` prints a localized "[版本 10.0…]" (Big5), and the code only knew the English `[Version ` and read the output as UTF-8, so `.bat` files found no cmd. The output is now read as bytes and, without the English prefix, the first dotted number is used.
 - **After opening a file the keyboard focus moves to the editor right away**: when the current document was a blank new one, the opened file reused it without a new tab, and in that case the focus stayed on the "Open" button so you had to click the editor before typing.
 
 ## [0.6.0] - 2026-11-04

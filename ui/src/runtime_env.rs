@@ -42,8 +42,13 @@ pub struct Rule {
     pub run_args: &'static [&'static str],
     /// Windows 上 `PATH` 找不到時，另外試的完整路徑（例如 Git 附的 bash）。
     pub windows_extra: &'static [&'static str],
-    /// `PATH` 上要排除 Windows 商店的假捷徑（`WindowsApps` 裡的 `python.exe` 打開只會跳商店）。
-    pub skip_store_stubs: bool,
+    /// `PATH` 上要排除的路徑（不分大小寫、`\` 當成 `/` 之後，路徑裡含有這段文字的就略過）：
+    /// Windows 商店的假捷徑（`windowsapps` 裡的 `python.exe` 打開只會跳商店）、
+    /// `system32` 裡的 `bash.exe`（那是 WSL 的入口，不是能直接跑腳本的 bash）。
+    pub skip_paths: &'static [&'static str],
+    /// Windows 上找 bash 用：`PATH` 上有這個啟動器（`git-bash`，scoop 的 shim 也算）時，
+    /// 用它所在的 Git 安裝資料夾裡的 bash（相對路徑清單）。啟動器本身會另開一個視窗，所以不直接拿來執行腳本。
+    pub windows_wrapper: Option<(&'static str, &'static [&'static str])>,
     /// 這個直譯器沒有可以查的版本（`sh`）：能執行就算數，不顯示版本號。
     pub versionless: bool,
 }
@@ -61,7 +66,8 @@ const NO_RULE: Rule = Rule {
     version_prefix: "",
     run_args: &[],
     windows_extra: &[],
-    skip_store_stubs: false,
+    skip_paths: &[],
+    windows_wrapper: None,
     versionless: false,
 };
 
@@ -76,7 +82,7 @@ pub const PYTHON: Rule = Rule {
     windows_launcher: Some(("py", &["-3"])),
     version_args: &["--version"],
     version_prefix: "Python ",
-    skip_store_stubs: true,
+    skip_paths: &["windowsapps"],
     ..NO_RULE
 };
 
@@ -84,6 +90,9 @@ pub const PYTHON: Rule = Rule {
 const BASH: Rule = Rule {
     label: "bash",
     programs: &["bash"],
+    // system32 與 WindowsApps 裡的 bash.exe 是 WSL 的入口，略過；改用 git-bash 所在的 Git 裡的 bash
+    skip_paths: &["windows/system32", "windowsapps"],
+    windows_wrapper: Some(("git-bash", &["bin/bash.exe", "usr/bin/bash.exe"])),
     windows_extra: &[
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
@@ -227,6 +236,21 @@ pub fn project_root(start: &Path) -> PathBuf {
     start.ancestors().find(|d| d.join(".git").exists()).unwrap_or(start).to_path_buf()
 }
 
+/// scoop 的 shim：`git-bash.exe` 旁邊有 `git-bash.shim`，裡面寫 `path = "真正的路徑"`。
+/// 找不到 shim 檔、或指到的檔案不存在，就當成它本身就是真正的檔案。
+pub fn resolve_shim(exe: &Path) -> PathBuf {
+    std::fs::read_to_string(exe.with_extension("shim"))
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "path").then(|| PathBuf::from(value.trim().trim_matches('"')))
+            })
+        })
+        .filter(|real| real.is_file())
+        .unwrap_or_else(|| exe.to_path_buf())
+}
+
 /// 找出所有候選（只看檔案系統，不執行任何程式）：虛擬環境（近的在前）、環境變數、全域。
 pub fn discover(
     rule: &Rule,
@@ -267,11 +291,14 @@ pub fn discover(
     }
     // 3. 全域
     let dirs: Vec<PathBuf> = path_var.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
-    let is_store_stub = |p: &Path| rule.skip_store_stubs && p.to_string_lossy().to_ascii_lowercase().contains("windowsapps");
+    let is_skipped = |p: &Path| {
+        let norm = p.to_string_lossy().to_ascii_lowercase().replace('\\', "/");
+        rule.skip_paths.iter().any(|s| norm.contains(s))
+    };
     let find = |name: &str| -> Option<PathBuf> {
         dirs.iter()
             .flat_map(|d| [d.join(name), d.join(format!("{name}.exe"))])
-            .find(|p| p.is_file() && !is_store_stub(p))
+            .find(|p| p.is_file() && !is_skipped(p))
     };
     for name in rule.programs {
         if let Some(program) = find(name) {
@@ -285,6 +312,20 @@ pub fn discover(
         let mut all: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
         all.extend(run_args());
         push(&mut out, Candidate { program, args: all, source: Source::Global, origin: name.to_owned(), env_dir: None });
+    }
+    if cfg!(windows)
+        && let Some((name, relatives)) = rule.windows_wrapper
+        && let Some(launcher) = find(name)
+    {
+        // git-bash.exe 在 Git 的根資料夾；scoop 在 PATH 上放的是 shim，要先找到真正的位置
+        if let Some(root) = resolve_shim(&launcher).parent() {
+            for rel in relatives {
+                let program = root.join(rel);
+                if program.is_file() {
+                    push(&mut out, Candidate { program, args: run_args(), source: Source::Global, origin: name.to_owned(), env_dir: None });
+                }
+            }
+        }
     }
     if cfg!(windows) {
         for path in rule.windows_extra {
@@ -300,10 +341,35 @@ pub fn discover(
 /// 從查版本的輸出取出版本號：找到 `version_prefix` 之後，取接著的英數字與點
 /// （`Python 3.12.1` → `3.12.1`、`GNU bash, version 5.2.15(1)-release` → `5.2.15`）。
 /// Python 2 把版本印在 stderr，所以呼叫端把兩邊合併來看。看不出版本號回傳 `None`。
+///
+/// 找不到 `version_prefix`（輸出被翻成別的語言了：沒有主控台視窗時 `cmd /c ver` 會印出「[版本 10.0…]」）
+/// 就退回去找輸出裡第一個像 `10.0.26300.9818` 的點分數字。
 pub fn parse_version(rule: &Rule, output: &str) -> Option<String> {
-    let start = output.find(rule.version_prefix)? + rule.version_prefix.len();
-    let token: String = output[start..].trim_start_matches([' ', '\t', '\r', '\n']).chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
-    token.chars().next().is_some_and(|c| c.is_ascii_digit()).then_some(token)
+    let with_prefix = output.find(rule.version_prefix).and_then(|i| {
+        let rest = output[i + rule.version_prefix.len()..].trim_start_matches([' ', '\t', '\r', '\n']);
+        let token: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '.').collect();
+        token.chars().next().is_some_and(|c| c.is_ascii_digit()).then_some(token)
+    });
+    with_prefix.or_else(|| first_dotted_number(output))
+}
+
+/// 文字裡第一個「數字.數字…」的詞（前面不能緊接英數字）。
+fn first_dotted_number(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() && (i == 0 || !(chars[i - 1].is_ascii_alphanumeric() || chars[i - 1] == '.')) {
+            let token: String = chars[i..].iter().take_while(|c| c.is_ascii_digit() || **c == '.').collect();
+            let token = token.trim_end_matches('.').to_owned();
+            if token.contains('.') {
+                return Some(token);
+            }
+            i += token.len().max(1);
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 /// 執行 `--version` 確認這個候選真的能用，回傳版本號；打不開、超過 `timeout`、或輸出看不懂都是 `None`。
@@ -336,14 +402,15 @@ pub fn probe_version(rule: &Rule, c: &Candidate, timeout: Duration) -> Option<St
     if rule.versionless {
         return Some(String::new()); // 能執行就算數
     }
-    let mut text = String::new();
+    // 輸出可能是本地的字碼頁（cmd 的「版本」是 Big5），不是 UTF-8：讀成位元組再寬鬆轉換，數字照樣讀得到
+    let mut bytes = Vec::new();
     if let Some(mut out) = child.stdout.take() {
-        let _ = out.read_to_string(&mut text);
+        let _ = out.read_to_end(&mut bytes);
     }
     if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut text);
+        let _ = err.read_to_end(&mut bytes);
     }
-    parse_version(rule, &text)
+    parse_version(rule, &String::from_utf8_lossy(&bytes))
 }
 
 /// 一個候選與它的版本（`None` 表示執行不了）。
@@ -730,6 +797,59 @@ mod tests {
     }
 
     #[test]
+    fn a_translated_version_line_still_gives_the_version_number() {
+        // 本地語系的輸出：沒有英文的前綴，退回找第一個點分數字
+        assert_eq!(parse_version(&CMD, "\r\nMicrosoft Windows [版本 10.0.26300.9818]\r\n"), Some("10.0.26300.9818".to_owned()));
+        assert_eq!(parse_version(&BASH, "GNU bash, 版本 5.2.15(1)-release"), Some("5.2.15".to_owned()));
+        assert_eq!(parse_version(&PYTHON, "Python 3.12.1"), Some("3.12.1".to_owned()), "有前綴時照舊");
+        assert_eq!(parse_version(&BASH, "build 7 of 20"), None, "沒有點的數字不算版本");
+        assert_eq!(parse_version(&BASH, "abc1.2 x"), None, "前面緊接英文字母的不算");
+        assert_eq!(first_dotted_number("v2 then 3.4."), Some("3.4".to_owned()));
+    }
+
+    #[test]
+    fn wsl_entry_points_are_skipped_and_git_bash_is_found_through_scoop_shims() {
+        let root = tempfile::tempdir().unwrap();
+        let sys = root.path().join("Windows").join("System32");
+        let apps = root.path().join("Microsoft").join("WindowsApps");
+        for d in [&sys, &apps] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join(if cfg!(windows) { "bash.exe" } else { "bash" }), "").unwrap();
+        }
+        let path = std::env::join_paths([&sys, &apps]).unwrap();
+        assert!(discover(&BASH, root.path(), None, &no_env, Some(&path)).is_empty(), "WSL 的 bash 入口不算");
+        // 一般路徑上的 bash 照常找得到
+        let good = root.path().join("bin");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(good.join(if cfg!(windows) { "bash.exe" } else { "bash" }), "").unwrap();
+        let path = std::env::join_paths([&sys, &good]).unwrap();
+        assert_eq!(discover(&BASH, root.path(), None, &no_env, Some(&path))[0].program, good.join(if cfg!(windows) { "bash.exe" } else { "bash" }));
+        // scoop 的 shim：shims\git-bash.exe 旁邊的 .shim 檔指到真正的 Git 資料夾
+        let git = root.path().join("apps").join("git").join("current");
+        std::fs::create_dir_all(git.join("bin")).unwrap();
+        std::fs::write(git.join("git-bash.exe"), "").unwrap();
+        std::fs::write(git.join("bin").join("bash.exe"), "").unwrap();
+        let shims = root.path().join("shims");
+        std::fs::create_dir_all(&shims).unwrap();
+        std::fs::write(shims.join("git-bash.exe"), "").unwrap();
+        std::fs::write(shims.join("git-bash.shim"), format!("path = \"{}\"\n", git.join("git-bash.exe").display())).unwrap();
+        assert_eq!(resolve_shim(&shims.join("git-bash.exe")), git.join("git-bash.exe"));
+        // 沒有 shim 檔、或 shim 指到不存在的檔案：就用它本身
+        assert_eq!(resolve_shim(&git.join("git-bash.exe")), git.join("git-bash.exe"));
+        std::fs::write(shims.join("git-bash.shim"), "path = \"C:/nowhere/git-bash.exe\"\n").unwrap();
+        assert_eq!(resolve_shim(&shims.join("git-bash.exe")), shims.join("git-bash.exe"));
+        // Windows 上：PATH 只有 shim 與 WSL 入口時，找到的是 Git 裡真正的 bash.exe，來源標成 git-bash
+        #[cfg(windows)]
+        {
+            std::fs::write(shims.join("git-bash.shim"), format!("path = \"{}\"\n", git.join("git-bash.exe").display())).unwrap();
+            let path = std::env::join_paths([&sys, &shims]).unwrap();
+            let found = discover(&BASH, root.path(), None, &no_env, Some(&path));
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert_eq!((found[0].program.clone(), found[0].origin.as_str()), (git.join("bin").join("bash.exe"), "git-bash"));
+        }
+    }
+
+    #[test]
     fn shell_candidates_come_from_the_path_and_keep_the_fixed_run_arguments() {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
@@ -752,6 +872,33 @@ mod tests {
         std::fs::write(store.join(if cfg!(windows) { "pwsh.exe" } else { "pwsh" }), "").unwrap();
         let path = std::env::join_paths([&store]).unwrap();
         assert_eq!(discover(&POWERSHELL, root.path(), None, &no_env, Some(&path)).len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_real_cmd_is_found_and_works() {
+        let path = std::env::var_os("PATH");
+        let found = discover(&CMD, Path::new("."), None, &|k| std::env::var(k).ok(), path.as_deref());
+        assert!(!found.is_empty(), "PATH 上要找得到 cmd.exe：{path:?}");
+        // 實際執行（沒有主控台視窗時，cmd 的輸出會是本地語系的「[版本 …]」，也要讀得出來）
+        let version = probe_version(&CMD, &found[0], Duration::from_secs(5));
+        assert!(version.as_deref().is_some_and(|v| v.starts_with("10.")), "{:?} 要能執行並讀出版本：{version:?}", found[0]);
+    }
+
+    /// 這台機器有 git-bash 時（沒有就略過）：真的找得到能用的 bash，而且不是 WSL 的入口。
+    #[cfg(windows)]
+    #[test]
+    fn the_real_git_bash_is_found_when_it_is_installed() {
+        let path = std::env::var_os("PATH");
+        let on_path = std::env::split_paths(path.as_deref().unwrap_or_default()).any(|d| d.join("git-bash.exe").is_file());
+        if !on_path {
+            return;
+        }
+        let found = discover(&BASH, Path::new("."), None, &|k| std::env::var(k).ok(), path.as_deref());
+        assert!(!found.is_empty(), "PATH 上有 git-bash，要找得到它的 bash");
+        assert!(found.iter().all(|c| !c.program.to_string_lossy().to_ascii_lowercase().contains("system32")), "{found:?}");
+        let version = probe_version(&BASH, &found[0], Duration::from_secs(10));
+        assert!(version.is_some(), "{:?} 要能執行：{version:?}", found[0]);
     }
 
     #[test]
