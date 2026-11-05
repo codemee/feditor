@@ -27,8 +27,8 @@ Operations are driven by **toolbar buttons**; there are no menus. Buttons show o
 | Button | Shortcut | Description |
 |---|---|---|
 | New / Open / Save / Save As | Ctrl+N / O / S / Shift+S | Basic file operations; unsaved changes are asked about before closing or switching documents |
-| Find & Replace | Ctrl+F (replace Ctrl+H), F3 / Shift+F3 | Opens the find bar (see below) |
-| Find in Files | Ctrl+Shift+F | Searches all text files under a folder |
+| Find & Replace | Ctrl+F (replace Ctrl+H), F3 / Shift+F3 | Opens the find panel, searching the current document (see below) |
+| Find in a Folder | Ctrl+Shift+F | Opens the same panel with the scope set to a folder |
 | Terminal (`>_`) | Ctrl+Shift+` (new), Ctrl+` (cycle focus) | Adds a terminal tab (see below) |
 | Preview (eye) | Ctrl+Shift+P | Toggles the preview pane (see below) |
 | Macro panel / rerun | F5 (rerun) | Run, set a shortcut for, edit and delete macros; a failed macro rolls back all changes |
@@ -87,11 +87,15 @@ The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's defa
 
 ## Find & Replace
 
+- Find, replace, and find in a folder are all in the **same panel** (at the bottom of the window): Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the scope set to a folder, and Ctrl+H also expands the replace field.
+- The scope is switched with the "folder" button on the second row: when off, the current document (including unsaved content) is searched as you type; when on, a folder is searched (by default the folder of the current tab's file, which you can change), the "include subfolders" button next to it decides whether subfolders are entered, and Enter or the search button starts the search.
+- Results are shown in a table: file name, line number, and the text around the match (the match itself is highlighted). In folder scope the results appear while the search is still running; click a row to open that file with the caret on the match, and F3 / Shift+F3 move to the next / previous result.
 - Tab in the search or replace box only moves between those two boxes; the other buttons are meant to be clicked with the mouse.
-- Three options: regular expression, match case (off by default), whole word; it searches as you type and shows "n / total", and wraps around when nothing is found. Hovering over the "regular expression" button shows a syntax cheat sheet.
+- Three options: regular expression, match case (off by default), whole word; it wraps around when nothing is found. Hovering over the "regular expression" button shows a syntax cheat sheet.
 - Regular expressions use Rust `regex` syntax (guaranteed linear time, so a badly written pattern cannot hang the program); in the replacement `$1` and `${name}` insert groups, `\n` and `\t` stand for newline and tab, and a literal `$` is written `$$`.
 - Changes made by replacing can be undone with Ctrl+Z: a single replace and replace all are one step each.
-- **Find in Files** (Ctrl+Shift+F) searches all text files under a folder (with a file name filter such as `*.rs;*.toml`), runs in the background and can be stopped at any time; click a result to open it and select the match. It detects encodings automatically and skips binary files, files over 20 MiB, and `.git` / `target` / `node_modules`; at most 5000 results are listed.
+- **Folder scope** accepts a file name filter (such as `*.rs;*.toml`), runs in the background and can be stopped at any time. It detects encodings automatically and skips binary files, files over 20 MiB, and `.git` / `target` / `node_modules`; at most 5000 results are listed (one per line).
+- **Folder scope can replace too**: select a row in the table and press "replace this match" to open that file, replace in its tab (undoable) and move on to the next result; "replace all" asks first: files already open in tabs are changed in their tabs (undoable, not saved yet), the other files are written to disk directly (keeping their encoding and line endings; this cannot be undone).
 
 ## Appearance and settings
 

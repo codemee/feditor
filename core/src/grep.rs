@@ -6,6 +6,7 @@
 //! - 可以隨時取消（檢查一個旗標），所以放在背景執行緒裡跑也能馬上停下來。
 
 use crate::fileio;
+use crate::i18n::t;
 use crate::search::{SearchError, SearchOptions, Searcher};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,8 @@ pub struct GrepOptions {
     pub max_file_bytes: u64,
     /// 要略過的資料夾名稱。
     pub skip_dirs: Vec<String>,
+    /// 是否一併搜尋子資料夾；`false` 時只搜尋 `root` 這一層的檔案。
+    pub recursive: bool,
 }
 
 impl Default for GrepOptions {
@@ -43,6 +46,7 @@ impl Default for GrepOptions {
         Self {
             search: SearchOptions::default(),
             file_filter: String::new(),
+            recursive: true,
             max_hits: 5000,
             max_file_bytes: 20 * 1024 * 1024,
             skip_dirs: [".git", ".hg", ".svn", "target", "node_modules"]
@@ -123,7 +127,7 @@ pub fn search_dir(
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if child.is_dir() && opts.skip_dirs.iter().any(|d| *d == name) {
+                if child.is_dir() && (!opts.recursive || opts.skip_dirs.iter().any(|d| *d == name)) {
                     continue;
                 }
                 if child.is_file() && !matches_filter(&name, &opts.file_filter) {
@@ -144,39 +148,87 @@ pub fn search_dir(
         }
         summary.files_searched += 1;
         let text = fileio::decode(&bytes).text;
-        let before = summary.hits;
-        for (line_no, line) in text.split('\n').enumerate() {
-            let line = line.strip_suffix('\r').unwrap_or(line);
-            let Some(m) = searcher.find_next(line, 0) else {
-                continue;
-            };
-            let start = line[..m.start].chars().count();
-            let end = start + line[m.start..m.end].chars().count();
-            let (text, text_offset) = excerpt(line, start);
-            on_hit(Hit {
-                path: path.clone(),
-                line: line_no,
-                range: start..end,
-                text,
-                text_offset,
-            });
-            summary.hits += 1;
-            if summary.hits >= opts.max_hits {
-                summary.truncated = true;
-                summary.files_with_hits += 1;
-                break 'walk;
-            }
-            if summary.hits % 256 == 0 && cancel.load(Ordering::Relaxed) {
-                summary.cancelled = true;
-                summary.files_with_hits += 1;
-                break 'walk;
-            }
-        }
-        if summary.hits > before {
-            summary.files_with_hits += 1;
+        if !scan_text(&path, &text, &searcher, opts.max_hits, cancel, &mut summary, &mut on_hit) {
+            break 'walk;
         }
     }
     Ok(summary)
+}
+
+/// 在已經在記憶體裡的文字（例如還沒存檔的文件）裡搜尋，結果的格式和 [`search_dir`] 一樣。
+/// `path` 只是填進結果裡的路徑（沒有檔案時可以給空路徑）。
+pub fn search_text(
+    path: &Path,
+    text: &str,
+    pattern: &str,
+    search: SearchOptions,
+    max_hits: usize,
+    cancel: &AtomicBool,
+    mut on_hit: impl FnMut(Hit),
+) -> Result<Summary, SearchError> {
+    let searcher = Searcher::new(pattern, search)?;
+    let mut summary = Summary { files_searched: 1, ..Summary::default() };
+    scan_text(path, text, &searcher, max_hits, cancel, &mut summary, &mut on_hit);
+    Ok(summary)
+}
+
+/// 逐行掃描一份文字，一行最多回報一筆。回傳 `false` 表示該整個停下來（到達上限或被取消）。
+fn scan_text(
+    path: &Path,
+    text: &str,
+    searcher: &Searcher,
+    max_hits: usize,
+    cancel: &AtomicBool,
+    summary: &mut Summary,
+    on_hit: &mut impl FnMut(Hit),
+) -> bool {
+    let before = summary.hits;
+    for (line_no, line) in text.split('\n').enumerate() {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let Some(m) = searcher.find_next(line, 0) else {
+            continue;
+        };
+        let start = line[..m.start].chars().count();
+        let end = start + line[m.start..m.end].chars().count();
+        let (text, text_offset) = excerpt(line, start);
+        on_hit(Hit {
+            path: path.to_owned(),
+            line: line_no,
+            range: start..end,
+            text,
+            text_offset,
+        });
+        summary.hits += 1;
+        if summary.hits >= max_hits {
+            summary.truncated = true;
+            summary.files_with_hits += 1;
+            return false;
+        }
+        if summary.hits % 256 == 0 && cancel.load(Ordering::Relaxed) {
+            summary.cancelled = true;
+            summary.files_with_hits += 1;
+            return false;
+        }
+    }
+    if summary.hits > before {
+        summary.files_with_hits += 1;
+    }
+    true
+}
+
+/// 直接改寫磁碟上的檔案：把所有符合的地方換成 `replacement`，回傳取代的筆數（沒有符合時不動檔案）。
+/// 保留原本的編碼、BOM 與換行；含有無法解讀的位元組的檔案（存回去會損毀）不改，回傳錯誤。
+pub fn replace_in_file(path: &Path, searcher: &Searcher, replacement: &str) -> Result<usize, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let decoded = fileio::decode(&bytes);
+    if looks_binary(&bytes) || decoded.lossy {
+        return Err(t("檔案含有無法解讀的位元組，不能安全改寫").to_owned());
+    }
+    let (out, n) = searcher.replace_all(&decoded.text, replacement);
+    if n > 0 {
+        fileio::write_file(path, &out, &decoded.format).map_err(|e| e.to_string())?;
+    }
+    Ok(n)
 }
 
 /// 二進位檔：前 8000 個位元組裡有 NUL，而且不是帶 BOM 的 UTF-16。
@@ -355,6 +407,50 @@ mod tests {
         assert!(h.text.chars().count() <= 240);
         let rel = h.range.start - h.text_offset;
         assert_eq!(&h.text.chars().skip(rel).take(6).collect::<String>(), "needle");
+    }
+
+    #[test]
+    fn subfolders_can_be_left_out() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "top.txt", b"foo");
+        write(d.path(), "sub/deep.txt", b"foo");
+        let flat = GrepOptions { recursive: false, ..GrepOptions::default() };
+        assert_eq!(run(d.path(), "foo", &flat).0.iter().map(name).collect::<Vec<_>>(), vec!["top.txt"]);
+        assert_eq!(run(d.path(), "foo", &GrepOptions::default()).0.len(), 2);
+    }
+
+    #[test]
+    fn text_in_memory_is_searched_like_a_file() {
+        let mut hits = Vec::new();
+        let s = search_text(
+            Path::new(""),
+            "a\nfoo\r\nx foo",
+            "foo",
+            SearchOptions::default(),
+            100,
+            &AtomicBool::new(false),
+            |h| hits.push(h),
+        )
+        .unwrap();
+        assert_eq!(hits.iter().map(|h| h.line).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!((s.hits, s.files_searched, s.files_with_hits), (2, 1, 1));
+        assert!(search_text(Path::new(""), "x", "(", SearchOptions { regex: true, ..Default::default() }, 1, &AtomicBool::new(false), |_| {}).is_err());
+    }
+
+    #[test]
+    fn replace_in_file_keeps_encoding_and_line_endings() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "crlf.txt", b"foo\r\nbar foo\r\n");
+        let sr = Searcher::new("foo", SearchOptions::default()).unwrap();
+        assert_eq!(replace_in_file(&d.path().join("crlf.txt"), &sr, "X").unwrap(), 2);
+        assert_eq!(std::fs::read(d.path().join("crlf.txt")).unwrap(), b"X\r\nbar X\r\n");
+        // 沒有符合：不動檔案
+        write(d.path(), "none.txt", b"bar");
+        assert_eq!(replace_in_file(&d.path().join("none.txt"), &sr, "X").unwrap(), 0);
+        // 二進位檔：拒絕
+        write(d.path(), "bin.dat", b"foo\0foo");
+        assert!(replace_in_file(&d.path().join("bin.dat"), &sr, "X").is_err());
+        assert_eq!(std::fs::read(d.path().join("bin.dat")).unwrap(), b"foo\0foo");
     }
 
     #[test]

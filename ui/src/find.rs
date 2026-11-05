@@ -3,32 +3,14 @@
 //! 位置同時記錄「位元組」（給搜尋用）與「字元」（給編輯區用）兩種索引。
 
 use feditor_core::Buffer;
-use feditor_core::search::{SearchError, SearchOptions, Searcher, Stats};
+use feditor_core::search::{SearchError, SearchOptions, Searcher};
 use std::ops::Range;
 
-/// 統計筆數的上限，超過就顯示「N+」。
-pub const STATS_LIMIT: usize = 9_999;
-/// 文字超過這個大小就不統計筆數，避免每次輸入都掃描整份大檔案。
+/// 文字超過這個大小，目前文件的搜尋結果就不隨著每次輸入重做，避免每個字都掃描整份大檔案。
 pub const STATS_MAX_BYTES: usize = 8 * 1024 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Summary {
-    /// 沒有可顯示的東西（搜尋字串為空，或統計尚未算出）。
-    Idle,
-    Error(String),
-    NoMatch,
-    Count {
-        /// 目前是第幾筆（從 0 起算）。
-        index: Option<usize>,
-        total: usize,
-        capped: bool,
-    },
-    TooLarge,
-}
 
 #[derive(Default)]
 pub struct FindState {
-    pub open: bool,
     pub show_replace: bool,
     pub query: String,
     pub replacement: String,
@@ -42,9 +24,6 @@ pub struct FindState {
     /// 這次搜尋是否繞過了檔案的開頭或結尾。
     pub wrapped: bool,
     error: Option<String>,
-    stats: Option<Stats>,
-    stats_stale: bool,
-    too_large: bool,
 }
 
 impl FindState {
@@ -56,7 +35,6 @@ impl FindState {
     pub fn invalidate(&mut self) {
         self.clear_current();
         self.wrapped = false;
-        self.stats_stale = true;
     }
 
     fn clear_current(&mut self) {
@@ -69,7 +47,6 @@ impl FindState {
     /// 向後找是「起點 < from」。找不到時會繞回另一端。回傳是否找到。
     pub fn find(&mut self, text: &str, from: usize, backward: bool) -> bool {
         self.wrapped = false;
-        self.stats_stale = true;
         let sr = match self.searcher() {
             Ok(sr) => {
                 self.error = None;
@@ -170,57 +147,6 @@ impl FindState {
         }
         Ok(n)
     }
-    /// 筆數是否需要重算。呼叫端用它決定要不要去準備整份文字。
-    pub fn stats_pending(&self) -> bool {
-        self.stats_stale
-    }
-
-    /// 需要時重新計算筆數（只在有變動後算一次）。
-    pub fn refresh_stats(&mut self, text: &str) {
-        if !self.stats_stale {
-            return;
-        }
-        self.stats_stale = false;
-        self.stats = None;
-        self.too_large = false;
-        if self.error.is_some() || self.query.is_empty() {
-            return;
-        }
-        if text.len() > STATS_MAX_BYTES {
-            self.too_large = true;
-            return;
-        }
-        if let Ok(sr) = self.searcher() {
-            let start = self.current.as_ref().map(|r| r.start);
-            self.stats = Some(sr.stats(text, STATS_LIMIT, start));
-        }
-    }
-
-    /// 搜尋條件改了：筆數要重算，並重新檢查規則表達式是否有效。
-    pub fn mark_stats_stale(&mut self) {
-        self.stats_stale = true;
-    }
-
-    pub fn summary(&self) -> Summary {
-        if self.query.is_empty() {
-            return Summary::Idle;
-        }
-        if let Some(e) = &self.error {
-            return Summary::Error(e.clone());
-        }
-        if self.too_large {
-            return Summary::TooLarge;
-        }
-        match self.stats {
-            None => Summary::Idle,
-            Some(st) if st.total == 0 => Summary::NoMatch,
-            Some(st) => Summary::Count {
-                index: st.index,
-                total: st.total,
-                capped: st.capped,
-            },
-        }
-    }
 }
 
 /// 兩段文字開頭與結尾相同的部分去掉之後，剩下不同的範圍（舊文字的、新文字的位元組範圍）。
@@ -314,42 +240,15 @@ mod tests {
         let mut f = state("zzz");
         assert!(!f.find("abc", 0, false));
         assert!(f.current.is_none());
-        f.refresh_stats("abc");
-        assert_eq!(f.summary(), Summary::NoMatch);
 
         let mut f = state("");
         assert!(!f.find("abc", 0, false));
-        assert_eq!(f.summary(), Summary::Idle);
+        assert!(f.current.is_none());
 
         let mut f = state("(");
         f.opts.regex = true;
         assert!(!f.find("abc", 0, false));
-        assert!(matches!(f.summary(), Summary::Error(m) if !m.is_empty()));
-    }
-
-    #[test]
-    fn stats_report_total_and_index() {
-        let text = "a b a b a";
-        let mut f = state("a");
-        f.find(text, 4, false);
-        f.refresh_stats(text);
-        assert_eq!(
-            f.summary(),
-            Summary::Count {
-                index: Some(1),
-                total: 3,
-                capped: false
-            }
-        );
-    }
-
-    #[test]
-    fn stats_are_skipped_for_huge_text() {
-        let text = "a".repeat(STATS_MAX_BYTES + 1);
-        let mut f = state("a");
-        f.find(&text, 0, false);
-        f.refresh_stats(&text);
-        assert_eq!(f.summary(), Summary::TooLarge);
+        assert!(f.current.is_none());
     }
 
     fn buf(s: &str) -> Buffer {
@@ -457,20 +356,16 @@ mod tests {
     fn options_change_the_results() {
         let text = "Cat cat concat";
         let mut f = state("cat");
-        f.refresh_stats(text);
-        f.find(text, 0, false);
-        f.refresh_stats(text);
-        assert!(matches!(f.summary(), Summary::Count { total: 3, .. }));
+        let (all, _) = f.searcher().unwrap().replace_all(text, "X");
+        assert_eq!(all, "X X conX");
 
         f.opts.case_sensitive = true;
-        f.find(text, 0, false);
-        f.refresh_stats(text);
-        assert!(matches!(f.summary(), Summary::Count { total: 2, .. }));
+        let (cs, _) = f.searcher().unwrap().replace_all(text, "X");
+        assert_eq!(cs, "Cat X conX");
 
         f.opts.whole_word = true;
-        f.find(text, 0, false);
-        f.refresh_stats(text);
-        assert!(matches!(f.summary(), Summary::Count { total: 1, .. }));
+        let (ww, _) = f.searcher().unwrap().replace_all(text, "X");
+        assert_eq!(ww, "Cat X concat");
     }
 
     #[test]

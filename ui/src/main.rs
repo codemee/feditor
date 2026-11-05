@@ -49,7 +49,7 @@ use egui::text_selection::CCursorRange;
 use encoding_rs::Encoding;
 use editor::model::EditorState;
 use feditor_core::fileio::{LineEnding, common_encodings, format_choices, format_label};
-use find::{FindState, Summary};
+use find::FindState;
 use icons::Icon;
 use settings::{
     DEFAULT_FONT_SIZE, DEFAULT_PREVIEW_FONT_SIZE, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_TERMINAL_MIN_CONTRAST, MAX_FONT_SIZE, MAX_TERMINAL_CONTRAST, MIN_FONT_SIZE, MIN_TERMINAL_CONTRAST, Settings, ThemeChoice, adjust_font_size,
@@ -67,10 +67,6 @@ fn editor_id(pane: panes::PaneId) -> egui::Id {
 
 fn find_input_id() -> egui::Id {
     egui::Id::unique("find_input")
-}
-
-fn folder_query_id() -> egui::Id {
-    egui::Id::unique("folder_query")
 }
 
 fn replace_input_id() -> egui::Id {
@@ -91,6 +87,28 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
         .fold(0.0_f32, f32::max);
     let spacing = ui.spacing();
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
+}
+
+/// 結果表格「內容」欄的一行文字：去掉行首空白，命中的字用選取色標出。
+fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJob {
+    let chars: Vec<char> = hit.text.chars().collect();
+    let start = hit.range.start.saturating_sub(hit.text_offset).min(chars.len());
+    let end = hit.range.end.saturating_sub(hit.text_offset).clamp(start, chars.len());
+    let lead = chars.iter().take(start).take_while(|c| c.is_whitespace()).count();
+    let seg = |a: usize, b: usize| -> String {
+        chars[a..b].iter().map(|&c| if c == '\t' { ' ' } else { c }).collect()
+    };
+    let plain = egui::TextFormat {
+        font_id: egui::TextStyle::Monospace.resolve(ui.style()),
+        color: ui.visuals().text_color(),
+        ..Default::default()
+    };
+    let marked = egui::TextFormat { background: ui.visuals().selection.bg_fill, ..plain.clone() };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&seg(lead, start), 0.0, plain.clone());
+    job.append(&seg(start, end), 0.0, marked);
+    job.append(&seg(end, chars.len()), 0.0, plain);
+    job
 }
 
 /// 搜尋框或取代框有鍵盤焦點時，讓它自己留住 Tab：egui 預設會在畫面一開始就把 Tab 當成「移到下一個元件」，
@@ -182,6 +200,8 @@ enum Then {
     RenameTerminal,
     /// 把正在編輯的配色另存成自訂配色。
     SaveSchemeAs,
+    /// 在搜尋結果的所有檔案裡全部取代。
+    ReplaceInFolder,
 }
 
 struct Pending {
@@ -437,7 +457,7 @@ enum Action {
     ClearLog,
     ToggleOutput,
     Reload(&'static Encoding),
-    /// 開啟尋找列；`replace` 為 true 時一併展開取代欄。
+    /// 開啟尋找面板；`replace` 為 true 時一併展開取代欄。
     Find { replace: bool },
     FindNext,
     FindPrev,
@@ -538,11 +558,15 @@ enum Action {
     /// 按 Enter 時依語言自動加深／減淺縮排。
     SetAutoIndent(bool),
     OpenMacroDir,
-    /// 開關跨檔搜尋面板。
+    /// Ctrl+Shift+F：用資料夾範圍開啟尋找面板（已經是資料夾範圍就關掉）。
     ToggleFolderSearch,
     RunFolderSearch,
     StopFolderSearch,
     PickSearchFolder,
+    /// 搜尋範圍：`true` 是資料夾，`false` 是目前文件。
+    SetFolderScope(bool),
+    /// 資料夾範圍是否包含子資料夾。
+    SetRecursive(bool),
     /// 打開搜尋結果的第幾筆。
     GotoHit(usize),
 }
@@ -890,7 +914,7 @@ impl App {
 
     fn find_step(&mut self, backward: bool) {
         if self.find.query.is_empty() {
-            self.find.open = true;
+            self.folder.open = true;
             self.focus_find = true;
             return;
         }
@@ -900,16 +924,28 @@ impl App {
         self.select_found();
     }
 
+    /// F3／Shift+F3：資料夾範圍時在結果表格裡走到上一筆或下一筆，否則在目前文件裡找。
+    fn find_next_or_hit(&mut self, backward: bool) {
+        if self.folder.open && self.folder.folder {
+            if let Some(i) = self.folder.step(backward) {
+                self.goto_hit(i);
+            }
+        } else {
+            self.find_step(backward);
+        }
+    }
+
     /// 搜尋字串或選項改變：從目前選取的起點重新找，這樣邊打字邊縮小時不會跳走。
     fn find_changed(&mut self) {
-        self.find.mark_stats_stale();
         let from = self.editor_selection().start;
         let App { doc, find, .. } = self;
         find.find(doc.text(), from, false);
         self.select_found();
     }
 
-    fn open_find(&mut self, ctx: &egui::Context, replace: bool) {
+    /// 打開尋找面板。`folder` 指定搜尋範圍（`None` 表示面板已經開著就維持原範圍，剛打開則是目前文件）；
+    /// `replace` 為 true 時一併展開取代欄。
+    fn open_search(&mut self, ctx: &egui::Context, folder: Option<bool>, replace: bool) {
         // 在編輯區按快捷鍵時，若選取了一小段單行文字，就帶入搜尋框
         let editor_focused = ctx.memory(|m| m.has_focus(editor_id(self.layout.focus)));
         let picked = editor_focused
@@ -917,21 +953,223 @@ impl App {
             .flatten()
             .filter(|s| !s.is_empty() && !s.contains('\n') && s.chars().count() <= 200);
 
-        self.find.open = true;
+        let scope = folder.unwrap_or(self.folder.open && self.folder.folder);
+        if scope != self.folder.folder {
+            self.folder.folder = scope;
+            self.folder.clear();
+        }
+        self.folder.open = true;
+        if scope {
+            self.sync_search_dir();
+        }
         if replace {
             self.find.show_replace = true;
         }
         self.focus_find = true;
         if let Some(q) = picked {
             self.find.query = q;
-            self.find_changed();
+            if !scope {
+                self.find_changed();
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    /// 資料夾範圍的預設資料夾：作用中分頁的檔案所在的資料夾（沒有檔案就用目前的工作資料夾）。
+    fn default_search_dir(&self) -> String {
+        self.doc
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .filter(|d| !d.as_os_str().is_empty())
+            .map(|d| d.to_owned())
+            .or_else(|| std::env::current_dir().ok())
+            .map(|d| d.display().to_string())
+            .unwrap_or_default()
+    }
+
+    /// 使用者沒有自己指定資料夾時，搜尋的資料夾跟著作用中的分頁走。
+    fn sync_search_dir(&mut self) {
+        if !self.folder.dir_custom || self.folder.dir.trim().is_empty() {
+            self.folder.dir_custom = false;
+            let dir = self.default_search_dir();
+            if self.folder.dir != dir {
+                self.folder.dir = dir;
+            }
+        }
+    }
+
+    /// 目前文件範圍：搜尋條件或文件內容變了就重搜（搜尋在背景執行緒，結果一邊找一邊出現）；
+    /// 並讓表格選取的那一列跟著編輯區選取的那一筆走。
+    fn refresh_doc_search(&mut self, ctx: &egui::Context) {
+        if !self.folder.open || self.folder.folder {
+            return;
+        }
+        if self.doc.terminal.is_some() || self.find.query.is_empty() {
+            if self.folder.stamp.is_some() || !self.folder.hits.is_empty() {
+                self.folder.clear();
+            }
+            return;
+        }
+        let opts = self.find.opts;
+        let want = folder_search::Stamp {
+            query: self.find.query.clone(),
+            options: (opts.case_sensitive, opts.whole_word, opts.regex),
+            path: self.doc.path.clone(),
+            revision: self.doc.buffer.revision(),
+            len: self.doc.buffer.len_bytes(),
+        };
+        let current = self.folder.stamp.clone();
+        if current.as_ref() != Some(&want) {
+            // 很大的文件：只在搜尋條件改了的時候重搜，打字時不要每個字都掃一遍
+            let only_text_changed = current.as_ref().is_some_and(|s| {
+                s.query == want.query && s.options == want.options && s.path == want.path
+            });
+            if only_text_changed && want.len > find::STATS_MAX_BYTES {
+                self.folder.stamp = Some(want);
+            } else {
+                let label = self.doc.name();
+                let path = self.doc.path.clone().unwrap_or_default();
+                let text = self.doc.text().to_owned();
+                self.folder.start_text(ctx, &label, path, text, &want.query, opts);
+                self.folder.stamp = Some(want);
+            }
+        }
+        if !self.folder.hits.is_empty() && !self.folder.is_running() {
+            let sel = self.editor.sel.range();
+            let buf = &self.doc.buffer;
+            let len = buf.len_chars();
+            self.folder.selected = if sel.is_empty() || sel.end > len {
+                None
+            } else {
+                let line = buf.line_of_char(sel.start);
+                let start = buf.line_start(line);
+                self.folder.hits.iter().position(|h| {
+                    h.line == line && start + h.range.start == sel.start && start + h.range.end == sel.end
+                })
+            };
         }
     }
 
     fn close_find(&mut self, ctx: &egui::Context) {
-        self.find.open = false;
+        self.folder.stop();
+        self.folder.open = false;
         // 找到的那一筆已經是選取狀態；把鍵盤焦點帶回編輯區，方便直接打字取代
         ctx.memory_mut(|m| m.request_focus(editor_id(self.layout.focus)));
+    }
+
+    /// 「取代這一筆」：資料夾範圍時取代表格裡選取的那一筆（開啟那個檔案、在分頁裡取代，可以復原）。
+    fn replace_one_action(&mut self) {
+        if !self.folder.folder {
+            self.replace_one();
+            return;
+        }
+        let Some(i) = self.folder.selected else {
+            self.folder.status = t("請先在結果表格裡選取要取代的那一筆").to_owned();
+            return;
+        };
+        let Some(path) = self.folder.hits.get(i).map(|h| h.path.clone()) else {
+            return;
+        };
+        self.goto_hit(i);
+        if self.doc.path.as_deref() != Some(path.as_path()) {
+            return; // 檔案打不開（原因已經記在輸出面板）
+        }
+        self.replace_one();
+        // 只重搜這個檔案，換掉它在表格裡的那幾列，並接著走到下一筆
+        let text = self.doc.text().to_owned();
+        let (query, opts) = (self.find.query.clone(), self.find.opts);
+        self.folder.refresh_file(&path, &text, &query, opts);
+        if let Some(next) = self.folder.selected {
+            self.goto_hit(next);
+        }
+    }
+
+    /// 「全部取代」：資料夾範圍時先問過再做（磁碟上的檔案無法復原）。
+    fn replace_all_action(&mut self) {
+        if !self.folder.folder {
+            self.replace_all();
+            return;
+        }
+        if self.find.searcher().is_err() {
+            self.folder.status = t("請輸入要搜尋的文字").to_owned();
+            return;
+        }
+        if self.folder.is_running() {
+            self.folder.status = t("搜尋還沒結束，請等結果出齊再全部取代").to_owned();
+            return;
+        }
+        if self.folder.truncated {
+            self.folder.status = t("結果太多、只列出了一部分，請縮小範圍後再全部取代").to_owned();
+            return;
+        }
+        let paths = self.folder.distinct_paths();
+        if paths.is_empty() {
+            self.push(LogKind::Info, t("沒有可取代的內容"));
+            return;
+        }
+        let open = paths.iter().filter(|p| self.find_open_path(p).is_some()).count();
+        let spec = modal::Spec::new(
+            t("全部取代"),
+            tf!(
+                "要把 {count} 個檔案裡符合「{query}」的文字全部換成「{repl}」嗎？\n\n其中 {open} 個已經開在分頁裡，會改在分頁內進行（可以復原，尚未存檔）；其餘 {rest} 個會直接寫入磁碟，無法復原。",
+                count = paths.len(),
+                query = self.find.query,
+                repl = self.find.replacement,
+                open = open,
+                rest = paths.len() - open
+            ),
+        )
+        .button(t("全部取代"), modal::Answer::Yes)
+        .button(t("取消"), modal::Answer::Cancel);
+        self.modal = Some(Pending::new(spec, Then::ReplaceInFolder));
+    }
+
+    /// 在結果裡的每個檔案做全部取代：開在分頁裡的改分頁內容，其他的直接改磁碟上的檔案；做完重新搜尋。
+    fn replace_in_folder(&mut self) {
+        let Ok(searcher) = self.find.searcher() else {
+            return;
+        };
+        let replacement = self.find.replacement.clone();
+        let (query, opts) = (self.find.query.clone(), self.find.opts);
+        let (mut files, mut total) = (0usize, 0usize);
+        for path in self.folder.distinct_paths() {
+            // 換完之後這個檔案現在的內容：用來更新表格裡它的那幾列（開在分頁裡的看分頁，其他的看磁碟）
+            let now = if self.find_open_path(&path).is_some() {
+                self.open_path(&path);
+                if self.doc.path.as_deref() != Some(path.as_path()) {
+                    continue;
+                }
+                let App { doc, find, .. } = self;
+                if let Ok(n) = find.replace_all(&mut doc.buffer) {
+                    if n > 0 {
+                        doc.sync();
+                        files += 1;
+                        total += n;
+                    }
+                }
+                Some(self.doc.text().to_owned())
+            } else {
+                match feditor_core::grep::replace_in_file(&path, &searcher, &replacement) {
+                    Ok(n) => {
+                        if n > 0 {
+                            files += 1;
+                            total += n;
+                        }
+                        feditor_core::fileio::read_file(&path).ok().map(|(_, d)| d.text)
+                    }
+                    Err(e) => {
+                        self.push(LogKind::Warn, tf!("無法取代「{}」：{}", path.display(), e));
+                        None
+                    }
+                }
+            };
+            if let Some(text) = now {
+                self.folder.refresh_file(&path, &text, &query, opts);
+            }
+        }
+        self.push(LogKind::Info, tf!("已在 {files} 個檔案取代 {total} 筆", files = files, total = total));
+        self.folder.status = tf!("已在 {files} 個檔案取代 {total} 筆", files = files, total = total);
     }
 
     fn replace_one(&mut self) {
@@ -1108,6 +1346,11 @@ impl App {
         let typed = text.as_deref().map(str::trim).unwrap_or_default().to_owned();
         match then {
             Then::Notice => {}
+            Then::ReplaceInFolder => {
+                if answer == Yes {
+                    self.replace_in_folder();
+                }
+            }
             Then::SaveRecording(source) => match answer {
                 Yes if typed.is_empty() => {
                     self.ask_recording_name(source, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
@@ -1770,12 +2013,12 @@ impl App {
                     terminal.open_search();
                 }
             }
-            Action::Find { replace } => self.open_find(ctx, replace),
-            Action::FindNext => self.find_step(false),
-            Action::FindPrev => self.find_step(true),
+            Action::Find { replace } => self.open_search(ctx, None, replace),
+            Action::FindNext => self.find_next_or_hit(false),
+            Action::FindPrev => self.find_next_or_hit(true),
             Action::FindChanged => self.find_changed(),
-            Action::ReplaceOne => self.replace_one(),
-            Action::ReplaceAll => self.replace_all(),
+            Action::ReplaceOne => self.replace_one_action(),
+            Action::ReplaceAll => self.replace_all_action(),
             Action::CloseFind => self.close_find(ctx),
             Action::Undo => {
                 self.editor.undo(&mut self.doc.buffer);
@@ -1809,9 +2052,20 @@ impl App {
                 }
             }
             Action::ToggleFolderSearch => self.toggle_folder_search(ctx),
-            Action::RunFolderSearch => self.folder.start(ctx),
+            Action::RunFolderSearch => {
+                let (query, opts) = (self.find.query.clone(), self.find.opts);
+                self.folder.start(ctx, &query, opts);
+            }
             Action::StopFolderSearch => self.folder.stop(),
             Action::PickSearchFolder => self.pick_search_folder(),
+            Action::SetFolderScope(on) => {
+                self.folder.folder = on;
+                self.folder.clear();
+                if on {
+                    self.sync_search_dir();
+                }
+            }
+            Action::SetRecursive(on) => self.folder.recursive = on,
             Action::GotoHit(i) => self.goto_hit(i),
             Action::ToggleMacroMenu => {
                 self.macro_open = !self.macro_open;
@@ -2111,18 +2365,13 @@ impl App {
 
             group_separator(ui);
 
-            let find_tip = t("尋找與取代 (Ctrl+F，取代 Ctrl+H)");
-            if icons::toggle(ui, Icon::Search, find_tip, self.find.open).clicked() {
-                action = Some(if self.find.open {
+            let find_tip = t("尋找與取代 (Ctrl+F，取代 Ctrl+H，在資料夾中尋找 Ctrl+Shift+F)");
+            if icons::toggle(ui, Icon::Search, find_tip, self.folder.open).clicked() {
+                action = Some(if self.folder.open {
                     Action::CloseFind
                 } else {
                     Action::Find { replace: false }
                 });
-            }
-
-            let grep_tip = t("在資料夾的所有檔案中尋找 (Ctrl+Shift+F)");
-            if icons::toggle(ui, Icon::FindInFiles, grep_tip, self.folder.open).clicked() {
-                action = Some(Action::ToggleFolderSearch);
             }
 
             group_separator(ui);
@@ -2719,46 +2968,33 @@ impl App {
         }
     }
 
-    // ── 跨檔搜尋 ────────────────────────────────────────────
+    // ── 尋找面板：資料夾範圍與結果 ──────────────────────────
 
+    /// Ctrl+Shift+F：用資料夾範圍開啟尋找面板；面板已經是資料夾範圍就關掉。
     fn toggle_folder_search(&mut self, ctx: &egui::Context) {
-        if self.folder.open {
-            self.folder.stop();
-            self.folder.open = false;
-            return;
+        if self.folder.open && self.folder.folder {
+            self.close_find(ctx);
+        } else {
+            self.open_search(ctx, Some(true), false);
         }
-        self.folder.open = true;
-        self.folder.focus_query = true;
-        // 搜尋文字：選取的單行文字；資料夾：目前檔案所在的資料夾
-        if let Some(sel) = self.editor.selected_text(&self.doc.buffer) {
-            if !sel.contains('\n') && !sel.is_empty() {
-                self.folder.query = sel;
-            }
-        }
-        if self.folder.dir.is_empty() {
-            let dir = self
-                .doc
-                .path
-                .as_ref()
-                .and_then(|p| p.parent().map(|d| d.to_owned()))
-                .or_else(|| std::env::current_dir().ok());
-            self.folder.dir = dir.map(|d| d.display().to_string()).unwrap_or_default();
-        }
-        ctx.request_repaint();
     }
 
-    /// 打開搜尋結果第 `i` 筆：開啟（或切到）那個檔案，並選取符合的文字。
+    /// 打開搜尋結果第 `i` 筆：開啟（或切到）那個檔案，選取符合的文字並捲到可見處。
     fn goto_hit(&mut self, i: usize) {
         let Some(hit) = self.folder.hits.get(i).cloned() else {
             return;
         };
-        self.open_path(&hit.path);
-        // 檔案開失敗（open_path 已經記錄原因）：目前文件不是那個檔案就不要亂選
-        let same = self.doc.path.as_deref().is_some_and(|p| {
-            p.canonicalize().ok() == hit.path.canonicalize().ok()
-        });
-        if !same {
-            return;
+        self.folder.selected = Some(i);
+        // 目前文件範圍的結果就在目前這份文件裡，不用再開檔
+        if !self.folder.text_scope {
+            self.open_path(&hit.path);
+            // 檔案開失敗（open_path 已經記錄原因）：目前文件不是那個檔案就不要亂選
+            let same = self.doc.path.as_deref().is_some_and(|p| {
+                p.canonicalize().ok() == hit.path.canonicalize().ok()
+            });
+            if !same {
+                return;
+            }
         }
         let buf = &self.doc.buffer;
         let line = hit.line.min(buf.line_count().saturating_sub(1));
@@ -2766,6 +3002,9 @@ impl App {
         let len = buf.line_len_chars(line);
         let (a, b) = (hit.range.start.min(len), hit.range.end.min(len));
         self.select_chars(start + a..start + b);
+        // 讓編輯區把那一筆標出來並捲到可見處（開檔會清掉搜尋狀態，所以要在開檔之後設）
+        self.find.current_chars = Some(start + a..start + b);
+        self.find.reveal = true;
     }
 
     fn pick_search_folder(&mut self) {
@@ -2776,86 +3015,8 @@ impl App {
         }
         if let Some(dir) = dialog.pick_folder() {
             self.folder.dir = dir.display().to_string();
+            self.folder.dir_custom = true;
         }
-    }
-
-    /// 跨檔搜尋面板：搜尋框、資料夾、檔名過濾、結果清單（點一下跳到那一行）。
-    fn folder_search_panel(&mut self, ui: &mut egui::Ui) -> Option<Action> {
-        let mut action = None;
-        let running = self.folder.is_running();
-        ui.horizontal(|ui| {
-            tight_buttons(ui);
-            ui.label(t("在檔案中尋找"));
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.folder.query)
-                    .id(folder_query_id())
-                    .hint_text(t("搜尋文字"))
-                    .desired_width(240.0),
-            );
-            if std::mem::take(&mut self.folder.focus_query) {
-                response.request_focus();
-            }
-            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                action = Some(Action::ToggleFolderSearch);
-            }
-            option_toggle(ui, Icon::CaseSensitive, t("區分大小寫"), &mut self.folder.case_sensitive);
-            option_toggle(ui, Icon::WholeWord, t("完整單字"), &mut self.folder.whole_word);
-            option_toggle(ui, Icon::Regex, t("規則表達式"), &mut self.folder.regex);
-            if running {
-                if icons::button(ui, Icon::Stop, t("停止搜尋"), true).clicked() {
-                    action = Some(Action::StopFolderSearch);
-                }
-            } else if icons::button(ui, Icon::Search, t("開始搜尋 (Enter)"), true).clicked() || enter {
-                action = Some(Action::RunFolderSearch);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::small_button(ui, Icon::Close, t("關閉 (Esc)"), true).clicked() {
-                    action = Some(Action::ToggleFolderSearch);
-                }
-            });
-        });
-        ui.horizontal(|ui| {
-            ui.label(t("資料夾"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.folder.dir)
-                    .desired_width(ui.available_width() - 330.0),
-            );
-            if icons::small_button(ui, Icon::Open, t("選擇資料夾…"), true).clicked() {
-                action = Some(Action::PickSearchFolder);
-            }
-            ui.label(t("檔名"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.folder.filter)
-                    .hint_text("*.rs;*.toml")
-                    .desired_width(150.0),
-            );
-        });
-        ui.label(egui::RichText::new(&self.folder.status).color(ui.visuals().weak_text_color()));
-        ui.separator();
-        let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
-        let total = self.folder.hits.len();
-        egui::ScrollArea::vertical()
-            .id_salt("folder_hits")
-            .auto_shrink([false, false])
-            .show_rows(ui, row_h, total, |ui, range| {
-                // 一筆結果固定佔一列：太長就截斷，不換行（否則列高不一，捲動會錯位）
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                for i in range {
-                    let hit = &self.folder.hits[i];
-                    let text = format!(
-                        "{}:{}  {}",
-                        self.folder.display_path(hit),
-                        hit.line + 1,
-                        hit.text.trim_start()
-                    );
-                    let label = egui::RichText::new(text).monospace();
-                    if ui.selectable_label(false, label).clicked() {
-                        action = Some(Action::GotoHit(i));
-                    }
-                }
-            });
-        action
     }
 
     /// 在設定按鈕下方展開設定面板，並處理關閉：點到面板與設定按鈕以外的地方、或按 Esc 才關。
@@ -3440,14 +3601,14 @@ impl App {
         action
     }
 
-    /// 尋找列：搜尋框、三個選項（區分大小寫、完整單字、規則表達式）、上一筆／下一筆，
-    /// 以及可展開的取代欄。
+    /// 尋找面板：搜尋框、三個選項（區分大小寫、完整單字、規則表達式）、搜尋範圍（目前文件或資料夾）、
+    /// 可展開的取代欄，以及結果表格。
     ///
     /// 鍵盤只管兩個輸入框：Tab 只在搜尋框與取代框之間切換（見 [`App::tab_between_find_and_replace`]），
     /// 其他按鈕（選項、上一筆／下一筆、取代、關閉…）一律用滑鼠點，不會被 Tab 聚焦。
-    fn find_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+    fn find_panel(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         self.tab_between_find_and_replace(ui);
-        let action = icons::mouse_only(|| self.find_bar_contents(ui));
+        let action = icons::mouse_only(|| self.find_panel_contents(ui));
         // 要在兩個輸入框畫完之後才設：TextEdit 每個畫面畫完自己都會重設鍵盤過濾條件，先設會被蓋掉
         keep_tab_in_find_inputs(ui);
         action
@@ -3476,14 +3637,16 @@ impl App {
         }
     }
 
-    fn find_bar_contents(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+    fn find_panel_contents(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
-        if self.find.stats_pending() {
-            let App { doc, find, .. } = self;
-            find.refresh_stats(doc.text());
-        }
+        let folder_scope = self.folder.folder;
+        let running = self.folder.is_running();
         let query_empty = self.find.query.is_empty();
+        let can_step = if folder_scope { !self.folder.hits.is_empty() } else { !query_empty };
+        let can_replace_one = if folder_scope { self.folder.selected.is_some() } else { !query_empty };
+        let can_replace_all = if folder_scope { !self.folder.hits.is_empty() } else { !query_empty };
 
+        // 第一列：搜尋框、三個選項、搜尋／停止、上一筆／下一筆。按鈕都是同一種尺寸、緊接在選項後面
         ui.horizontal(|ui| {
             tight_buttons(ui);
             let chevron = if self.find.show_replace {
@@ -3513,9 +3676,10 @@ impl App {
                 egui::TextEdit::singleline(&mut self.find.query)
                     .id(find_input_id())
                     .hint_text(t("尋找"))
-                    .desired_width(220.0),
+                    .desired_width(240.0),
             );
-            if input.changed() {
+            // 目前文件範圍：邊打字邊搜尋（結果表格自己會跟著更新）；資料夾範圍要按 Enter 才開始
+            if input.changed() && !folder_scope {
                 action = Some(Action::FindChanged);
             }
             if input.lost_focus() {
@@ -3527,7 +3691,9 @@ impl App {
                     )
                 });
                 if enter {
-                    action = Some(if shift {
+                    action = Some(if folder_scope {
+                        Action::RunFolderSearch
+                    } else if shift {
                         Action::FindPrev
                     } else {
                         Action::FindNext
@@ -3559,50 +3725,31 @@ impl App {
                 self.find.opts.regex = !regex_on;
                 changed = true;
             }
-            if changed {
+            if changed && !folder_scope {
                 action = Some(Action::FindChanged);
             }
 
-            if icons::small_button(ui, Icon::ChevronUp, t("上一筆 (Shift+Enter 或 Shift+F3)"), !query_empty)
-                .clicked()
-            {
+            if folder_scope {
+                if running {
+                    if icons::small_button(ui, Icon::Stop, t("停止搜尋"), true).clicked() {
+                        action = Some(Action::StopFolderSearch);
+                    }
+                } else if icons::small_button(ui, Icon::Search, t("開始搜尋 (Enter)"), !query_empty)
+                    .clicked()
+                {
+                    action = Some(Action::RunFolderSearch);
+                }
+            }
+            let (prev_tip, next_tip) = if folder_scope {
+                (t("上一筆結果 (Shift+F3)"), t("下一筆結果 (F3)"))
+            } else {
+                (t("上一筆 (Shift+Enter 或 Shift+F3)"), t("下一筆 (Enter 或 F3)"))
+            };
+            if icons::small_button(ui, Icon::ChevronUp, prev_tip, can_step).clicked() {
                 action = Some(Action::FindPrev);
             }
-            if icons::small_button(ui, Icon::ChevronDown, t("下一筆 (Enter 或 F3)"), !query_empty)
-                .clicked()
-            {
+            if icons::small_button(ui, Icon::ChevronDown, next_tip, can_step).clicked() {
                 action = Some(Action::FindNext);
-            }
-
-            // 結果摘要
-            match self.find.summary() {
-                Summary::Idle => {}
-                Summary::Error(msg) => {
-                    ui.label(egui::RichText::new(t("規則有誤")).color(ui.visuals().error_fg_color))
-                        .on_hover_text(msg);
-                }
-                Summary::NoMatch => {
-                    ui.label(egui::RichText::new(t("找不到")).color(ui.visuals().error_fg_color));
-                }
-                Summary::Count {
-                    index,
-                    total,
-                    capped,
-                } => {
-                    let plus = if capped { "+" } else { "" };
-                    let text = match index {
-                        Some(i) => format!("{}/{total}{plus}", i + 1),
-                        None => tf!("{total}{plus} 筆", total = total, plus = plus),
-                    };
-                    ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
-                }
-                Summary::TooLarge => {
-                    ui.label(egui::RichText::new("—").color(ui.visuals().weak_text_color()))
-                        .on_hover_text(t("檔案很大，不統計筆數"));
-                }
-            }
-            if self.find.wrapped {
-                ui.label(egui::RichText::new(t("已繞回")).color(ui.visuals().weak_text_color()));
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3610,6 +3757,51 @@ impl App {
                     action = Some(Action::CloseFind);
                 }
             });
+        });
+
+        // 第二列：搜尋範圍。資料夾開啟時才有「包含子資料夾」、資料夾路徑與檔名過濾
+        ui.horizontal(|ui| {
+            tight_buttons(ui);
+            // 與上一列的展開鈕對齊
+            ui.add_space(22.0 + ui.spacing().item_spacing.x);
+            let mut on = folder_scope;
+            if option_toggle(
+                ui,
+                Icon::Folder,
+                t("在資料夾的檔案中尋找（預設是目前分頁的檔案所在的資料夾）；關閉時只搜尋目前文件 (Ctrl+Shift+F)"),
+                &mut on,
+            ) {
+                action = Some(Action::SetFolderScope(on));
+            }
+            if folder_scope {
+                let mut recursive = self.folder.recursive;
+                if option_toggle(ui, Icon::Subfolders, t("包含子資料夾"), &mut recursive) {
+                    action = Some(Action::SetRecursive(recursive));
+                }
+                let dir = ui.add(
+                    egui::TextEdit::singleline(&mut self.folder.dir)
+                        .hint_text(t("資料夾"))
+                        .desired_width((ui.available_width() - 262.0).max(120.0)),
+                );
+                if dir.changed() {
+                    self.folder.dir_custom = true;
+                }
+                if icons::small_button(ui, Icon::Open, t("選擇資料夾…"), true).clicked() {
+                    action = Some(Action::PickSearchFolder);
+                }
+                ui.label(t("檔名"));
+                let filter = ui.add(
+                    egui::TextEdit::singleline(&mut self.folder.filter)
+                        .hint_text("*.rs;*.toml")
+                        .desired_width(150.0),
+                );
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if enter && (dir.lost_focus() || filter.lost_focus()) {
+                    action = Some(Action::RunFolderSearch);
+                }
+            } else {
+                ui.label(egui::RichText::new(t("目前文件")).color(ui.visuals().weak_text_color()));
+            }
         });
 
         if self.find.show_replace {
@@ -3621,7 +3813,7 @@ impl App {
                     egui::TextEdit::singleline(&mut self.find.replacement)
                         .id(replace_input_id())
                         .hint_text(t("取代為"))
-                        .desired_width(220.0),
+                        .desired_width(240.0),
                 );
                 let input = if self.find.opts.regex {
                     input.on_hover_text(t(
@@ -3644,16 +3836,97 @@ impl App {
                         action = Some(Action::CloseFind);
                     }
                 }
-                if icons::small_button(ui, Icon::ReplaceOne, t("取代這一筆 (Enter)"), !query_empty)
-                    .clicked()
-                {
+                let one_tip = if folder_scope {
+                    t("取代表格裡選取的這一筆 (Enter)")
+                } else {
+                    t("取代這一筆 (Enter)")
+                };
+                if icons::small_button(ui, Icon::ReplaceOne, one_tip, can_replace_one).clicked() {
                     action = Some(Action::ReplaceOne);
                 }
-                if icons::small_button(ui, Icon::ReplaceAll, t("全部取代"), !query_empty).clicked() {
+                let all_tip = if folder_scope {
+                    t("在結果裡所有的檔案中全部取代")
+                } else {
+                    t("全部取代")
+                };
+                if icons::small_button(ui, Icon::ReplaceAll, all_tip, can_replace_all).clicked() {
                     action = Some(Action::ReplaceAll);
                 }
             });
         }
+
+        ui.horizontal(|ui| {
+            let weak = ui.visuals().weak_text_color();
+            ui.label(egui::RichText::new(&self.folder.status).color(weak));
+            if !folder_scope && self.find.wrapped {
+                ui.label(egui::RichText::new(t("已繞回")).color(weak));
+            }
+        });
+        ui.separator();
+        if let Some(a) = self.hits_table(ui) {
+            action = Some(a);
+        }
+        action
+    }
+
+    /// 結果表格：檔名、行數、命中處附近的文字（命中的字用選取色標出）。搜尋進行中結果就會一筆筆加進來；
+    /// 點一列就開啟那個檔案並跳到命中處。
+    fn hits_table(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        use egui_extras::{Column, TableBuilder};
+        let mut action = None;
+        let scroll = std::mem::take(&mut self.folder.scroll_to_selected);
+        let folder = &self.folder;
+        let selected = folder.selected;
+        let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
+        let mut table = TableBuilder::new(ui)
+            .id_salt("search_hits")
+            .striped(true)
+            .resizable(true)
+            .sense(egui::Sense::click())
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::initial(220.0).at_least(80.0).clip(true))
+            .column(Column::initial(64.0).at_least(40.0).clip(true))
+            .column(Column::remainder().at_least(120.0).clip(true));
+        if let (true, Some(i)) = (scroll, selected) {
+            table = table.scroll_to_row(i, None);
+        }
+        table
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong(t("檔名"));
+                });
+                header.col(|ui| {
+                    ui.strong(t("行數"));
+                });
+                header.col(|ui| {
+                    ui.strong(t("內容"));
+                });
+            })
+            .body(|body| {
+                body.rows(row_h, folder.hits.len(), |mut row| {
+                    let i = row.index();
+                    let hit = &folder.hits[i];
+                    row.set_selected(selected == Some(i));
+                    row.col(|ui| {
+                        let name = ui.add(egui::Label::new(folder.display_path(hit)).truncate().selectable(false));
+                        if !folder.text_scope {
+                            name.on_hover_text(hit.path.display().to_string());
+                        }
+                    });
+                    row.col(|ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new((hit.line + 1).to_string()).monospace())
+                                .selectable(false),
+                        );
+                    });
+                    row.col(|ui| {
+                        ui.add(egui::Label::new(hit_job(ui, hit)).truncate().selectable(false));
+                    });
+                    if row.response().clicked() {
+                        action = Some(Action::GotoHit(i));
+                    }
+                });
+            });
         action
     }
 
@@ -4030,6 +4303,13 @@ impl eframe::App for App {
         if self.folder.poll() {
             ctx.request_repaint();
         }
+        if self.folder.open {
+            if self.folder.folder {
+                self.sync_search_dir();
+            } else {
+                self.refresh_doc_search(&ctx);
+            }
+        }
 
         // 快捷鍵（Ctrl+Shift+S 要先於 Ctrl+S 檢查，因為 egui 比對修飾鍵時 Ctrl+S 也會吃到它）
         let font_size = self.settings.font_size;
@@ -4140,13 +4420,6 @@ impl eframe::App for App {
                 action = Some(a);
             }
         });
-        if self.find.open {
-            egui::Panel::top("find").show(ui, |ui| {
-                if let Some(a) = self.find_bar(ui) {
-                    action = Some(a);
-                }
-            });
-        }
         // 下方的面板（狀態列、輸出面板）左右兩端對齊窗格卡片的外緣，不要比圓角框更寬
         let bottom_frame = aligned_panel_frame(ui.style());
         egui::Panel::bottom("status").frame(bottom_frame.clone()).show(ui, |ui| {
@@ -4173,11 +4446,11 @@ impl eframe::App for App {
             });
         }
         if self.folder.open {
-            egui::Panel::bottom("folder_search")
+            egui::Panel::bottom("find_panel")
                 .resizable(true)
                 .default_size(220.0)
                 .show(ui, |ui| {
-                    if let Some(a) = self.folder_search_panel(ui) {
+                    if let Some(a) = self.find_panel(ui) {
                         action = Some(a);
                     }
                 });
@@ -4286,6 +4559,124 @@ mod tests {
         assert_eq!(app.doc.text(), "bird dog cat");
         app.editor.undo(&mut app.doc.buffer);
         assert_eq!(app.doc.text(), "cat dog cat");
+    }
+
+    fn wait_search(app: &mut App) {
+        let start = Instant::now();
+        while app.folder.is_running() {
+            app.folder.poll();
+            assert!(start.elapsed() < Duration::from_secs(10), "搜尋沒有結束");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn the_panel_searches_the_current_document_and_a_click_selects_the_hit() {
+        let ctx = egui::Context::default();
+        let mut app = app_with("cat\ndog cat\nbird");
+        app.folder.open = true;
+        app.find.query = "cat".to_owned();
+        app.refresh_doc_search(&ctx);
+        wait_search(&mut app);
+        assert!(app.folder.text_scope);
+        assert_eq!(app.folder.hits.len(), 2);
+        app.goto_hit(1);
+        assert_eq!(app.editor.sel.range(), 8..11, "第二行的 cat");
+        assert_eq!(app.folder.selected, Some(1));
+        assert!(app.find.reveal, "要捲到命中處");
+        // 內容沒變、條件沒變：不會重搜；改了文字就重搜
+        app.refresh_doc_search(&ctx);
+        assert!(!app.folder.is_running());
+        app.doc.buffer.insert(0, "cat\n");
+        app.doc.sync();
+        app.refresh_doc_search(&ctx);
+        wait_search(&mut app);
+        assert_eq!(app.folder.hits.len(), 3);
+    }
+
+    #[test]
+    fn the_table_selection_follows_the_editor_selection() {
+        let ctx = egui::Context::default();
+        let mut app = app_with("cat\ndog cat");
+        app.folder.open = true;
+        app.find.query = "cat".to_owned();
+        app.refresh_doc_search(&ctx);
+        wait_search(&mut app);
+        app.find_step(false);
+        app.refresh_doc_search(&ctx);
+        assert_eq!(app.folder.selected, Some(0));
+        app.find_step(false);
+        app.refresh_doc_search(&ctx);
+        assert_eq!(app.folder.selected, Some(1));
+    }
+
+    #[test]
+    fn the_folder_defaults_to_the_active_tabs_folder_until_the_user_picks_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&file);
+        app.handle(Action::SetFolderScope(true), &egui::Context::default());
+        assert_eq!(std::path::PathBuf::from(&app.folder.dir), dir.path());
+        app.folder.dir = "Z:\\elsewhere".into();
+        app.folder.dir_custom = true;
+        app.sync_search_dir();
+        assert_eq!(app.folder.dir, "Z:\\elsewhere", "使用者自己指定的不會被蓋掉");
+    }
+
+    #[test]
+    fn replacing_in_a_folder_edits_open_tabs_in_place_and_other_files_on_disk() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let open = dir.path().join("open.txt");
+        let closed = dir.path().join("closed.txt");
+        std::fs::write(&open, "cat 1\ncat 2").unwrap();
+        std::fs::write(&closed, "a cat\r\nb").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&open);
+        app.new_document(); // 讓 open.txt 退到背景分頁
+        app.find.query = "cat".to_owned();
+        app.find.replacement = "dog".to_owned();
+        app.folder.open = true;
+        app.folder.folder = true;
+        app.folder.dir = dir.path().display().to_string();
+        app.handle(Action::RunFolderSearch, &ctx);
+        wait_search(&mut app);
+        assert_eq!(app.folder.hits.len(), 3);
+        app.replace_in_folder();
+        // 開著的檔案：改分頁內容、未存檔，磁碟上不動
+        assert_eq!(std::fs::read_to_string(&open).unwrap(), "cat 1\ncat 2");
+        assert_eq!(app.doc.path.as_deref(), Some(open.as_path()));
+        assert_eq!(app.doc.text(), "dog 1\ndog 2");
+        assert!(app.doc.dirty);
+        // 沒開的檔案：直接改磁碟，換行保留
+        assert_eq!(std::fs::read(&closed).unwrap(), b"a dog\r\nb");
+        assert_eq!(app.folder.hits.len(), 0, "表格裡兩個檔案的列都已經更新");
+    }
+
+    #[test]
+    fn replacing_one_hit_in_a_folder_opens_the_file_and_moves_on() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        std::fs::write(&a, "cat\ncat").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.find.query = "cat".to_owned();
+        app.find.replacement = "dog".to_owned();
+        app.folder.open = true;
+        app.folder.folder = true;
+        app.folder.dir = dir.path().display().to_string();
+        app.handle(Action::RunFolderSearch, &ctx);
+        wait_search(&mut app);
+        app.replace_one_action();
+        assert_eq!(app.folder.status, t("請先在結果表格裡選取要取代的那一筆"));
+        app.goto_hit(0);
+        app.replace_one_action();
+        assert_eq!(app.doc.text(), "dog\ncat");
+        assert_eq!(app.folder.hits.len(), 1, "換掉的那一列拿掉了");
+        assert_eq!(app.editor.sel.range(), 4..7, "接著選到下一筆");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "cat\ncat", "只改分頁，沒有動磁碟");
     }
 
     #[test]
@@ -5234,7 +5625,7 @@ mod tests {
     #[test]
     fn tab_in_the_find_bar_only_switches_between_the_search_and_replace_fields() {
         let mut app = App::new(None, Settings::default());
-        app.find.open = true;
+        app.folder.open = true;
         let ctx = egui::Context::default();
         let frame = |app: &mut App, events: Vec<egui::Event>| {
             let mut raw = egui::RawInput::default();
@@ -5242,7 +5633,7 @@ mod tests {
             raw.events = events;
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::Panel::top("find").show(ui, |ui| {
-                    app.find_bar(ui);
+                    app.find_panel(ui);
                 });
                 egui::CentralPanel::default().show(ui, |_| {});
             });

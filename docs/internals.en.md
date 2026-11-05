@@ -44,17 +44,22 @@ The editor area is **custom-drawn** (`ui/src/editor/`) instead of using egui's b
 ### Find & Replace
 
 - **The keyboard only serves the two input fields**: pressing Tab (or Shift+Tab) in the search or replace field only switches between those two fields (and expands the replace row if it is collapsed); all the other buttons (options, previous / next, replace, close, ...) are mouse-only by default and are never reached by Tab.
-- Three options: regular expression, case-sensitive (off by default), and whole word. Search is live while you type and shows "n / total"; when nothing is left in one direction it wraps around and shows "wrapped".
+- Three options: regular expression, case-sensitive (off by default), and whole word. In current-document scope search is live while you type; when nothing is left in one direction it wraps around and shows "wrapped".
 - Hovering the "regular expression" button shows a syntax cheat sheet and a link to the full documentation (<https://docs.rs/regex/latest/regex/#syntax>); the tooltip stays open when the pointer moves onto it, so the link can be clicked.
 - **Regular expressions** use the Rust `regex` syntax (guaranteed linear time, so a badly written pattern cannot hang the editor); `^` and `$` work per line. In the replacement, `$1` and `${name}` insert capture groups, `\n` and `\t` mean newline and tab, and a literal `$` is written `$$`.
 - **Whole word**: the match must not be directly adjacent to a letter, digit, or underscore. Chinese has no spaces between words, so adjacent Han characters block each other; this option is usually not useful for Chinese words.
 - Changes made by replace and by macros can be undone with Ctrl+Z and redone with Ctrl+Y: a single replace, replace-all, and a whole macro run are one undo step each.
-- For files over 8 MiB the total count is not computed (shown as "—") so that typing does not rescan a huge file; the count is capped at 9999.
-- The found match becomes the editor selection (typing then replaces it); "next" continues from the end of the selection and "previous" from its start, so clicking somewhere yourself and pressing F3 continues from that caret. After closing the find bar with Esc the caret returns to the editor.
+- For documents over 8 MiB the result table in current-document scope is only recomputed when the search conditions change, so typing does not rescan a huge file for every character.
+- The found match becomes the editor selection (typing then replaces it); "next" continues from the end of the selection and "previous" from its start, so clicking somewhere yourself and pressing F3 continues from that caret. After closing the find panel with Esc the caret returns to the editor.
 
-### Find in Files
+### The find panel: scope and result table
 
-Ctrl+Shift+F opens the panel (pre-filled with the selected text and the folder of the current file): search text, three options (case-sensitive, whole word, regular expression), the folder, and a file-name filter (for example `*.rs;*.toml`). The search runs in the background and can be stopped at any time; clicking a result opens the file (or switches to it if it is already open) and selects the match.
+Find, replace and find in a folder share one panel at the bottom of the window (Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the folder scope, Ctrl+H expands the replace field); there is a single copy of the search text, options and replacement. The "folder" button on the second row switches the scope:
+
+- **Current document**: the in-memory content (including unsaved edits) is searched; the search is redone in the background whenever the conditions or the document content (buffer revision) change, and the selected table row follows the match selected in the editor.
+- **Folder**: the folder defaults to the folder of the active tab's file and follows tab switches until the user edits or picks a folder; "include subfolders" can be turned off. The search starts with Enter or the search button, runs in the background and can be stopped at any time, and results enter the table as they are found.
+
+Clicking a row of the result table (file name, line number, text around the match) opens the file (or switches to it if it is already open), selects the match and scrolls it into view. Replacing in folder scope: "replace this match" opens the file, replaces in its tab, rescans only that file and moves on to the next result; "replace all" asks for confirmation first, files that are open are changed in their tabs (undoable) and the others directly on disk (keeping encoding and line endings; files with undecodable bytes are left alone).
 
 - Files are decoded with automatic encoding detection (Big5, UTF-16, ... are searchable); binary files containing NUL, files over 20 MiB, and `.git` / `target` / `node_modules` folders are skipped.
 - Only the first match per line is listed; at most 5000 results, after which you are asked to narrow the scope.
