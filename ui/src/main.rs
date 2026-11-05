@@ -975,6 +975,17 @@ impl App {
         ctx.request_repaint();
     }
 
+    /// 重新搜尋或換搜尋範圍之前：取消目前命中的反白（編輯區的標示，以及停在那一筆上的選取）。
+    fn clear_hit_highlight(&mut self) {
+        if let Some(hit) = self.find.current_chars.clone() {
+            if self.editor.sel.range() == hit {
+                let head = self.editor.sel.head;
+                self.editor.set_caret(&mut self.doc.buffer, head, false);
+            }
+        }
+        self.find.invalidate();
+    }
+
     /// 資料夾範圍的預設資料夾：作用中分頁的檔案所在的資料夾（沒有檔案就用目前的工作資料夾）。
     fn default_search_dir(&self) -> String {
         self.doc
@@ -2053,12 +2064,14 @@ impl App {
             }
             Action::ToggleFolderSearch => self.toggle_folder_search(ctx),
             Action::RunFolderSearch => {
+                self.clear_hit_highlight();
                 let (query, opts) = (self.find.query.clone(), self.find.opts);
                 self.folder.start(ctx, &query, opts);
             }
             Action::StopFolderSearch => self.folder.stop(),
             Action::PickSearchFolder => self.pick_search_folder(),
             Action::SetFolderScope(on) => {
+                self.clear_hit_highlight();
                 self.folder.folder = on;
                 self.folder.clear();
                 if on {
