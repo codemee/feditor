@@ -44,6 +44,8 @@ pub struct FileGroup {
     pub count: usize,
 }
 
+type Conditions = (String, (bool, bool, bool), String, String, bool);
+
 pub struct FolderSearch {
     pub open: bool,
     /// 搜尋範圍：`true` 是資料夾，`false` 是目前文件。
@@ -65,10 +67,8 @@ pub struct FolderSearch {
     pub scroll_to: Option<(usize, bool)>,
     /// 這次搜尋的結果出齊後，表格是否已經先捲到目前畫面上的那一筆了。
     pub anchored: bool,
-    /// 使用者按 Enter／搜尋鈕開始了搜尋：結果出來之後，輸入焦點要移到命中項目。
-    pub focus_after_search: bool,
-    /// 結果出來了，下一個畫面把輸入焦點移到結果表格。
-    pub focus_table_pending: bool,
+    /// 上一次資料夾搜尋用的條件（搜尋字串、選項、資料夾、檔名過濾、是否含子資料夾）。
+    conditions: Option<Conditions>,
     /// 鍵盤焦點在結果表格上：上下鍵、PageUp／PageDown、Home／End 移動選取的那一筆。
     pub table_focus: bool,
     /// 檔案表格佔整個結果區的比例（使用者拖分隔條調的）；`None` 是預設：上下排依檔案數決定高度，左右排 40%。
@@ -101,8 +101,7 @@ impl Default for FolderSearch {
             status: String::new(),
             scroll_to: None,
             anchored: false,
-            focus_after_search: false,
-            focus_table_pending: false,
+            conditions: None,
             table_focus: false,
             split: None,
             table_rect: egui::Rect::NOTHING,
@@ -117,6 +116,15 @@ impl Default for FolderSearch {
 }
 
 impl FolderSearch {
+    fn conditions_for(&self, query: &str, search: SearchOptions) -> Conditions {
+        (query.to_owned(), (search.case_sensitive, search.whole_word, search.regex), self.dir.trim().to_owned(), self.filter.clone(), self.recursive)
+    }
+
+    /// 現在的搜尋條件和上一次資料夾搜尋用的一樣（結果還是對得上的）。
+    pub fn is_current(&self, query: &str, search: SearchOptions) -> bool {
+        self.conditions.as_ref() == Some(&self.conditions_for(query, search))
+    }
+
     pub fn is_running(&self) -> bool {
         self.running.is_some()
     }
@@ -131,13 +139,13 @@ impl FolderSearch {
         self.stamp = None;
         self.anchored = false;
         self.scroll_to = None;
-        self.focus_after_search = false;
     }
 
     /// 開始在資料夾裡搜尋（背景執行緒）。上一次還沒結束就先取消它。
     pub fn start(&mut self, ctx: &egui::Context, query: &str, search: SearchOptions) {
         self.clear();
         self.text_scope = false;
+        self.conditions = Some(self.conditions_for(query, search));
         self.root = PathBuf::from(self.dir.trim());
         if query.is_empty() {
             self.status = t("請輸入要搜尋的文字").to_owned();
@@ -457,6 +465,22 @@ mod tests {
         assert_eq!(fs.step(true), Some(2));
         fs.clear();
         assert_eq!(fs.step(false), None);
+    }
+
+    #[test]
+    fn the_search_remembers_its_conditions_so_enter_can_mean_next() {
+        let (_d, mut fs) = setup(&[("a.txt", "foo")]);
+        let opts = SearchOptions::default();
+        assert!(!fs.is_current("foo", opts), "還沒搜過");
+        go(&mut fs, "foo");
+        assert!(fs.is_current("foo", opts));
+        assert!(!fs.is_current("fo", opts), "改了搜尋字串");
+        assert!(!fs.is_current("foo", SearchOptions { regex: true, ..opts }), "改了選項");
+        fs.filter = "*.rs".into();
+        assert!(!fs.is_current("foo", opts), "改了檔名過濾");
+        fs.filter.clear();
+        fs.recursive = true;
+        assert!(!fs.is_current("foo", opts), "改了子資料夾");
     }
 
     #[test]

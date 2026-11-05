@@ -1007,6 +1007,8 @@ impl App {
         if self.folder.open && self.folder.folder {
             if let Some(i) = self.folder.step(backward) {
                 self.goto_hit(i);
+                // 開檔不要把輸入焦點搶去給編輯區：在搜尋框連按 Enter 要能一路走下去
+                self.pending_editor_focus = false;
             }
         } else {
             self.find_step(backward);
@@ -1071,9 +1073,6 @@ impl App {
             return;
         }
         self.folder.anchored = true;
-        if std::mem::take(&mut self.folder.focus_after_search) {
-            self.folder.focus_table_pending = true;
-        }
         self.sync_table_selection();
         if let Some(i) = self.folder.selected {
             self.folder.scroll_to = Some((i, true));
@@ -2216,7 +2215,6 @@ impl App {
                 self.clear_hit_highlight();
                 let (query, opts) = (self.find.query.clone(), self.find.opts);
                 self.folder.start(ctx, &query, opts);
-                self.folder.focus_after_search = true;
             }
             Action::StopFolderSearch => self.folder.stop(),
             Action::PickSearchFolder => self.pick_search_folder(),
@@ -3856,6 +3854,10 @@ impl App {
         let running = self.folder.is_running();
         let query_empty = self.find.query.is_empty();
         let can_step = if folder_scope { !self.folder.hits.is_empty() } else { !query_empty };
+        // 資料夾範圍：目前的搜尋條件就是上一次搜尋用的（而且有結果）：Enter 走下一筆，不再重搜
+        let search_is_current = folder_scope
+            && !self.folder.hits.is_empty()
+            && self.folder.is_current(&self.find.query, self.find.opts);
         let can_replace_one = if folder_scope { self.folder.selected.is_some() } else { !query_empty };
         let can_replace_all = if folder_scope { !self.folder.hits.is_empty() } else { !query_empty };
 
@@ -3906,7 +3908,8 @@ impl App {
                     )
                 });
                 if enter {
-                    action = Some(if folder_scope {
+                    // 資料夾範圍：條件改過（或還沒搜過）按 Enter 是搜尋，搜完之後再按 Enter 就是走下一筆
+                    action = Some(if folder_scope && !search_is_current {
                         Action::RunFolderSearch
                     } else if shift {
                         Action::FindPrev
@@ -4017,7 +4020,7 @@ impl App {
                 );
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if enter && (dir.lost_focus() || filter.lost_focus()) {
-                    action = Some(Action::RunFolderSearch);
+                    action = Some(if search_is_current { Action::FindNext } else { Action::RunFolderSearch });
                 }
             } else {
                 ui.label(egui::RichText::new(t("目前文件")).color(ui.visuals().weak_text_color()));
@@ -4736,15 +4739,6 @@ impl eframe::App for App {
             }
             self.sync_table_selection();
             self.anchor_results();
-            // 按 Enter／搜尋鈕開始搜尋，結果出來之後輸入焦點移到命中項目（上下鍵可以直接移動、Esc 關閉）
-            if std::mem::take(&mut self.folder.focus_table_pending) {
-                self.folder.table_focus = true;
-                ctx.memory_mut(|m| {
-                    if let Some(id) = m.focused() {
-                        m.surrender_focus(id);
-                    }
-                });
-            }
             // 輸入焦點在搜尋面板裡（任何一個輸入框、或結果表格）時，按 Esc 關閉面板
             let in_panel = self.folder.table_focus
                 || ctx.memory(|m| {
