@@ -89,6 +89,15 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
 }
 
+/// 一個有標題、有外框的區塊：上面是區塊名稱，下面是框起來的內容（填滿剩下的空間）。
+fn captioned_group(ui: &mut egui::Ui, caption: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.label(egui::RichText::new(caption).strong());
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_size(ui.available_size());
+        add(ui);
+    });
+}
+
 /// 結果表格標題列的高度。
 const TABLE_HEADER_H: f32 = 20.0;
 
@@ -139,8 +148,8 @@ fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJo
         color: ui.visuals().text_color(),
         ..Default::default()
     };
-    // 命中的字用警告色的底：選取的那一列底色是選取色，兩者要分得出來
-    let marked = egui::TextFormat { background: ui.visuals().warn_fg_color.gamma_multiply(0.5), ..plain.clone() };
+    // 命中的字只用一層淡淡的文字色當底（跟著配色走、不搶眼）；選取的那一列底色是選取色，疊上去仍分得出來
+    let marked = egui::TextFormat { background: ui.visuals().text_color().gamma_multiply(0.16), ..plain.clone() };
     let mut job = egui::text::LayoutJob::default();
     job.append(&seg(lead, start), 0.0, plain.clone());
     job.append(&seg(start, end), 0.0, marked);
@@ -4085,25 +4094,38 @@ impl App {
             .and_then(|s| groups.iter().position(|g| in_group(g, s)))
             .unwrap_or(0);
         let scroll = self.folder.scroll_to.take().map(|(i, _)| i);
+        // 寬而矮的窗格：兩個表格左右排；窄而高的窗格：上下排（窗格大小變了就跟著換）
+        let size = ui.available_size();
+        let side_by_side = size.x >= 560.0 && size.x > size.y * 1.3;
         if !self.folder.text_scope && !groups.is_empty() {
             let target = scroll.and_then(|i| groups.iter().position(|g| in_group(g, i)));
-            egui::Panel::top("search_files")
-                .resizable(true)
-                .default_size(130.0)
-                .size_range(60.0..=400.0)
-                .frame(egui::Frame::NONE)
-                .show(ui, |ui| {
+            let panel = if side_by_side {
+                egui::Panel::left("search_files_left")
+                    .default_size((size.x * 0.4).clamp(220.0, 420.0))
+                    .size_range(160.0..=size.x * 0.7)
+            } else {
+                egui::Panel::top("search_files_top")
+                    .default_size(150.0)
+                    .size_range(80.0..=(size.y - 100.0).max(80.0))
+            };
+            panel.resizable(true).frame(egui::Frame::NONE).show(ui, |ui| {
+                captioned_group(ui, t("檔案"), |ui| {
                     if let Some(a) = self.files_table(ui, &groups, shown, target) {
                         action = Some(a);
                     }
                 });
+                // 與下一個（或右邊的）表格隔開一點，才看得出是兩個獨立的區塊
+                ui.add_space(4.0);
+            });
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             let (start, count) = groups.get(shown).map_or((0, 0), |g| (g.start, g.count));
             let rel = scroll.filter(|i| *i >= start && *i < start + count).map(|i| i - start);
-            if let Some(a) = self.hits_table(ui, start, count, rel) {
-                action = Some(a);
-            }
+            captioned_group(ui, t("命中項目"), |ui| {
+                if let Some(a) = self.hits_table(ui, start, count, rel) {
+                    action = Some(a);
+                }
+            });
         });
         action
     }

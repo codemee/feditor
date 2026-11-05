@@ -57,6 +57,8 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("拖曳標題，可以把搜尋窗格移到別的窗格旁邊", "Drag the title to move the search pane next to another pane"),
     ("窗格太小，放不下尋找面板", "The pane is too small for the find panel"),
     ("筆數", "Hits"),
+    ("檔案", "Files"),
+    ("命中項目", "Hits"),
     // ── 巨集 ──
     ("不認得的編輯指令：{name}", "Unknown editor command: {name}"),
     ("不支援指令：{name}", "Unsupported command: {name}"),
