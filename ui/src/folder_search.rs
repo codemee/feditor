@@ -67,6 +67,8 @@ pub struct FolderSearch {
     pub anchored: bool,
     /// 鍵盤焦點在結果表格上：上下鍵、PageUp／PageDown、Home／End 移動選取的那一筆。
     pub table_focus: bool,
+    /// 檔案表格佔整個結果區的比例（使用者拖分隔條調的）；`None` 是預設：上下排依檔案數決定高度，左右排 40%。
+    pub split: Option<f32>,
     /// 結果表格上一個畫面佔的範圍（滑鼠點在表格外面就取消表格焦點）。
     pub table_rect: egui::Rect,
     /// 結果因為太多而被截斷。
@@ -96,6 +98,7 @@ impl Default for FolderSearch {
             scroll_to: None,
             anchored: false,
             table_focus: false,
+            split: None,
             table_rect: egui::Rect::NOTHING,
             truncated: false,
             root: PathBuf::new(),

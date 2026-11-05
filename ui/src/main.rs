@@ -103,6 +103,22 @@ fn captioned_group(ui: &mut egui::Ui, caption: &str, fill: bool, add: impl FnOnc
     });
 }
 
+/// 兩個表格中間的分隔條：滑鼠移上去變成調整大小的游標，中間畫三個小點提示可以拖。
+fn split_handle(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, horizontal_bar: bool) {
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(if horizontal_bar {
+            egui::CursorIcon::ResizeVertical
+        } else {
+            egui::CursorIcon::ResizeHorizontal
+        });
+    }
+    let color = ui.visuals().weak_text_color().gamma_multiply(if resp.hovered() || resp.dragged() { 1.0 } else { 0.6 });
+    for k in -1..=1 {
+        let off = k as f32 * 5.0;
+        let c = if horizontal_bar { rect.center() + egui::vec2(off, 0.0) } else { rect.center() + egui::vec2(0.0, off) };
+        ui.painter().circle_filled(c, 1.2, color);
+    }
+}
 /// 結果表格的交錯列底色（egui 內建的條紋用的 `faint_bg_color` 在多數配色下和背景幾乎一樣，看不出來）。
 fn set_stripe(ui: &mut egui::Ui) {
     let stripe = ui.visuals().text_color().gamma_multiply(0.07);
@@ -4095,46 +4111,94 @@ impl App {
             .and_then(|s| groups.iter().position(|g| in_group(g, s)))
             .unwrap_or(0);
         let scroll = self.folder.scroll_to.take().map(|(i, _)| i);
-        // 寬而矮的窗格：兩個表格左右排；窄而高的窗格：上下排（窗格大小變了就跟著換）
-        let size = ui.available_size();
+        // 寬而矮的窗格：兩個表格左右排；窄而高的窗格：上下排（窗格大小變了就跟著換）。
+        // 兩個表格中間有一條可以拖的分隔條，自由調整空間比；雙按分隔條回到預設（上下排時依檔案數決定高度）
+        let area = ui.available_rect_before_wrap();
+        let size = area.size();
         let side_by_side = size.x >= 560.0 && size.x > size.y * 1.3;
-        if !self.folder.text_scope && !groups.is_empty() {
-            let target = scroll.and_then(|i| groups.iter().position(|g| in_group(g, i)));
-            if side_by_side {
-                egui::Panel::left("search_files_left")
-                    .default_size((size.x * 0.4).clamp(220.0, 420.0))
-                    .size_range(160.0..=size.x * 0.7)
-                    .resizable(true)
-                    .frame(egui::Frame::NONE)
-                    .show(ui, |ui| {
-                        captioned_group(ui, t("檔案"), true, |ui| {
-                            if let Some(a) = self.files_table(ui, &groups, shown, target, None) {
-                                action = Some(a);
-                            }
-                        });
-                        ui.add_space(4.0); // 與右邊的表格隔開，看得出是兩個獨立的區塊
-                    });
-            } else {
-                // 上下排：檔案表格只要剛好放得下所有檔案的高度（有上限），命中表格緊接在後面
-                let pitch = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0 + ui.spacing().item_spacing.y;
-                let body_h = (groups.len() as f32 * pitch).min((size.y * 0.4 - TABLE_HEADER_H).max(pitch * 2.0));
-                captioned_group(ui, t("檔案"), false, |ui| {
-                    if let Some(a) = self.files_table(ui, &groups, shown, target, Some(body_h)) {
-                        action = Some(a);
-                    }
-                });
-                ui.add_space(4.0);
-            }
-        }
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-            let (start, count) = groups.get(shown).map_or((0, 0), |g| (g.start, g.count));
-            let rel = scroll.filter(|i| *i >= start && *i < start + count).map(|i| i - start);
+        let (start, count) = groups.get(shown).map_or((0, 0), |g| (g.start, g.count));
+        let rel = scroll.filter(|i| *i >= start && *i < start + count).map(|i| i - start);
+        if self.folder.text_scope || groups.is_empty() {
             captioned_group(ui, t("命中項目"), true, |ui| {
                 if let Some(a) = self.hits_table(ui, start, count, rel) {
                     action = Some(a);
                 }
             });
-        });
+            return action;
+        }
+        const HANDLE: f32 = 8.0;
+        let target = scroll.and_then(|i| groups.iter().position(|g| in_group(g, i)));
+        let mut new_split = None;
+        let mut reset = false;
+        if side_by_side {
+            let files_w = (size.x * self.folder.split.unwrap_or(0.4)).clamp(120.0, size.x - 120.0 - HANDLE);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.allocate_ui(egui::vec2(files_w, size.y), |ui| {
+                    captioned_group(ui, t("檔案"), true, |ui| {
+                        if let Some(a) = self.files_table(ui, &groups, shown, target, None) {
+                            action = Some(a);
+                        }
+                    });
+                });
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(HANDLE, size.y), egui::Sense::click_and_drag());
+                split_handle(ui, rect, &resp, false);
+                if resp.dragged() {
+                    new_split = ui.input(|i| i.pointer.interact_pos()).map(|p| (p.x - area.min.x) / size.x);
+                }
+                reset = resp.double_clicked();
+                ui.allocate_ui(egui::vec2((size.x - files_w - HANDLE).max(60.0), size.y), |ui| {
+                    captioned_group(ui, t("命中項目"), true, |ui| {
+                        if let Some(a) = self.hits_table(ui, start, count, rel) {
+                            action = Some(a);
+                        }
+                    });
+                });
+            });
+        } else {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            match self.folder.split {
+                Some(r) => {
+                    let files_h = (size.y * r).clamp(70.0, size.y - 70.0 - HANDLE);
+                    ui.allocate_ui(egui::vec2(size.x, files_h), |ui| {
+                        captioned_group(ui, t("檔案"), true, |ui| {
+                            if let Some(a) = self.files_table(ui, &groups, shown, target, None) {
+                                action = Some(a);
+                            }
+                        });
+                    });
+                }
+                None => {
+                    // 預設：檔案表格只要剛好放得下所有檔案的高度（有上限），命中表格緊接在後面
+                    let pitch = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0 + 4.0;
+                    let body_h = (groups.len() as f32 * pitch).min((size.y * 0.4 - TABLE_HEADER_H).max(pitch * 2.0));
+                    captioned_group(ui, t("檔案"), false, |ui| {
+                        if let Some(a) = self.files_table(ui, &groups, shown, target, Some(body_h)) {
+                            action = Some(a);
+                        }
+                    });
+                }
+            }
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(size.x, HANDLE), egui::Sense::click_and_drag());
+            split_handle(ui, rect, &resp, true);
+            if resp.dragged() {
+                new_split = ui.input(|i| i.pointer.interact_pos()).map(|p| (p.y - area.min.y) / size.y);
+            }
+            reset = resp.double_clicked();
+            let hits_h = ui.available_height().max(60.0);
+            ui.allocate_ui(egui::vec2(size.x, hits_h), |ui| {
+                captioned_group(ui, t("命中項目"), true, |ui| {
+                    if let Some(a) = self.hits_table(ui, start, count, rel) {
+                        action = Some(a);
+                    }
+                });
+            });
+        }
+        if reset {
+            self.folder.split = None;
+        } else if let Some(r) = new_split {
+            self.folder.split = Some(r.clamp(0.1, 0.9));
+        }
         action
     }
 
