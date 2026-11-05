@@ -1522,10 +1522,43 @@ impl App {
                 for picked in (self.pick_files_in)(&path) {
                     self.open_path(&picked);
                 }
+            } else if path.symlink_metadata().is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                self.open_new_file(&path);
             } else {
                 self.open_path(&path);
             }
         }
+    }
+
+    /// 命令列指定了還不存在的檔案（`feditor new.txt`）：開一份空白文件，分頁用指定的檔名、標成尚未儲存，
+    /// 存檔時才建立檔案。已經有同一個路徑的新檔案開著就切過去。
+    fn open_new_file(&mut self, path: &std::path::Path) {
+        let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && let Err(e) = document::validate_file_name(name)
+        {
+            self.push(LogKind::Error, tf!("無法開啟 {}：{}", path.display(), e));
+            return;
+        }
+        if let Some((pane, i)) = self.find_open_path(&path) {
+            self.focus_pane(pane);
+            self.switch_tab(i);
+            return;
+        }
+        let doc = Document::new_with_path(path.clone());
+        if self.is_pristine() {
+            self.doc = doc;
+            self.text_replaced();
+            self.pending_editor_focus = true;
+        } else {
+            self.tabs.push(&mut self.doc, &mut self.editor, doc);
+            self.tab_changed();
+        }
+        self.push(LogKind::Info, tf!("「{}」還不存在，已開啟空白文件，存檔時才會建立檔案", self.doc.name()));
+        if let Some(dir) = path.parent().filter(|d| !d.is_dir()) {
+            self.push(LogKind::Warn, tf!("資料夾 {} 不存在，存檔時會失敗", dir.display()));
+        }
+        self.save_session();
     }
 
     /// 回傳是否成功儲存。
@@ -5081,6 +5114,43 @@ mod tests {
         app.pending_editor_focus = false;
         app.close_tab(app.tabs.active());
         assert!(app.pending_editor_focus, "關閉分頁");
+    }
+
+    #[test]
+    fn a_path_that_does_not_exist_opens_a_blank_unsaved_document_named_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("a.txt");
+        std::fs::write(&existing, "aaa").unwrap();
+        let fresh = dir.path().join("brand new.py");
+        let mut app = App::new(None, Settings::default());
+        app.open_dropped(vec![fresh.clone()]);
+        assert_eq!(app.tabs.len(), 1, "空白文件直接用掉");
+        assert_eq!(app.doc.name(), "brand new.py");
+        assert!(app.doc.dirty && app.doc.buffer.is_empty(), "空白、尚未儲存");
+        assert_eq!(app.doc.path.as_deref(), Some(fresh.as_path()));
+        assert!(!fresh.exists(), "存檔之前不建立檔案");
+        assert!(app.pending_editor_focus);
+        // 再開一次同一個路徑：切過去，不會多開
+        app.open_dropped(vec![fresh.clone()]);
+        assert_eq!(app.tabs.len(), 1);
+        // 存在的檔案照舊開在新分頁；不存在的再開一個新分頁
+        app.open_dropped(vec![existing.clone(), dir.path().join("second.txt")]);
+        assert_eq!(app.tabs.len(), 3);
+        assert_eq!(app.doc.name(), "second.txt");
+        assert!(app.doc.dirty);
+        // 存檔會建立檔案
+        app.doc.buffer.insert(0, "hi");
+        app.doc.sync();
+        assert!(app.save());
+        assert_eq!(std::fs::read_to_string(dir.path().join("second.txt")).unwrap(), "hi");
+        assert!(!app.doc.dirty);
+        // 資料夾不存在：還是開，但提醒存檔會失敗
+        app.open_dropped(vec![dir.path().join("no such dir").join("x.txt")]);
+        assert!(app.log.iter().any(|(k, m)| *k == LogKind::Warn && m.contains("不存在")), "要有警告");
+        // 檔名不合法（Windows 保留名）：不開
+        let tabs = app.tabs.len();
+        app.open_dropped(vec![dir.path().join("CON")]);
+        assert_eq!(app.tabs.len(), tabs);
     }
 
     #[test]

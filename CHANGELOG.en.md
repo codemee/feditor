@@ -2,6 +2,14 @@
 
 # Changelog
 
+## Unreleased
+
+### Added
+- **A non-existent file given on the command line**: `feditor new.py` with a file that does not exist yet opens a blank document whose tab is named after it and is marked unsaved; the file is created when you save (like vim). A running FEditor that receives the forwarded path does the same. Until the file is created it is never reported as deleted, and emptying the text again still counts as unsaved; an invalid file name (e.g. a Windows reserved name) is not opened, and a missing folder gets a warning that saving will fail.
+
+### Fixed
+- **After opening a file the keyboard focus moves to the editor right away**: when the current document was a blank new one, the opened file reused it without a new tab, and in that case the focus stayed on the "Open" button so you had to click the editor before typing.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added

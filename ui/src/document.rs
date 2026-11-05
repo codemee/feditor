@@ -122,6 +122,17 @@ impl Document {
         Self::default()
     }
 
+    /// 還不存在的檔案：空白的文件，但已經有路徑（分頁用這個檔名）、標成尚未儲存；
+    /// 存檔時才真的建立檔案。在那之前磁碟上沒有檔案不算「被刪除」，內容改回空白也還是未儲存。
+    pub fn new_with_path(path: PathBuf) -> Self {
+        Self { path: Some(path), dirty: true, ..Self::default() }
+    }
+
+    /// 有路徑、但還沒存過（見 [`Document::new_with_path`]）。
+    fn is_pending_new_file(&self) -> bool {
+        self.path.is_some() && self.saved.is_none()
+    }
+
     /// 整份文字（換行為 `\n`）。內容沒變時直接回傳上次的快照，所以重複呼叫不貴。
     pub fn text(&mut self) -> &str {
         let rev = self.buffer.revision();
@@ -143,6 +154,7 @@ impl Document {
         // 位元組數相同才值得算雜湊（打字、刪除幾乎都會改變長度）
         let saved = self.saved.unwrap_or_else(|| fingerprint(&Buffer::new()));
         self.dirty = self.format_changed
+            || self.is_pending_new_file() // 檔案還沒建立：內容就算改回空白也還是未儲存
             || self.buffer.len_bytes() != saved.0
             || fingerprint(&self.buffer) != saved;
         true
@@ -161,6 +173,10 @@ impl Document {
     /// 檔案重新出現時狀態回到 [DiskState::Synced]。不會改動 disk_mtime，所以「改過」會一直回報到
     /// 使用者處理（重新載入或 [ccept_disk_version](Self::accept_disk_version)）為止。
     pub fn poll_disk(&mut self) -> DiskChange {
+        // 命令列指定的新檔案：磁碟上本來就還沒有，不是被刪除，也沒有可比對的版本
+        if self.is_pending_new_file() {
+            return DiskChange::None;
+        }
         let Some(path) = &self.path else { return DiskChange::None };
         match std::fs::metadata(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -642,5 +658,34 @@ mod tests {
         std::fs::remove_file(&p).unwrap();
         assert!(!doc.changed_on_disk());
         assert!(!Document::new().changed_on_disk());
+    }
+
+    #[test]
+    fn a_new_file_with_a_path_is_unsaved_until_it_is_saved_and_is_never_reported_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("new.txt");
+        let mut doc = Document::new_with_path(p.clone());
+        assert_eq!(doc.name(), "new.txt");
+        assert!(doc.dirty && doc.buffer.is_empty(), "空白、尚未儲存");
+        assert_eq!(doc.poll_disk(), DiskChange::None, "檔案還不存在不算被刪除");
+        assert_eq!(doc.disk_state, DiskState::Synced);
+        // 打字再刪掉：內容和空白文件一樣，但檔案還沒建立，所以還是未儲存
+        doc.buffer.insert(0, "x");
+        assert!(doc.sync());
+        doc.buffer.remove(0..1);
+        assert!(doc.sync());
+        assert!(doc.dirty, "改回空白也還是未儲存");
+        // 存檔：建立檔案、之後和一般文件一樣
+        doc.buffer.insert(0, "hello");
+        doc.sync();
+        doc.save().unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello");
+        assert!(!doc.dirty);
+        doc.buffer.remove(0..5);
+        doc.sync();
+        assert!(doc.dirty, "存過之後，改動又算未儲存");
+        doc.buffer.insert(0, "hello");
+        doc.sync();
+        assert!(!doc.dirty, "回到存檔時的內容就不算未儲存了");
     }
 }

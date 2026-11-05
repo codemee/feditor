@@ -18,7 +18,7 @@ Download the archive for your platform from [Releases](https://github.com/codeme
 - **macOS** (Apple Silicon): download `feditor-macos.dmg`, open it, and drag `FEditor.app` onto the "Applications" shortcut next to it. It is not notarized, so the first time you open it, right-click it in Finder and choose "Open", or run `xattr -dr com.apple.quarantine FEditor.app`.
 - **Linux**: unpack and run `./feditor`.
 
-You can also open files from the command line (`feditor path/to/file`) or drag files from the file manager into the window (several at once, one tab each). Dropping a **folder** shows the "Open file" dialog starting in that folder. See the [changelog](CHANGELOG.en.md) for what changed in each version.
+You can also open files from the command line (`feditor path/to/file`; when the file does not exist yet, a blank document opens with the tab named after it and marked unsaved, and the file is created when you save) or drag files from the file manager into the window (several at once, one tab each). Dropping a **folder** shows the "Open file" dialog starting in that folder. See the [changelog](CHANGELOG.en.md) for what changed in each version.
 
 ## Basics
 

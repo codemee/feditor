@@ -288,6 +288,8 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("例如 --port 8080 \"a b\"", "e.g. --port 8080 \"a b\""),
     ("執行", "Run"),
     ("清除", "Clear"),
+    ("「{}」還不存在，已開啟空白文件，存檔時才會建立檔案", "\"{}\" does not exist yet; opened a blank document, the file is created when you save"),
+    ("資料夾 {} 不存在，存檔時會失敗", "The folder {} does not exist, so saving will fail"),
     ("請先儲存檔案再執行", "Save the file before running it"),
     ("這個檔案類型還不支援在終端機執行", "This file type cannot be run in the terminal yet"),
     ("正在搜尋執行環境，請稍後再按一次", "Still searching for the runtime environment, press again in a moment"),
