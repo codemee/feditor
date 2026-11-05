@@ -315,17 +315,12 @@ impl App {
             }            panes.push(SessionPane { id, active, files, terminals });
         }
         let mut previews: Vec<SessionPreview> =
-            self.previews.iter().filter(|(_, p)| !p.search).map(|(id, _)| SessionPreview { id: *id, source: self.layout.focus }).collect();
+            self.previews.keys().map(|id| SessionPreview { id: *id, source: self.layout.focus }).collect();
         previews.sort_by_key(|p| p.id);
-        // 尋找面板的窗格不記進工作階段：版面存的是拿掉它之後的樣子
-        let mut root = self.layout.root.clone();
-        if let Some(search) = self.search_pane_id() {
-            root.remove(search);
-        }
         Session {
             panes,
             previews,
-            layout: Some(root.to_spec(&|id| self.is_preview(id))),
+            layout: Some(self.layout.root.to_spec(&|id| self.is_preview(id))),
             focus: self.layout.focus,
         }
     }
@@ -715,6 +710,9 @@ impl App {
             full.min + egui::vec2(AREA_INSET_X, 2.0),
             full.max - egui::vec2(AREA_INSET_X, 6.0),
         );
+        // 尋找面板停在視窗的一個邊緣、佔滿那一邊，剩下的空間才給窗格
+        let full_area = area;
+        let (dock, area) = self.split_search_dock(area);
         let arranged = self.layout.root.arrange(area, panes::MIN_PANE);
         let multi = arranged.panes.len() > 1;
         let several_tab_panes = self.tab_pane_count() > 1;
@@ -725,9 +723,7 @@ impl App {
             let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
             if let Some(pos) = pressed {
                 if let Some(&(id, _)) = arranged.panes.iter().find(|(_, r)| r.contains(pos)) {
-                    if self.is_search_pane(id) {
-                        // 尋找面板：裡面的輸入框自己管焦點，不動編輯區與預覽的焦點狀態
-                    } else if self.is_preview(id) {
+                    if self.is_preview(id) {
                         // 預覽窗格也能取得輸入焦點：編輯區放掉鍵盤焦點，縮放快捷鍵改調預覽的字級
                         self.preview_focused = true;
                         ctx.memory_mut(|m| m.surrender_focus(editor_id(self.layout.focus)));
@@ -763,9 +759,7 @@ impl App {
 
             // 窗格是圓角卡片：底色加框線，有焦點的窗格（有多個窗格時）框線用強調色，和分頁的圓角風格一致
             // 有鍵盤焦點的窗格框線用強調色：焦點在預覽時是預覽窗格，否則是有焦點的一般窗格
-            let focused = if self.is_search_pane(id) {
-                false
-            } else if self.is_preview(id) {
+            let focused = if self.is_preview(id) {
                 self.preview_focused
             } else {
                 multi && id == self.layout.focus && !self.preview_focused
@@ -785,12 +779,7 @@ impl App {
             // 預覽窗格：自己的標題列與內容，不能放分頁，也不參與焦點
             if self.is_preview(id) {
                 shapes.push((id, rect, 0.0));
-                let shown = if self.is_search_pane(id) {
-                    self.show_search_pane(&mut child, id, rect)
-                } else {
-                    self.show_preview_pane(&mut child, id, rect)
-                };
-                if let Some(a) = shown {
+                if let Some(a) = self.show_preview_pane(&mut child, id, rect) {
                     action = Some(a);
                 }
                 continue;
@@ -894,6 +883,9 @@ impl App {
         }
 
         if let Some(a) = self.drag_overlay(&ctx, &shapes) {
+            action = Some(a);
+        }
+        if let Some(a) = self.show_search_dock(ui, dock, full_area) {
             action = Some(a);
         }
         action

@@ -54,7 +54,7 @@ The editor area is **custom-drawn** (`ui/src/editor/`) instead of using egui's b
 
 ### The find panel: scope and result table
 
-Find, replace and find in a folder share one panel (a pane in the layout, opened by default to the right of the focused pane and draggable like the preview pane) (Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the folder scope, Ctrl+H expands the replace field); there is a single copy of the search text, options and replacement. The "folder" button on the second row switches the scope:
+Find, replace and find in a folder share one panel (docked to one edge of the window and taking that whole edge, on the right by default; drag the title to change edge and the divider to resize; it is not part of the pane layout tree, the remaining space goes to the panes, and it is not stored in the session) (Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the folder scope, Ctrl+H expands the replace field); there is a single copy of the search text, options and replacement. The "folder" button on the second row switches the scope:
 
 - **Current document**: the in-memory content (including unsaved edits) is searched; the search is redone in the background whenever the conditions or the document content (buffer revision) change, and the selected table row follows the match selected in the editor.
 - **Folder**: the folder defaults to the folder of the active tab's file and follows tab switches until the user edits or picks a folder; "include subfolders" can be turned off. The search starts with Enter or the search button, runs in the background and can be stopped at any time, and results enter the table as they are found.

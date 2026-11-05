@@ -15,6 +15,7 @@ mod macro_lib;
 mod macros;
 mod modal;
 mod pane_ops;
+mod search_dock;
 mod panes;
 mod preview;
 mod preview_pane;
@@ -89,6 +90,12 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
     text_w + spacing.icon_width + spacing.button_padding.x * 2.0 + spacing.item_spacing.x
 }
 
+/// 從目前位置往右到可見範圍（裁切範圍）邊緣的寬度：區域比內容窄、內容被裁掉的時候，
+/// 排版要用這個寬度才不會把右邊的欄位排到看不見的地方。
+fn visible_width(ui: &egui::Ui) -> f32 {
+    ui.available_width().min((ui.clip_rect().right() - ui.cursor().left()).max(0.0))
+}
+
 /// 一個有標題、有外框的區塊：上面是區塊名稱，下面是框起來的內容。`fill` 為真時填滿剩下的空間，
 /// 否則只有寬度撐滿、高度依內容。
 fn captioned_group(ui: &mut egui::Ui, caption: &str, fill: bool, add: impl FnOnce(&mut egui::Ui)) {
@@ -97,7 +104,7 @@ fn captioned_group(ui: &mut egui::Ui, caption: &str, fill: bool, add: impl FnOnc
         if fill {
             ui.set_min_size(ui.available_size());
         } else {
-            ui.set_min_width(ui.available_width());
+            ui.set_min_width(visible_width(ui));
         }
         add(ui);
     });
@@ -594,6 +601,8 @@ enum Action {
     OpenLocalFile(PathBuf),
     /// 開始拖曳一個預覽窗格。
     BeginPreviewDrag(panes::PaneId),
+    /// 開始拖尋找面板的標題（換停靠的邊）。
+    BeginSearchDrag,
     /// 把預覽窗格（第一個）搬到一般窗格（第二個）的某一側。
     MovePreview(panes::PaneId, panes::PaneId, panes::Side),
     /// 開始拖曳某個窗格的某個分頁。
@@ -792,6 +801,8 @@ struct App {
     capturing_shortcut: Option<usize>,
     /// 跨檔搜尋。
     folder: folder_search::FolderSearch,
+    /// 尋找面板停在視窗的哪一邊、多大。
+    dock: search_dock::SearchDock,
     /// 要不要把開啟的分頁記到工作階段檔（測試時關掉，免得寫到使用者的設定資料夾）。
     session_enabled: bool,
     /// 上次檢查外部變更的時間，以及當時視窗有沒有焦點。
@@ -849,6 +860,7 @@ impl App {
             macro_anchor: None,
             capturing_shortcut: None,
             folder: folder_search::FolderSearch::default(),
+            dock: search_dock::SearchDock::default(),
             session_enabled: false,
             last_disk_check: Instant::now(),
             was_focused: true,
@@ -2307,6 +2319,7 @@ impl App {
                 }
             }
             Action::BeginPreviewDrag(id) => self.begin_preview_drag(id),
+            Action::BeginSearchDrag => self.dock.dragging = true,
             Action::MovePreview(id, target, side) => self.move_preview(id, target, side),
             Action::BeginTabDrag(pane, i) => self.begin_tab_drag(pane, i),
             Action::MoveTab(pane, i, target) => self.move_tab(pane, i, target),
@@ -3752,7 +3765,7 @@ impl App {
     }
 
     /// 尋找面板的窗格：標題列（拖曳標題可以把它移到別的窗格旁邊）加面板內容。
-    fn show_search_pane(&mut self, ui: &mut egui::Ui, id: panes::PaneId, rect: egui::Rect) -> Option<Action> {
+    pub(crate) fn show_search_pane(&mut self, ui: &mut egui::Ui, rect: egui::Rect) -> Option<Action> {
         let mut action = None;
         let framed = egui::Frame::new()
             .inner_margin(egui::Margin { left: 12, right: 8, top: 5, bottom: 0 })
@@ -3768,9 +3781,9 @@ impl App {
                     );
                     let r = r
                         .on_hover_cursor(egui::CursorIcon::Grab)
-                        .on_hover_text(t("拖曳標題，可以把搜尋窗格移到別的窗格旁邊"));
+                        .on_hover_text(t("拖曳標題，可以把搜尋面板移到視窗的另一個邊緣"));
                     if r.drag_started() {
-                        action = Some(Action::BeginPreviewDrag(id));
+                        action = Some(Action::BeginSearchDrag);
                     }
                 });
             });
@@ -3861,7 +3874,7 @@ impl App {
             }
 
             // 搜尋框吃剩下的寬度（窄的時候先縮搜尋框，右邊的按鈕才不會被擠出窗格）
-            let query_w = (ui.available_width() - SEARCH_ROW_BUTTONS_W).clamp(40.0, 260.0);
+            let query_w = (visible_width(ui) - SEARCH_ROW_BUTTONS_W).clamp(40.0, 260.0);
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.find.query)
                     .id(find_input_id())
@@ -3969,7 +3982,7 @@ impl App {
                     action = Some(Action::SetRecursive(recursive));
                 }
                 // 窄的時候資料夾與檔名過濾的輸入框一起縮（選擇資料夾鈕與「檔名」標籤固定要有位置）
-                let room = (ui.available_width() - 80.0).max(60.0);
+                let room = (visible_width(ui) - 80.0).max(60.0);
                 let filter_w = (room * 0.4).clamp(40.0, 150.0);
                 let dir = ui.add(
                     egui::TextEdit::singleline(&mut self.folder.dir)
@@ -4222,7 +4235,7 @@ impl App {
         // 筆數欄固定寬度，檔名欄吃剩下的（窄的時候先縮檔名，筆數不會被擠出去）
         const COUNT_W: f32 = 44.0;
         // 要扣掉欄與欄之間的間距、表格的垂直捲軸與框內的邊距，不然筆數欄會被擠出表格外面
-        let name_w = (ui.available_width() - COUNT_W - 28.0).max(30.0);
+        let name_w = (visible_width(ui) - COUNT_W - 28.0).max(30.0);
         set_stripe(ui);
         let mut table = TableBuilder::new(ui)
             .id_salt("search_files_table")
@@ -4845,8 +4858,6 @@ impl eframe::App for App {
                 }
             });
         }
-        // 尋找面板是版面裡的一個窗格（可以像預覽一樣拖到別的位置）：開關時在這裡增減窗格
-        self.sync_search_pane();
         // 窗格是有框線的卡片，不需要工具列下面的分隔線；上方也不多留邊，離工具列近一點（左右與下方維持原本的空隙）
         let central = egui::Frame::central_panel(ui.style())
             .inner_margin(egui::Margin { left: CENTRAL_SIDE_MARGIN, right: CENTRAL_SIDE_MARGIN, top: 0, bottom: 8 });
@@ -5030,28 +5041,25 @@ mod tests {
     }
 
     #[test]
-    fn the_find_panel_is_a_pane_that_opens_below_closes_and_stays_out_of_the_session() {
+    fn the_find_panel_docks_to_a_window_edge_and_leaves_the_rest_to_the_panes() {
         let ctx = egui::Context::default();
         let mut app = app_with("x");
-        let editor_pane = app.layout.focus;
+        assert_eq!(app.dock.edge, search_dock::DockEdge::Right, "預設在右邊");
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 600.0));
+        assert_eq!(app.split_search_dock(area), (None, area), "沒開的時候不佔空間");
         app.handle(Action::Find { replace: false }, &ctx);
-        app.sync_search_pane();
-        let id = app.search_pane_id().expect("開啟後版面裡多了尋找窗格");
-        assert!(app.is_preview(id) && app.is_search_pane(id));
-        assert_eq!(app.layout.root.leaves(), vec![editor_pane, id], "在有焦點的窗格右邊");
-        assert_eq!((app.tab_pane_count(), app.preview_id()), (1, None), "不算一般窗格，也不是預覽");
-        let session = app.session_all();
-        assert!(session.previews.is_empty());
-        assert!(!session.layout.clone().unwrap_or_default().contains(&format!("W{id}")), "不記進工作階段");
-        // 拖到編輯窗格的右邊
-        app.move_preview(id, editor_pane, panes::Side::Right);
-        assert_eq!(app.layout.root.leaves(), vec![editor_pane, id]);
+        let (geom, rest) = app.split_search_dock(area);
+        let geom = geom.expect("開了就佔一邊");
+        assert_eq!(geom.rect.height(), 600.0, "佔滿整個高度");
+        assert!(rest.right() <= geom.rect.left(), "剩下的空間在它旁邊");
+        assert_eq!(app.layout.root.leaves().len(), 1, "不在窗格版面裡");
+        app.dock.edge = search_dock::DockEdge::Bottom;
+        let (geom, rest) = app.split_search_dock(area);
+        assert_eq!(geom.unwrap().rect.width(), 1000.0, "停在下方就佔滿整個寬度");
+        assert!(rest.bottom() <= 600.0 - app.dock.height + 0.5);
         app.handle(Action::CloseFind, &ctx);
-        app.sync_search_pane();
-        assert!(app.search_pane_id().is_none());
-        assert_eq!(app.layout.root.leaves(), vec![editor_pane]);
+        assert_eq!(app.split_search_dock(area).0.map(|g| g.rect), None);
     }
-
     #[test]
     fn the_hit_highlight_goes_away_when_the_selection_moves_elsewhere() {
         let mut app = app_with("cat dog cat");
