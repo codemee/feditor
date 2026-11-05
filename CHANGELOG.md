@@ -6,6 +6,7 @@
 
 ### 新增
 - **預設開啟（雙按檔案就用 FEditor 開啟）**：設定面板「介面」新增「預設開啟」開關與類別勾選（程式碼、設定檔、標記語言、純文字，預設只勾前兩類；`.bat`／`.cmd`／`.exe` 這類雙按就是執行的檔案不在裡面）。Windows 登記在目前使用者的登錄檔，FEditor 出現在「開啟方式」與「預設應用程式」，還沒有預設程式的副檔名直接設成 FEditor，使用者已經自己選過的系統不允許程式改，會列出來並開啟系統的「預設應用程式」頁請使用者確認；macOS 設定 Launch Services 的預設處理程式（原本的備份起來，取消時還原）；Linux 寫 `feditor.desktop` 與 `mimeapps.list`。設定檔新增 `file_assoc`、`file_assoc_groups`。
+- **沒有副檔名的 shell 設定檔也認得**：`.zshrc`、`.bashrc`、`.zprofile`、`.bash_profile`、`.profile`、`.zshenv` 等（有沒有開頭的點都算）會判斷成 Shell 語言，有語法上色，也能在「檔案類型」頁個別設定。它們不會被當成可以執行的腳本（沒有 shebang、副檔名也不明確）。
 - **shell 腳本也能執行，狀態列顯示直譯器**：依 shebang（`#!/bin/bash`、`#!/usr/bin/env zsh`…）、沒有 shebang 再依副檔名（`.sh`／`.bash` 用 bash、`.zsh` 用 zsh、`.ps1`／`.psm1` 用 PowerShell、`.bat`／`.cmd` 用 cmd）決定直譯器，在 `PATH` 找，背景確認能執行並顯示版本，可手動改選。Windows 的 bash 會略過 `system32`、`WindowsApps` 裡 WSL 的 `bash.exe`，改用 `git-bash`（scoop 的 shim 也行）所在的 Git 裡真正的 `bash.exe`。副檔名不明確又沒有 shebang 的不當成可執行的腳本。沒有副檔名但有 shebang 的檔案（Python、shell）也能執行。
 - **命令列指定不存在的檔案**：`feditor new.py` 這種指定了還不存在的檔案，會開一份空白文件，分頁用指定的檔名、標成尚未儲存，存檔時才建立檔案（和 vim 的行為一樣）。已經開著的 FEditor 收到轉交的路徑也一樣處理。檔案還沒建立前不會被當成「被刪除」，內容改回空白也還是未儲存；檔名不合法（例如 Windows 保留名）不會開，資料夾不存在會提醒存檔會失敗。
 
