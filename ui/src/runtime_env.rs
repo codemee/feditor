@@ -817,7 +817,9 @@ mod tests {
             std::fs::write(d.join(if cfg!(windows) { "bash.exe" } else { "bash" }), "").unwrap();
         }
         let path = std::env::join_paths([&sys, &apps]).unwrap();
-        assert!(discover(&BASH, root.path(), None, &no_env, Some(&path)).is_empty(), "WSL 的 bash 入口不算");
+        // 機器上若本來就裝了 Git（Windows 會另外找它的預設安裝位置），那些候選不算在內：只看 PATH 上的 WSL 入口有沒有混進來
+        let found = discover(&BASH, root.path(), None, &no_env, Some(&path));
+        assert!(found.iter().all(|c| !c.program.starts_with(&sys) && !c.program.starts_with(&apps)), "WSL 的 bash 入口不算：{found:?}");
         // 一般路徑上的 bash 照常找得到
         let good = root.path().join("bin");
         std::fs::create_dir_all(&good).unwrap();
@@ -844,8 +846,9 @@ mod tests {
             std::fs::write(shims.join("git-bash.shim"), format!("path = \"{}\"\n", git.join("git-bash.exe").display())).unwrap();
             let path = std::env::join_paths([&sys, &shims]).unwrap();
             let found = discover(&BASH, root.path(), None, &no_env, Some(&path));
-            assert_eq!(found.len(), 1, "{found:?}");
-            assert_eq!((found[0].program.clone(), found[0].origin.as_str()), (git.join("bin").join("bash.exe"), "git-bash"));
+            // 第一個就是 git-bash 所在的 Git 裡的 bash（機器上若另外裝了 Git，它的預設位置會排在後面）
+            assert_eq!((found[0].program.clone(), found[0].origin.as_str()), (git.join("bin").join("bash.exe"), "git-bash"), "{found:?}");
+            assert!(found.iter().all(|c| !c.program.starts_with(&sys)), "{found:?}");
         }
     }
 
