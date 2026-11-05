@@ -645,6 +645,9 @@ pub fn language_for_name(name: &str) -> Option<&'static Language> {
         "py" | "pyw" => &PYTHON,
         "go" => &GO,
         "sh" | "bash" | "zsh" | "ps1" | "psm1" | "bat" | "cmd" => &SHELL,
+        // 沒有副檔名的 shell 設定檔：.zshrc、.bashrc、.profile 等（有沒有開頭的點都算）
+        "zshrc" | "zshenv" | "zprofile" | "zlogin" | "zlogout" | "bashrc" | "bash_profile"
+        | "bash_login" | "bash_logout" | "bash_aliases" | "profile" | "kshrc" => &SHELL,
         "sql" => &SQL,
         "css" | "scss" | "less" => &CSS,
         "lua" => &LUA,
@@ -1566,5 +1569,17 @@ capital_types = true
         assert_eq!(p("ZZFILE"), Some("Zed"), "完整檔名也可以");
         assert_eq!(p("x.lua"), Some("MyLua"), "自訂語言優先於內建");
         assert_eq!(p("x.rs"), Some("Rust"));
+    }
+}
+
+#[cfg(test)]
+mod dotfile_tests {
+    use super::*;
+
+    #[test]
+    fn shell_rc_files_without_extension_are_shell() {
+        for n in [".zshrc", ".bashrc", ".zprofile", ".bash_profile", ".profile", ".zshenv", "zshrc"] {
+            assert_eq!(language_for_name(n).map(|l| l.name), Some(SHELL.name), "{n}");
+        }
     }
 }
