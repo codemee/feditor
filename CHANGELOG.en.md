@@ -2,19 +2,20 @@
 
 # Changelog
 
-## Unreleased
+## [0.8.0] - 2026-11-05
 
-### Changed
-- **Find, replace and find in a folder are now one panel** (docked to one edge of the window and taking that whole edge, on the right by default; drag the title to move it to the top, bottom, left or right edge; the remaining space is what the other panes get): Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the scope set to a folder, and Ctrl+H also expands the replace field; the old find bar at the top is gone, and the search text, options and replacement exist only once. The two search buttons on the toolbar are merged into one.
-- **The scope can be switched**: the second row has new "folder" and "include subfolders" state buttons. With the folder off, the current document (including unsaved content) is searched as you type and the result table follows the document; with it on, a folder is searched, by default the folder of the active tab's file (it follows tab switches until you edit or pick a folder yourself), and "include subfolders" is off by default.
-- **Results are shown in two stacked tables**: files on top (file name, hit count) and the hits of the selected file below (line number and the text around the match, highlighted), and rows appear one by one while the search is still running; clicking a row opens the file and puts the caret on the match, scrolled into view; F3 / Shift+F3 move to the next / previous result.
+### Added
+- **Find, replace and find in a folder are now one panel**: Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the scope set to a folder, and Ctrl+H also expands the replace field; the search text, options and replacement exist only once, the old find bar at the top is gone, and the two search buttons on the toolbar are merged into one. The panel is docked to one edge of the window and takes that whole edge (on the right by default); the remaining space is what the other panes get. Drag the panel's title to move it to the top, bottom, left or right edge, and drag the divider between it and the other panes to resize it.
+- **The scope can be switched**: the "folder" and "include subfolders" state buttons on the second row. With the folder off, the current document (including unsaved content) is searched as you type; with it on, a folder is searched, by default the folder of the active tab's file (it follows tab switches until you edit or pick a folder yourself), and "include subfolders" is off by default.
+- **Results are shown in two tables**: files (file name, hit count) and the hits of the selected file (line number and the text around the match, the match colored), each with a caption and a frame; a wide, short panel puts them side by side and a narrow, tall one stacks them, the divider between them can be dragged to change the ratio (double-click to reset), and when stacked the file table is only as tall as its files need. Folder results appear while the search is still running; click a file or a hit to open it with the caret on the match, scrolled into view; when the search finishes the table first scrolls to the hit on screen, or the first hit is opened if the current file has none. When a table has focus the arrow keys, PageUp / PageDown and Home / End move through the hits, and F3 / Shift+F3 move to the next / previous result.
+- **Enter in folder scope**: after the conditions change, Enter searches; once searched, Enter steps to the next hit (Shift+Enter the previous one) and the input focus stays in the field; Esc closes the panel from anywhere inside it.
 - **Folder scope can replace too**: "replace this match" opens the file, replaces in its tab and moves on to the next result; "replace all" asks first, files open in tabs are changed in their tabs (undoable) and the others are written to disk directly (keeping encoding and line endings).
-
-- **The search panel position is remembered**: the edge it is docked to, its width (left/right edge) or height (top/bottom edge), and the split between the two result tables are saved in the settings file (`search_dock`, `search_dock_width`, `search_dock_height`, `search_split`) and restored on the next start; whether the panel is open is not remembered, it always starts closed.
+- **The search panel layout is remembered**: the docked edge, the width (left/right edge) or height (top/bottom edge), and the split between the two tables are saved in the settings file (`search_dock`, `search_dock_width`, `search_dock_height`, `search_split`) and restored on the next start; whether the panel is open is not remembered.
+- **Search hits in the editor are marked with a rounded box**, the mark goes away when you click elsewhere in the editor, and the current highlight is cleared before searching again or switching the scope.
 
 ### Fixed
 - The search button of the folder search panel did not match the other search options in size and position; it is now the same size and sits right after the options.
-
+- When the panel gets narrow the search box shrinks first (only when the option buttons have no room left) and the other fields (folder, file filter, file name column) shrink too, so buttons and the hit counts are no longer pushed out of the panel.
 ## [0.7.0] - 2026-11-05
 
 ### Added
@@ -199,6 +200,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.8.0]: https://github.com/codemee/feditor/releases/tag/v0.8.0
 [0.7.0]: https://github.com/codemee/feditor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0
 [0.5.1]: https://github.com/codemee/feditor/releases/tag/v0.5.1
