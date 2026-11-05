@@ -79,7 +79,7 @@ impl Default for FolderSearch {
         Self {
             open: false,
             folder: false,
-            recursive: true,
+            recursive: false,
             dir: String::new(),
             dir_custom: false,
             filter: String::new(),
@@ -391,11 +391,11 @@ mod tests {
     fn subfolders_follow_the_recursive_switch() {
         let (_d, mut fs) = setup(&[("a.txt", "foo"), ("sub/b.txt", "foo")]);
         go(&mut fs, "foo");
+        assert_eq!(fs.hits.len(), 1, "預設不含子資料夾");
+        fs.recursive = true;
+        go(&mut fs, "foo");
         assert_eq!(fs.hits.len(), 2);
         assert_eq!(fs.display_path(&fs.hits[1]), format!("sub{}b.txt", std::path::MAIN_SEPARATOR));
-        fs.recursive = false;
-        go(&mut fs, "foo");
-        assert_eq!(fs.hits.len(), 1);
     }
 
     #[test]

@@ -88,7 +88,7 @@ The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's defa
 ## Find & Replace
 
 - Find, replace, and find in a folder are all in the **same panel** (at the bottom of the window): Ctrl+F opens it and searches the current document, Ctrl+Shift+F opens it with the scope set to a folder, and Ctrl+H also expands the replace field.
-- The scope is switched with the "folder" button on the second row: when off, the current document (including unsaved content) is searched as you type; when on, a folder is searched (by default the folder of the current tab's file, which you can change), the "include subfolders" button next to it decides whether subfolders are entered, and Enter or the search button starts the search.
+- The scope is switched with the "folder" button on the second row: when off, the current document (including unsaved content) is searched as you type; when on, a folder is searched (by default the folder of the current tab's file, which you can change), the "include subfolders" button next to it (off by default) decides whether subfolders are entered, and Enter or the search button starts the search.
 - Results are shown in a table: file name, line number, and the text around the match (the match itself is highlighted). In folder scope the results appear while the search is still running; click a row to open that file with the caret on the match, and F3 / Shift+F3 move to the next / previous result.
 - Tab in the search or replace box only moves between those two boxes; the other buttons are meant to be clicked with the mouse.
 - Three options: regular expression, match case (off by default), whole word; it wraps around when nothing is found. Hovering over the "regular expression" button shows a syntax cheat sheet.

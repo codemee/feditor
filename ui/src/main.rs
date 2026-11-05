@@ -1018,7 +1018,13 @@ impl App {
             }
         }
         match target {
-            Some(i) => self.folder.scroll_to = Some((i, true)),
+            Some(i) => {
+                // 資料夾範圍：游標不在命中上時，也把目前檔案裡最近的那一筆標成選取的列（不移動編輯區）
+                if self.folder.folder {
+                    self.folder.selected = Some(i);
+                }
+                self.folder.scroll_to = Some((i, true));
+            }
             // 資料夾範圍而且目前的檔案沒有命中：直接開啟第一筆（焦點留在搜尋面板，不搶去給編輯區）
             None if self.folder.folder => {
                 self.goto_hit(0);
