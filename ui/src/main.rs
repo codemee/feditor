@@ -103,7 +103,8 @@ fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJo
         color: ui.visuals().text_color(),
         ..Default::default()
     };
-    let marked = egui::TextFormat { background: ui.visuals().selection.bg_fill, ..plain.clone() };
+    // 命中的字用警告色的底：選取的那一列底色是選取色，兩者要分得出來
+    let marked = egui::TextFormat { background: ui.visuals().warn_fg_color.gamma_multiply(0.5), ..plain.clone() };
     let mut job = egui::text::LayoutJob::default();
     job.append(&seg(lead, start), 0.0, plain.clone());
     job.append(&seg(start, end), 0.0, marked);
@@ -4030,10 +4031,17 @@ impl App {
                     row.set_selected(selected == Some(i));
                     // 交錯的列底色（egui 內建的條紋在多數配色下看不出來）；選取的那列用選取色
                     let paint = move |ui: &egui::Ui| {
-                        if i % 2 == 1 && selected != Some(i) {
+                        let color = if selected == Some(i) {
+                            Some(ui.visuals().selection.bg_fill)
+                        } else if i % 2 == 1 {
+                            Some(stripe)
+                        } else {
+                            None
+                        };
+                        if let Some(color) = color {
                             let gap = ui.spacing().item_spacing;
                             let rect = ui.max_rect().expand2(egui::vec2(gap.x / 2.0, gap.y / 2.0));
-                            ui.painter().rect_filled(rect, 0.0, stripe);
+                            ui.painter().rect_filled(rect, 0.0, color);
                         }
                     };
                     row.col(|ui| {
