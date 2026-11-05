@@ -53,6 +53,9 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("檔案含有無法解讀的位元組，不能安全改寫", "The file contains bytes that cannot be decoded, so it cannot be rewritten safely"),
     ("無法取代「{}」：{}", "Cannot replace in \"{}\": {}"),
     ("要把 {count} 個檔案裡符合「{query}」的文字全部換成「{repl}」嗎？\n\n其中 {open} 個已經開在分頁裡，會改在分頁內進行（可以復原，尚未存檔）；其餘 {rest} 個會直接寫入磁碟，無法復原。", "Replace every match of \"{query}\" with \"{repl}\" in {count} files?\n\n{open} of them are open in tabs and will be changed there (undoable, not saved yet); the other {rest} will be written to disk directly and cannot be undone."),
+    ("搜尋", "Search"),
+    ("拖曳標題，可以把搜尋窗格移到別的窗格旁邊", "Drag the title to move the search pane next to another pane"),
+    ("窗格太小，放不下尋找面板", "The pane is too small for the find panel"),
     // ── 巨集 ──
     ("不認得的編輯指令：{name}", "Unknown editor command: {name}"),
     ("不支援指令：{name}", "Unsupported command: {name}"),

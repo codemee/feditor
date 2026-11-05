@@ -41,11 +41,19 @@ pub struct PreviewPane {
     pending: Option<Pending>,
     /// 文字從什麼時候開始和畫面上的預覽不一致（用來延遲轉換）。
     dirty_since: Option<Instant>,
+    /// 這個窗格是尋找面板（不是預覽）：和預覽一樣不放分頁、可以拖到版面的任何位置，
+    /// 但內容是搜尋面板，也不存進工作階段。
+    pub search: bool,
 }
 
 impl PreviewPane {
     pub fn new(source: PaneId) -> Self {
-        Self { source, shown: None, pending: None, dirty_since: None }
+        Self { source, shown: None, pending: None, dirty_since: None, search: false }
+    }
+
+    /// 尋找面板用的窗格。
+    pub fn search_pane(source: PaneId) -> Self {
+        Self { search: true, ..Self::new(source) }
     }
 
     /// 目前畫面上的預覽內容。
@@ -75,9 +83,45 @@ impl App {
         self.layout.root.leaves().into_iter().filter(|id| !self.is_preview(*id)).count()
     }
 
-    /// 預覽窗格的編號（整個程式只有一個）。
+    /// 預覽窗格的編號（整個程式只有一個；尋找面板的窗格不算）。
     pub(crate) fn preview_id(&self) -> Option<PaneId> {
-        self.previews.keys().min().copied()
+        self.previews.iter().filter(|(_, p)| !p.search).map(|(id, _)| *id).min()
+    }
+
+    /// 尋找面板的窗格編號。
+    pub(crate) fn search_pane_id(&self) -> Option<PaneId> {
+        self.previews.iter().find(|(_, p)| p.search).map(|(id, _)| *id)
+    }
+
+    pub(crate) fn is_search_pane(&self, id: PaneId) -> bool {
+        self.previews.get(&id).is_some_and(|p| p.search)
+    }
+
+    /// 讓版面裡有沒有尋找面板的窗格跟 `folder.open` 一致：要開就在有焦點的窗格下方切出來
+    /// （之後可以拖到別的位置），要關就拿掉。
+    pub(crate) fn sync_search_pane(&mut self) {
+        match (self.folder.open, self.search_pane_id()) {
+            (true, None) => {
+                let focus = self.layout.focus;
+                let rect = self.pane_rects.iter().find(|(id, _)| *id == focus).map(|(_, r)| *r);
+                if rect.is_some_and(|r| !panes::can_split(r, Side::Bottom)) {
+                    self.push(LogKind::Warn, t("窗格太小，放不下尋找面板"));
+                    self.folder.open = false;
+                    return;
+                }
+                let id = self.layout.alloc_id();
+                if self.layout.root.split_with_ratio(focus, Side::Bottom, id, Some(0.62)) {
+                    self.previews.insert(id, PreviewPane::search_pane(focus));
+                } else {
+                    self.folder.open = false;
+                }
+            }
+            (false, Some(id)) => {
+                self.previews.remove(&id);
+                self.layout.root.remove(id);
+            }
+            _ => {}
+        }
     }
 
     fn source_doc(&self, source: PaneId) -> Option<&Document> {
@@ -101,7 +145,7 @@ impl App {
         if !self.previews.contains_key(&id) {
             return;
         }
-        let name = self.doc.name();
+        let name = if self.is_search_pane(id) { t("搜尋").to_owned() } else { self.doc.name() };
         self.tab_drag = Some(crate::pane_ops::TabDrag { pane: id, index: 0, label: name, preview: true });
     }
 

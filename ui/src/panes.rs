@@ -86,6 +86,11 @@ impl Node {
 
     /// 把窗格 `target` 往 `side` 切開，新窗格 `new_id` 放在那一側。找不到 `target` 回傳 `false`。
     pub fn split(&mut self, target: PaneId, side: Side, new_id: PaneId) -> bool {
+        self.split_with_ratio(target, side, new_id, None)
+    }
+
+    /// 同 [`Node::split`]，並指定切開後「原本的窗格」佔的比例（`None` 是對半）。
+    pub fn split_with_ratio(&mut self, target: PaneId, side: Side, new_id: PaneId, keep: Option<f32>) -> bool {
         match self {
             Node::Leaf(id) if *id == target => {
                 let (axis, first, second) = match side {
@@ -93,16 +98,24 @@ impl Node {
                     Side::Right => (Axis::Horizontal, target, new_id),
                     Side::Bottom => (Axis::Vertical, target, new_id),
                 };
+                // 第一個子節點佔的比例：原本的窗格在第一個就是 keep，在第二個就是 1 - keep
+                let ratio = match keep {
+                    Some(k) if first == target => k,
+                    Some(k) => 1.0 - k,
+                    None => 0.5,
+                };
                 *self = Node::Split {
                     axis,
-                    ratio: 0.5,
+                    ratio,
                     first: Box::new(Node::Leaf(first)),
                     second: Box::new(Node::Leaf(second)),
                 };
                 true
             }
             Node::Leaf(_) => false,
-            Node::Split { first, second, .. } => first.split(target, side, new_id) || second.split(target, side, new_id),
+            Node::Split { first, second, .. } => {
+                first.split_with_ratio(target, side, new_id, keep) || second.split_with_ratio(target, side, new_id, keep)
+            }
         }
     }
 

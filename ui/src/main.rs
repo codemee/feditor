@@ -3700,6 +3700,44 @@ impl App {
         action
     }
 
+    /// 尋找面板的窗格：標題列（拖曳標題可以把它移到別的窗格旁邊）加面板內容。
+    fn show_search_pane(&mut self, ui: &mut egui::Ui, id: panes::PaneId, rect: egui::Rect) -> Option<Action> {
+        let mut action = None;
+        let framed = egui::Frame::new()
+            .inner_margin(egui::Margin { left: 12, right: 8, top: 5, bottom: 0 })
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.set_min_height(pane_ops::TAB_HEIGHT);
+                    let r = ui.add(
+                        egui::Label::new(egui::RichText::new(t("搜尋")).weak())
+                            .truncate()
+                            .selectable(false) // 拖曳時不要把標題文字反白
+                            .sense(egui::Sense::click_and_drag()),
+                    );
+                    let r = r
+                        .on_hover_cursor(egui::CursorIcon::Grab)
+                        .on_hover_text(t("拖曳標題，可以把搜尋窗格移到別的窗格旁邊"));
+                    if r.drag_started() {
+                        action = Some(Action::BeginPreviewDrag(id));
+                    }
+                });
+            });
+        let bar_h = framed.response.rect.height();
+        let inset = pane_ops::CARD_INSET;
+        let content = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + inset + 8.0, rect.min.y + bar_h),
+            egui::pos2(rect.max.x - inset - 8.0, rect.max.y - inset),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+            ui.set_clip_rect(content.intersect(ui.clip_rect()));
+            if let Some(a) = self.find_panel(ui) {
+                action = Some(a);
+            }
+        });
+        action
+    }
+
     /// 尋找面板：搜尋框、三個選項（區分大小寫、完整單字、規則表達式）、搜尋範圍（目前文件或資料夾）、
     /// 可展開的取代欄，以及結果表格。
     ///
@@ -4611,16 +4649,8 @@ impl eframe::App for App {
                 }
             });
         }
-        if self.folder.open {
-            egui::Panel::bottom("find_panel")
-                .resizable(true)
-                .default_size(220.0)
-                .show(ui, |ui| {
-                    if let Some(a) = self.find_panel(ui) {
-                        action = Some(a);
-                    }
-                });
-        }
+        // 尋找面板是版面裡的一個窗格（可以像預覽一樣拖到別的位置）：開關時在這裡增減窗格
+        self.sync_search_pane();
         // 窗格是有框線的卡片，不需要工具列下面的分隔線；上方也不多留邊，離工具列近一點（左右與下方維持原本的空隙）
         let central = egui::Frame::central_panel(ui.style())
             .inner_margin(egui::Margin { left: CENTRAL_SIDE_MARGIN, right: CENTRAL_SIDE_MARGIN, top: 0, bottom: 8 });
@@ -4801,6 +4831,29 @@ mod tests {
         app.sync_table_selection();
         app.anchor_results();
         assert_eq!(app.doc.path.as_deref(), Some(b.as_path()));
+    }
+
+    #[test]
+    fn the_find_panel_is_a_pane_that_opens_below_closes_and_stays_out_of_the_session() {
+        let ctx = egui::Context::default();
+        let mut app = app_with("x");
+        let editor_pane = app.layout.focus;
+        app.handle(Action::Find { replace: false }, &ctx);
+        app.sync_search_pane();
+        let id = app.search_pane_id().expect("開啟後版面裡多了尋找窗格");
+        assert!(app.is_preview(id) && app.is_search_pane(id));
+        assert_eq!(app.layout.root.leaves(), vec![editor_pane, id], "在有焦點的窗格下方");
+        assert_eq!((app.tab_pane_count(), app.preview_id()), (1, None), "不算一般窗格，也不是預覽");
+        let session = app.session_all();
+        assert!(session.previews.is_empty());
+        assert!(!session.layout.clone().unwrap_or_default().contains(&format!("W{id}")), "不記進工作階段");
+        // 拖到編輯窗格的右邊
+        app.move_preview(id, editor_pane, panes::Side::Right);
+        assert_eq!(app.layout.root.leaves(), vec![editor_pane, id]);
+        app.handle(Action::CloseFind, &ctx);
+        app.sync_search_pane();
+        assert!(app.search_pane_id().is_none());
+        assert_eq!(app.layout.root.leaves(), vec![editor_pane]);
     }
 
     #[test]
