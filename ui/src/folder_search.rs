@@ -54,8 +54,14 @@ pub struct FolderSearch {
     pub selected: Option<usize>,
     /// 給使用者看的狀態：進度、統計或錯誤。
     pub status: String,
-    /// 下一個畫面要把表格捲到選取的那一筆。
-    pub scroll_to_selected: bool,
+    /// 下一個畫面要把表格捲到這一列（第二個值：`true` 捲到置中，`false` 剛好捲到看得見）。
+    pub scroll_to: Option<(usize, bool)>,
+    /// 這次搜尋的結果出齊後，表格是否已經先捲到目前畫面上的那一筆了。
+    pub anchored: bool,
+    /// 鍵盤焦點在結果表格上：上下鍵、PageUp／PageDown、Home／End 移動選取的那一筆。
+    pub table_focus: bool,
+    /// 結果表格上一個畫面佔的範圍（滑鼠點在表格外面就取消表格焦點）。
+    pub table_rect: egui::Rect,
     /// 結果因為太多而被截斷。
     pub truncated: bool,
     /// 這次搜尋的資料夾（顯示相對路徑用）。
@@ -80,7 +86,10 @@ impl Default for FolderSearch {
             hits: Vec::new(),
             selected: None,
             status: String::new(),
-            scroll_to_selected: false,
+            scroll_to: None,
+            anchored: false,
+            table_focus: false,
+            table_rect: egui::Rect::NOTHING,
             truncated: false,
             root: PathBuf::new(),
             text_scope: false,
@@ -104,6 +113,8 @@ impl FolderSearch {
         self.truncated = false;
         self.status.clear();
         self.stamp = None;
+        self.anchored = false;
+        self.scroll_to = None;
     }
 
     /// 開始在資料夾裡搜尋（背景執行緒）。上一次還沒結束就先取消它。
@@ -251,7 +262,7 @@ impl FolderSearch {
             (Some(i), true) => (i + n - 1) % n,
         };
         self.selected = Some(next);
-        self.scroll_to_selected = true;
+        self.scroll_to = Some((next, false));
         Some(next)
     }
 

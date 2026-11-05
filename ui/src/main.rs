@@ -966,6 +966,7 @@ impl App {
             self.find.show_replace = true;
         }
         self.focus_find = true;
+        self.folder.table_focus = false;
         if let Some(q) = picked {
             self.find.query = q;
             if !scope {
@@ -973,6 +974,42 @@ impl App {
             }
         }
         ctx.request_repaint();
+    }
+
+    /// 選取離開了命中的那一筆（使用者點了別的地方）：命中的底色就拿掉，不留在畫面上。
+    fn drop_stale_highlight(&mut self) {
+        if let Some(h) = &self.find.current_chars {
+            if self.editor.sel.range() != *h {
+                self.find.current_chars = None;
+                self.find.reveal = false;
+            }
+        }
+    }
+
+    /// 結果出齊之後，表格先捲到「目前畫面上」的那一筆：編輯區選取的那一筆，沒有就是游標所在行或之後
+    /// 第一個命中（資料夾範圍只看目前這個檔案的結果），不要停在第一列。每次搜尋只做一次。
+    fn anchor_results(&mut self) {
+        if self.folder.anchored || self.folder.is_running() || self.folder.hits.is_empty() {
+            return;
+        }
+        self.folder.anchored = true;
+        if let Some(i) = self.folder.selected {
+            self.folder.scroll_to = Some((i, true));
+            return;
+        }
+        let buf = &self.doc.buffer;
+        let caret = buf.line_of_char(self.editor.sel.head.min(buf.len_chars()));
+        let mut target = None;
+        for (i, h) in self.folder.hits.iter().enumerate() {
+            if !self.folder.text_scope && self.doc.path.as_deref() != Some(h.path.as_path()) {
+                continue;
+            }
+            target = Some(i);
+            if h.line >= caret {
+                break;
+            }
+        }
+        self.folder.scroll_to = target.map(|i| (i, true));
     }
 
     /// 重新搜尋或換搜尋範圍之前：取消目前命中的反白（編輯區的標示，以及停在那一筆上的選取）。
@@ -2079,7 +2116,17 @@ impl App {
                 }
             }
             Action::SetRecursive(on) => self.folder.recursive = on,
-            Action::GotoHit(i) => self.goto_hit(i),
+            Action::GotoHit(i) => {
+                self.goto_hit(i);
+                // 從表格選的：鍵盤焦點留在表格（上下鍵繼續移動），不要被開檔搶去給編輯區
+                self.pending_editor_focus = false;
+                self.folder.table_focus = true;
+                ctx.memory_mut(|m| {
+                    if let Some(id) = m.focused() {
+                        m.surrender_focus(id);
+                    }
+                });
+            }
             Action::ToggleMacroMenu => {
                 self.macro_open = !self.macro_open;
                 if self.macro_open {
@@ -2998,6 +3045,7 @@ impl App {
             return;
         };
         self.folder.selected = Some(i);
+        self.folder.scroll_to = Some((i, false));
         // 目前文件範圍的結果就在目前這份文件裡，不用再開檔
         if !self.folder.text_scope {
             self.open_path(&hit.path);
@@ -3887,21 +3935,57 @@ impl App {
     fn hits_table(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         use egui_extras::{Column, TableBuilder};
         let mut action = None;
-        let scroll = std::mem::take(&mut self.folder.scroll_to_selected);
+        // 滑鼠按在表格外面：表格不再有鍵盤焦點
+        let pressed_outside = ui.input(|i| {
+            i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !self.folder.table_rect.contains(p))
+        });
+        if pressed_outside {
+            self.folder.table_focus = false;
+        }
+        self.folder.table_rect = ui.available_rect_before_wrap();
+        // 表格有焦點時用鍵盤移動選取的那一筆
+        let total = self.folder.hits.len();
+        if self.folder.table_focus && total > 0 {
+            use egui::Key::{ArrowDown, ArrowUp, End, Home, PageDown, PageUp};
+            let cur = self.folder.selected;
+            let (up, down, pgup, pgdn, home, end) = ui.input_mut(|i| {
+                let k = |i: &mut egui::InputState, key| i.consume_key(egui::Modifiers::NONE, key);
+                (k(i, ArrowUp), k(i, ArrowDown), k(i, PageUp), k(i, PageDown), k(i, Home), k(i, End))
+            });
+            let to = if down {
+                Some(cur.map_or(0, |c| (c + 1).min(total - 1)))
+            } else if up {
+                Some(cur.map_or(total - 1, |c| c.saturating_sub(1)))
+            } else if pgdn {
+                Some(cur.map_or(0, |c| (c + 10).min(total - 1)))
+            } else if pgup {
+                Some(cur.map_or(total - 1, |c| c.saturating_sub(10)))
+            } else if home {
+                Some(0)
+            } else if end {
+                Some(total - 1)
+            } else {
+                None
+            };
+            if let Some(i) = to {
+                action = Some(Action::GotoHit(i));
+            }
+        }
+        let scroll = self.folder.scroll_to.take();
         let folder = &self.folder;
         let selected = folder.selected;
         let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
+        let stripe = ui.visuals().text_color().gamma_multiply(0.07);
         let mut table = TableBuilder::new(ui)
             .id_salt("search_hits")
-            .striped(true)
             .resizable(true)
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::initial(220.0).at_least(80.0).clip(true))
             .column(Column::initial(64.0).at_least(40.0).clip(true))
             .column(Column::remainder().at_least(120.0).clip(true));
-        if let (true, Some(i)) = (scroll, selected) {
-            table = table.scroll_to_row(i, None);
+        if let Some((i, center)) = scroll {
+            table = table.scroll_to_row(i, center.then_some(egui::Align::Center));
         }
         table
             .header(20.0, |mut header| {
@@ -3920,19 +4004,30 @@ impl App {
                     let i = row.index();
                     let hit = &folder.hits[i];
                     row.set_selected(selected == Some(i));
+                    // 交錯的列底色（egui 內建的條紋在多數配色下看不出來）；選取的那列用選取色
+                    let paint = move |ui: &egui::Ui| {
+                        if i % 2 == 1 && selected != Some(i) {
+                            let gap = ui.spacing().item_spacing;
+                            let rect = ui.max_rect().expand2(egui::vec2(gap.x / 2.0, gap.y / 2.0));
+                            ui.painter().rect_filled(rect, 0.0, stripe);
+                        }
+                    };
                     row.col(|ui| {
+                        paint(ui);
                         let name = ui.add(egui::Label::new(folder.display_path(hit)).truncate().selectable(false));
                         if !folder.text_scope {
                             name.on_hover_text(hit.path.display().to_string());
                         }
                     });
                     row.col(|ui| {
+                        paint(ui);
                         ui.add(
                             egui::Label::new(egui::RichText::new((hit.line + 1).to_string()).monospace())
                                 .selectable(false),
                         );
                     });
                     row.col(|ui| {
+                        paint(ui);
                         ui.add(egui::Label::new(hit_job(ui, hit)).truncate().selectable(false));
                     });
                     if row.response().clicked() {
@@ -4316,12 +4411,15 @@ impl eframe::App for App {
         if self.folder.poll() {
             ctx.request_repaint();
         }
+        // 使用者在編輯區點了別的地方（選取離開了命中的那一筆）：命中的底色就拿掉
+        self.drop_stale_highlight();
         if self.folder.open {
             if self.folder.folder {
                 self.sync_search_dir();
             } else {
                 self.refresh_doc_search(&ctx);
             }
+            self.anchor_results();
         }
 
         // 快捷鍵（Ctrl+Shift+S 要先於 Ctrl+S 檢查，因為 egui 比對修飾鍵時 Ctrl+S 也會吃到它）
@@ -4605,6 +4703,34 @@ mod tests {
         app.refresh_doc_search(&ctx);
         wait_search(&mut app);
         assert_eq!(app.folder.hits.len(), 3);
+    }
+
+    #[test]
+    fn the_table_first_scrolls_to_the_hit_near_the_caret() {
+        let ctx = egui::Context::default();
+        let mut app = app_with("cat\nx\nx\ncat\nx\ncat");
+        app.folder.open = true;
+        app.find.query = "cat".to_owned();
+        app.editor.set_caret(&mut app.doc.buffer, 8, false); // 第 4 行
+        app.refresh_doc_search(&ctx);
+        wait_search(&mut app);
+        app.refresh_doc_search(&ctx);
+        app.anchor_results();
+        assert_eq!(app.folder.scroll_to, Some((1, true)), "游標所在行之後的第一個命中，不是第一列");
+        app.folder.scroll_to = None;
+        app.anchor_results();
+        assert_eq!(app.folder.scroll_to, None, "每次搜尋只捲一次");
+    }
+
+    #[test]
+    fn the_hit_highlight_goes_away_when_the_selection_moves_elsewhere() {
+        let mut app = app_with("cat dog cat");
+        app.find.query = "cat".to_owned();
+        app.find_step(false);
+        assert_eq!(app.find.current_chars, Some(0..3));
+        app.editor.set_caret(&mut app.doc.buffer, 5, false);
+        app.drop_stale_highlight();
+        assert_eq!(app.find.current_chars, None);
     }
 
     #[test]
