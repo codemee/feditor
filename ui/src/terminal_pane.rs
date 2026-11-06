@@ -70,7 +70,7 @@ pub struct TerminalPane {
     /// 滑鼠滾輪累積的捲動量（行）。
     scroll_acc: f32,
     /// 輸入法正在組的字（還沒確定，不送給 shell；畫在游標的位置）。
-    preedit: String,
+    preedit: Option<crate::editor::model::Preedit>,
     /// 程式要求滑鼠回報時，目前按著哪個鍵（0 左、1 中、2 右），以及最後回報的格子（避免同一格重複回報移動）。
     mouse_button: Option<u8>,
     last_mouse_cell: Option<(usize, usize)>,
@@ -228,7 +228,7 @@ impl TerminalPane {
             shell,
             want_focus: true,
             scroll_acc: 0.0,
-            preedit: String::new(),
+            preedit: None,
             mouse_button: None,
             last_mouse_cell: None,
             search: None,
@@ -486,7 +486,8 @@ impl App {
                 !mine
             });
         });
-        let mut preedit: Option<String> = None;
+        let mut preedit: Option<Option<crate::editor::model::Preedit>> = None;
+        let mut state = pane.preedit.clone();
         let mut open_search = false;
         let alt = ctx.input(|i| i.modifiers.alt && !i.modifiers.ctrl);
         let mode = term.mode();
@@ -504,9 +505,23 @@ impl App {
                 }
                 egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                     out.extend(text.as_bytes());
-                    preedit = Some(String::new());
+                    state = None;
+                    preedit = Some(None);
                 }
-                egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => preedit = Some(text),
+                egui::Event::Ime(egui::ImeEvent::Preedit { text, active_range_chars }) => {
+                    state = if text.is_empty() {
+                        None
+                    } else {
+                        // 和編輯區一樣推算組字內的游標：左右鍵在組字文字內移動它
+                        let active = match (active_range_chars, &state) {
+                            (None, Some(prev)) if prev.active.is_some() => Some(0..0),
+                            (active, _) => active,
+                        };
+                        let cursor = crate::editor::model::infer_cursor(state.as_ref(), &text, &active);
+                        Some(crate::editor::model::Preedit { text, active, cursor })
+                    };
+                    preedit = Some(state.clone());
+                }
                 // Ctrl+F：和編輯區一樣開搜尋列。全螢幕程式（vim、less 這類）在執行時，Ctrl+F 還是交給程式
                 egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. }
                     if (modifiers.ctrl || modifiers.command) && !modifiers.shift && !modifiers.alt && !mode.contains(TermMode::ALT_SCREEN) =>
@@ -577,7 +592,7 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             });
             return;
         }
-        let preedit = pane.preedit.clone();
+        let preedit = pane.preedit.clone().unwrap_or(crate::editor::model::Preedit { text: String::new(), active: None, cursor: 0 });
         let Some(term) = pane.term.as_mut() else { return };
         term.resize(size, (cw as u16, ch as u16));
 
@@ -863,20 +878,26 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             let start_col = cur.point.column.0.min(size.cols - 1);
             let start_row = cur_row.clamp(0, size.lines as i32 - 1);
             let mut at = cell_rect(start_col, start_row, 1.0);
-            if !preedit.is_empty() {
+            if !preedit.text.is_empty() {
                 let text_color = ui.visuals().text_color();
                 // 組字的字照格子排：寬字佔兩格，超過右邊界就換到下一列；排不下時整段往上靠，讓最後一列留在畫面內
                 let mut rows: Vec<(usize, String)> = vec![(start_col, String::new())];
                 let mut col = start_col;
-                for c in preedit.chars() {
+                // 插入點在哪一列、該列第幾個字之前（左右鍵會移動它）
+                let mut caret: Option<(usize, usize)> = None;
+                for (idx, c) in preedit.text.chars().enumerate() {
                     let w = if ctx.fonts_mut(|f| f.glyph_width(&font, c)) > cw * 1.5 { 2 } else { 1 };
                     if col + w > size.cols && col > 0 {
                         rows.push((0, String::new()));
                         col = 0;
                     }
+                    if idx == preedit.cursor {
+                        caret = Some((rows.len() - 1, rows.last().unwrap().1.chars().count()));
+                    }
                     rows.last_mut().unwrap().1.push(c);
                     col += w;
                 }
+                let caret = caret.unwrap_or((rows.len() - 1, rows.last().unwrap().1.chars().count()));
                 let shift = (start_row + rows.len() as i32 - size.lines as i32).max(0);
                 let stroke = egui::Stroke::new(1.0, text_color);
                 for (i, (from, line)) in rows.iter().enumerate() {
@@ -888,9 +909,10 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                     painter.galley(origin, galley.clone(), text_color);
                     let y = box_.max.y - 1.0;
                     painter.line_segment([egui::pos2(box_.min.x, y), egui::pos2(box_.min.x + galley.size().x, y)], stroke);
-                    if i + 1 == rows.len() {
-                        // 組字中的插入點：畫在組字文字的最後面，輸入法的候選視窗也跟著它走
-                        let x = box_.min.x + galley.size().x;
+                    if i == caret.0 {
+                        // 組字中的插入點：畫在輸入法目前的位置，候選視窗也跟著它走
+                        let before: String = line.chars().take(caret.1).collect();
+                        let x = box_.min.x + painter.layout_no_wrap(before, font.clone(), text_color).size().x;
                         at = egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(cw, ch));
                         painter.rect_filled(egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(2.0, ch)), 0.0, text_color);
                     }

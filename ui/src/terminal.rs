@@ -480,7 +480,10 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
 fn modified_enter(mods: egui::Modifiers) -> Vec<u8> {
     if cfg!(windows) {
         let state = 0x10 * u32::from(mods.shift) + 0x08 * u32::from(mods.ctrl) + 0x02 * u32::from(mods.alt);
-        format!("\x1b[13;28;13;1;{state};1_\x1b[13;28;13;0;{state};1_").into_bytes()
+        // 字元欄：Windows 上 Ctrl+Enter 產生的字元是 LF（10），不是 CR（13）。
+        // Node 程式（Claude Code）只看字元，靠這個才分得出 Ctrl+Enter 是換行
+        let ch = if mods.ctrl && !mods.alt { 10 } else { 13 };
+        format!("\x1b[13;28;{ch};1;{state};1_\x1b[13;28;{ch};0;{state};1_").into_bytes()
     } else if mods.ctrl && !mods.alt {
         vec![b'\n']
     } else {

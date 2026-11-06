@@ -74,7 +74,7 @@ fn changed_end(old: &str, new: &str) -> usize {
 ///   （游標到 4），再按左鍵才變成 3..5（游標到 3）；按右鍵回來時 4..5（游標 4），再按右鍵又是
 ///   一個相同的事件（游標回到 5）。
 /// - 輸入法回報的是空範圍（一般的游標位置）：就用它回報的位置。
-fn infer_cursor(prev: Option<&Preedit>, text: &str, active: &Option<Range<usize>>) -> usize {
+pub(crate) fn infer_cursor(prev: Option<&Preedit>, text: &str, active: &Option<Range<usize>>) -> usize {
     let len = text.chars().count();
     if let Some(a) = active.as_ref().filter(|a| a.is_empty()) {
         return a.start.min(len);
