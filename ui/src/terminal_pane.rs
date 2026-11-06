@@ -860,14 +860,41 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         }
         // 輸入法：告訴系統候選字視窗要放在游標旁，組字中的字畫在游標位置（底線、蓋住底下的格子）
         if focused {
-            let at = cell_rect(cur.point.column.0.min(size.cols - 1), cur_row.clamp(0, size.lines as i32 - 1), 1.0);
+            let start_col = cur.point.column.0.min(size.cols - 1);
+            let start_row = cur_row.clamp(0, size.lines as i32 - 1);
+            let mut at = cell_rect(start_col, start_row, 1.0);
             if !preedit.is_empty() {
-                let galley = painter.layout_no_wrap(preedit.clone(), font.clone(), ui.visuals().text_color());
-                let box_ = egui::Rect::from_min_size(at.min, egui::vec2(galley.size().x.max(cw), ch));
-                painter.rect_filled(box_, 0.0, ui.visuals().extreme_bg_color);
-                painter.galley(at.min, galley.clone(), ui.visuals().text_color());
-                let y = box_.max.y - 1.0;
-                painter.line_segment([egui::pos2(box_.min.x, y), egui::pos2(box_.min.x + galley.size().x, y)], egui::Stroke::new(1.0, ui.visuals().text_color()));
+                let text_color = ui.visuals().text_color();
+                // 組字的字照格子排：寬字佔兩格，超過右邊界就換到下一列；排不下時整段往上靠，讓最後一列留在畫面內
+                let mut rows: Vec<(usize, String)> = vec![(start_col, String::new())];
+                let mut col = start_col;
+                for c in preedit.chars() {
+                    let w = if ctx.fonts_mut(|f| f.glyph_width(&font, c)) > cw * 1.5 { 2 } else { 1 };
+                    if col + w > size.cols && col > 0 {
+                        rows.push((0, String::new()));
+                        col = 0;
+                    }
+                    rows.last_mut().unwrap().1.push(c);
+                    col += w;
+                }
+                let shift = (start_row + rows.len() as i32 - size.lines as i32).max(0);
+                let stroke = egui::Stroke::new(1.0, text_color);
+                for (i, (from, line)) in rows.iter().enumerate() {
+                    let row = start_row + i as i32 - shift;
+                    let galley = painter.layout_no_wrap(line.clone(), font.clone(), text_color);
+                    let origin = cell_rect(*from, row, 1.0).min;
+                    let box_ = egui::Rect::from_min_size(origin, egui::vec2(galley.size().x.max(cw), ch));
+                    painter.rect_filled(box_, 0.0, ui.visuals().extreme_bg_color);
+                    painter.galley(origin, galley.clone(), text_color);
+                    let y = box_.max.y - 1.0;
+                    painter.line_segment([egui::pos2(box_.min.x, y), egui::pos2(box_.min.x + galley.size().x, y)], stroke);
+                    if i + 1 == rows.len() {
+                        // 組字中的插入點：畫在組字文字的最後面，輸入法的候選視窗也跟著它走
+                        let x = box_.min.x + galley.size().x;
+                        at = egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(cw, ch));
+                        painter.rect_filled(egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(2.0, ch)), 0.0, text_color);
+                    }
+                }
             }
             ui.output_mut(|o| {
                 o.ime = Some(egui::output::IMEOutput {

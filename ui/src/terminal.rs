@@ -428,6 +428,8 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
         if m > 1 { format!("\x1b[{n};{m}~").into_bytes() } else { format!("\x1b[{n}~").into_bytes() }
     };
     let bytes = match key {
+        // 一般 Enter 是送出；Shift／Ctrl／Alt+Enter 是「換行但不送出」，要讓 shell 分得出來
+        Enter if mods.shift || mods.ctrl || mods.alt => return Some(modified_enter(mods)),
         Enter => b"\r".to_vec(),
         Tab if mods.shift => b"\x1b[Z".to_vec(),
         Tab => b"\t".to_vec(),
@@ -470,6 +472,20 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
         _ => return None,
     };
     Some(bytes)
+}
+
+/// 帶修飾鍵的 Enter。Windows 的 ConPTY 只認得 win32-input-mode 序列才分得出 Shift／Ctrl／Alt（PSReadLine 的
+/// Shift+Enter 就是「換行不送出」）：送按下與放開兩個事件。其他系統用 `ESC CR`（Shift、Alt）與 `LF`（Ctrl），
+/// 這是 bash、zsh、fish 常見的換行寫法。
+fn modified_enter(mods: egui::Modifiers) -> Vec<u8> {
+    if cfg!(windows) {
+        let state = 0x10 * u32::from(mods.shift) + 0x08 * u32::from(mods.ctrl) + 0x02 * u32::from(mods.alt);
+        format!("\x1b[13;28;13;1;{state};1_\x1b[13;28;13;0;{state};1_").into_bytes()
+    } else if mods.ctrl && !mods.alt {
+        vec![b'\n']
+    } else {
+        b"\x1b\r".to_vec()
+    }
 }
 
 fn ss3_or_csi(m: u8, final_byte: char) -> Vec<u8> {
@@ -578,6 +594,19 @@ mod tests {
 
     fn enc(key: Key, mods: Modifiers) -> Option<String> {
         encode_key(key, mods, TermMode::NONE).map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+
+    #[test]
+    fn enter_with_modifiers_is_not_a_plain_submit() {
+        let shift = Modifiers { shift: true, ..Modifiers::NONE };
+        for mods in [shift, CTRL, Modifiers { alt: true, ..Modifiers::NONE }] {
+            let s = enc(Key::Enter, mods).unwrap();
+            assert_ne!(s, "\r");
+            assert!(s.len() > 1 || s == "\n");
+        }
+        if cfg!(windows) {
+            assert_eq!(enc(Key::Enter, shift).as_deref(), Some("\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_"));
+        }
     }
 
     #[test]
