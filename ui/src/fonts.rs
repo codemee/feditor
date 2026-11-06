@@ -229,6 +229,15 @@ pub fn build_fonts(family: Option<&str>) -> egui::FontDefinitions {
         None => false,
     };
 
+    // 符號後備：⏵ ⏸ 這類媒體／技術符號，等寬字型和 egui 內建字型都沒有，Windows Terminal 會退到 Segoe UI Symbol，
+    // 這邊照做，不然 Claude Code 的「⏵⏵ auto mode」會變成兩個缺字方框。放在最後，只補缺的字。
+    if let Some(bytes) = symbol_font_bytes() {
+        fonts.font_data.insert("symbols".into(), Arc::new(egui::FontData::from_static(bytes)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push("symbols".into());
+        }
+    }
+
     // 指定的字型放在等寬家族的最前面；指定的找不到就用系統預設的。
     // egui 內建的字型留在後面當後備。
     // 指定的字型若畫不出拉丁字母（例如設定檔裡是手動改的，或是舊版存下來的），也退回預設，
@@ -295,6 +304,16 @@ fn cjk_font_bytes() -> Option<&'static [u8]> {
     static BYTES: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
     *BYTES.get_or_init(|| {
         std::fs::read(r"C:\Windows\Fonts\msjh.ttc")
+            .ok()
+            .map(|bytes| &*Box::leak(bytes.into_boxed_slice()))
+    })
+}
+
+/// Segoe UI Symbol 的字型資料（只讀一次；沒有這個檔就不補）。
+fn symbol_font_bytes() -> Option<&'static [u8]> {
+    static BYTES: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::fs::read(r"C:\Windows\Fonts\seguisym.ttf")
             .ok()
             .map(|bytes| &*Box::leak(bytes.into_boxed_slice()))
     })

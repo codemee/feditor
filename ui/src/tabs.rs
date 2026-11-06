@@ -168,13 +168,6 @@ impl TabSet {
         }
     }
 
-    /// 取出所有分頁（內容必須已經收回），分頁集變空。原本作用中分頁的編號另外回傳。
-    pub fn drain(&mut self) -> (Vec<Tab>, usize) {
-        let active = self.active;
-        self.active = 0;
-        (std::mem::take(&mut self.slots), active)
-    }
-
     /// 沒有焦點的窗格：它目前顯示的分頁的文件（唯讀）。
     pub fn active_doc_stashed(&self) -> &Document {
         &self.slots[self.active].doc
@@ -244,7 +237,12 @@ impl TabSet {
                     _ => (&self.slots[i].doc, &self.slots[i].editor),
                 };
                 let record = if let Some(t) = &d.terminal {
-                    TabRecord::Terminal { number: t.number(), name: t.custom_name().map(str::to_owned) }
+                    TabRecord::Terminal {
+                        number: t.number(),
+                        name: t.custom_name().map(str::to_owned),
+                        dir: t.session_dir(),
+                        shell: Some(t.shell().to_owned()).filter(|s| !s.is_empty()),
+                    }
                 } else {
                     TabRecord::File(d.path.clone()?, e.sel.head)
                 };
@@ -288,6 +286,17 @@ impl TabSet {
         (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.is_some()).collect()
     }
 
+    /// 這個分頁集裡所有的文件（含背景的分頁）。有焦點的窗格作用中分頁的內容在 `App` 手上，這裡那一格只是占位，要略過。
+    pub fn docs_mut(&mut self, skip_active: bool) -> Vec<&mut Document> {
+        let active = self.active;
+        self.slots.iter_mut().enumerate().filter(|(i, _)| !(skip_active && *i == active)).map(|(_, s)| &mut s.doc).collect()
+    }
+
+    /// 這個分頁集裡所有的終端機（含背景的分頁）。有焦點的窗格作用中分頁的內容在 `App` 手上，不在這裡。
+    pub fn terminals_mut(&mut self) -> Vec<&mut crate::terminal_pane::TerminalPane> {
+        self.slots.iter_mut().filter_map(|s| s.doc.terminal.as_deref_mut()).collect()
+    }
+
     /// 終端機分頁的（分頁編號, 終端機識別編號）。
     pub fn terminal_uids(&self, live: Option<&Document>) -> Vec<(usize, u64)> {
         (0..self.slots.len()).filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| (i, t.uid()))).collect()
@@ -322,7 +331,7 @@ impl TabSet {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TabRecord {
     File(std::path::PathBuf, usize),
-    Terminal { number: usize, name: Option<String> },
+    Terminal { number: usize, name: Option<String>, dir: Option<std::path::PathBuf>, shell: Option<String> },
 }
 
 /// 進行中的巨集錄製（見 `EditorState::recording`）。
@@ -446,11 +455,7 @@ mod tests {
         assert_eq!(set.active(), 3, "超出範圍就放最後");
         let order: Vec<String> = (0..4).map(|i| set.label_stashed(i).0).collect();
         assert_eq!(order.len(), 4);
-        let (tabs, active) = set.drain();
-        assert_eq!((tabs.len(), active), (4, 3));
-        assert!(set.is_empty());
-        let mut tabs = tabs;
-        let texts: Vec<String> = tabs.iter_mut().map(|t| t.doc.text().to_owned()).collect();
+        let texts: Vec<String> = set.slots.iter_mut().map(|t| t.doc.text().to_owned()).collect();
         assert_eq!(texts, ["c", "a", "b", "d"]);
     }
 

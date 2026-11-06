@@ -76,6 +76,10 @@ pub struct TerminalPane {
     last_mouse_cell: Option<(usize, usize)>,
     /// 終端機內的搜尋列（Ctrl+Shift+F）；`None` 是沒開。
     search: Option<Search>,
+    /// 程式（用 `ESC[?1004h` 要求焦點回報之後）以為這個終端機有沒有焦點；程式一開始都當作有。
+    app_thinks_focused: bool,
+    /// 沒有焦點的時候收到了通知（鈴聲），使用者還沒回來看：分頁標籤顯示 ●。
+    attention: bool,
 }
 
 /// 終端機內搜尋的狀態。
@@ -232,7 +236,38 @@ impl TerminalPane {
             mouse_button: None,
             last_mouse_cell: None,
             search: None,
+            app_thinks_focused: true,
+            attention: false,
         }
+    }
+
+    /// 每個畫面呼叫一次：把「這個終端機現在有沒有焦點」告訴程式，並處理鈴聲。
+    /// - 程式用 `ESC[?1004h` 要求焦點回報時，焦點有變就送 `ESC[I`／`ESC[O`（Codex CLI 等程式只在沒有焦點時才發通知，
+    ///   不告訴它的話，它以為你一直在看，永遠不會通知）；
+    /// - 沒有焦點時收到鈴聲（程式的通知）：分頁標籤顯示 ●，回到這個終端機就清掉。
+    ///
+    /// 回傳這一幀有沒有收到鈴聲。
+    pub fn sync_focus(&mut self, focused: bool) -> bool {
+        let Some(term) = self.term.as_ref() else { return false };
+        let rang = term.take_bell();
+        // Windows 上 PowerShell／cmd 的主控台（ConPTY）會把 `ESC[I`／`ESC[O` 轉成主控台的焦點事件，不經過 `?1004h`：
+        // Codex CLI 在 Windows 上就是讀這種事件（它在 Windows 上還主動關掉 `?1004`），所以不能等程式要求才回報。
+        // 轉換後程式的輸入裡不會多出任何字元，不要焦點事件的程式也不受影響。其他 shell（WSL、Git Bash…）仍然等程式要求。
+        let always = cfg!(windows) && terminal::shell_kind(&self.shell) != terminal::ShellKind::Posix;
+        if always || term.mode().contains(TermMode::FOCUS_IN_OUT) {
+            if focused != self.app_thinks_focused {
+                term.write(terminal::focus_report(focused));
+                self.app_thinks_focused = focused;
+            }
+        } else {
+            self.app_thinks_focused = true; // 程式關掉回報之後再打開，它又從「有焦點」開始
+        }
+        if focused {
+            self.attention = false;
+        } else if rang {
+            self.attention = true;
+        }
+        rang
     }
 
     pub fn number(&self) -> usize {
@@ -244,9 +279,39 @@ impl TerminalPane {
         &self.shell
     }
 
-    /// 分頁上的名稱：使用者取的名字，沒有就是「終端機 2」。
+    /// 分頁上的名稱：使用者取的名字；沒有就是「終端機 2」，後面接資訊：裡面的程式（Claude Code 這類）設了標題就接標題
+    /// （「終端機 2 · ✳ Claude Code」），否則 shell 有回報目前資料夾的話接資料夾名稱（「終端機 2 · feditor」）。
     pub fn title(&self) -> String {
-        self.custom_name.clone().unwrap_or_else(|| self.default_title())
+        if let Some(name) = &self.custom_name {
+            return name.clone();
+        }
+        let info = self.term.as_ref().and_then(Terminal::program_title).or_else(|| self.cwd().map(|dir| folder_label(&dir)));
+        match info {
+            Some(info) => format!("{} · {}", self.default_title(), info),
+            None => self.default_title(),
+        }
+    }
+
+    /// 分頁上的名稱，沒有焦點時收到通知的話後面加 ●。
+    pub fn tab_title(&self) -> String {
+        let title = self.title();
+        if self.attention { format!("{title} ●") } else { title }
+    }
+
+    /// 測試用：有沒有還沒看的通知。
+    #[cfg(test)]
+    pub fn has_attention(&self) -> bool {
+        self.attention
+    }
+
+    /// shell 目前所在的資料夾（shell 還沒回報過就是 `None`）。
+    pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        self.term.as_ref().and_then(Terminal::cwd)
+    }
+
+    /// 要記進工作階段的資料夾：目前所在的；shell 不回報（或還沒開起來）就是開它時的起始資料夾。
+    pub fn session_dir(&self) -> Option<std::path::PathBuf> {
+        self.cwd().or_else(|| self.dir.clone())
     }
 
     /// 使用者自己取的名字（沒有就是 `None`）。
@@ -283,6 +348,11 @@ impl TerminalPane {
     pub(crate) fn has_focus(&self, ctx: &egui::Context) -> bool {
         ctx.memory(|m| m.has_focus(widget_id(self.uid)))
     }
+}
+
+/// 資料夾在分頁上顯示的名字：最後一層的名稱；磁碟機根目錄（沒有名稱）就顯示整個路徑。
+fn folder_label(dir: &std::path::Path) -> String {
+    dir.file_name().map_or_else(|| dir.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
 }
 
 fn widget_id(uid: u64) -> egui::Id {
@@ -394,7 +464,14 @@ impl App {
                 numbers.extend(set.terminal_numbers(live));
             }
         }
-        let dir = self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        // 輸入焦點在終端機（有焦點的窗格正顯示終端機）時，新的終端機沿用它目前的資料夾；否則用目前檔案所在的資料夾
+        let dir = self
+            .doc
+            .terminal
+            .as_ref()
+            .and_then(|t| t.session_dir())
+            .filter(|d| d.is_dir())
+            .or_else(|| self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())));
         let shell = shell.unwrap_or_else(|| self.settings.terminal_shell.clone());
         let dir = dir.or_else(|| std::env::current_dir().ok());
         let env = self.terminal_env(dir.as_deref());
@@ -442,6 +519,29 @@ impl App {
                 self.show_terminal_tab(pane, idx);
             }
             None => self.return_from_terminals(),
+        }
+    }
+
+    /// 每個畫面呼叫一次：把每個終端機有沒有焦點告訴裡面的程式（見 [`TerminalPane::sync_focus`]）。
+    /// 「有焦點」是指視窗在前景，而且鍵盤焦點在這個終端機上；別的窗格、背景分頁的終端機都算沒有。
+    /// 收到通知（鈴聲）而視窗不在前景時，閃一下工作列。
+    pub(crate) fn sync_terminal_focus(&mut self, ctx: &egui::Context) {
+        let window_focused = ctx.input(|i| i.focused);
+        let mut rang = false;
+        if let Some(terminal) = self.doc.terminal.as_mut() {
+            let focused = window_focused && terminal.has_focus(ctx);
+            rang |= terminal.sync_focus(focused);
+        }
+        for terminal in self.tabs.terminals_mut() {
+            rang |= terminal.sync_focus(false);
+        }
+        for set in self.layout.others.values_mut() {
+            for terminal in set.terminals_mut() {
+                rang |= terminal.sync_focus(false);
+            }
+        }
+        if rang && !window_focused {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
         }
     }
 
@@ -788,8 +888,15 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         let guard = term.term.lock();
         let rc = guard.renderable_content();
         let offset = rc.display_offset as i32;
+        // 格子邊界對齊實體像素：相鄰格子共用同一條邊，底色和方塊字元之間才不會出現細縫
+        let ppp = ctx.pixels_per_point();
+        let snap = move |v: f32| (v * ppp).round() / ppp;
         let cell_rect = |col: usize, row: i32, cells: f32| {
-            egui::Rect::from_min_size(egui::pos2(content.min.x + col as f32 * cw, content.min.y + row as f32 * ch), egui::vec2(cw * cells, ch))
+            let x0 = snap(content.min.x + col as f32 * cw);
+            let x1 = snap(content.min.x + (col as f32 + cells) * cw);
+            let y0 = snap(content.min.y + row as f32 * ch);
+            let y1 = snap(content.min.y + (row as f32 + 1.0) * ch);
+            egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
         };
         for cell in rc.display_iter {
             let flags = cell.cell.flags;
@@ -832,7 +939,19 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                 if flags.contains(Flags::DIM) {
                     color = color.gamma_multiply(0.6);
                 }
-                painter.text(r.min, egui::Align2::LEFT_TOP, ch_.to_string(), font.clone(), color);
+                if let Some((parts, alpha)) = block_element(ch_) {
+                    // 方塊元素（U+2580–259F）不走字型，直接填滿對齊像素的矩形，Claude Code 的吉祥物才不會有縫
+                    let color = color.gamma_multiply(alpha);
+                    for (x0, y0, x1, y1) in parts {
+                        let rect = egui::Rect::from_min_max(
+                            egui::pos2(snap(r.min.x + r.width() * x0), snap(r.min.y + r.height() * y0)),
+                            egui::pos2(snap(r.min.x + r.width() * x1), snap(r.min.y + r.height() * y1)),
+                        );
+                        painter.rect_filled(rect, 0.0, color);
+                    }
+                } else {
+                    painter.text(r.min, egui::Align2::LEFT_TOP, ch_.to_string(), font.clone(), color);
+                }
             }
             if flags.intersects(Flags::ALL_UNDERLINES) {
                 let y = r.max.y - 1.0;
@@ -1001,6 +1120,39 @@ fn contrast(a: Color32, b: Color32) -> f32 {
 ///（進度條、狀態列的三角形接縫），調整它們的顏色會破壞圖案，所以不做對比度保護。
 fn is_graphic_glyph(c: char) -> bool {
     matches!(c as u32, 0x2500..=0x259F | 0x2800..=0x28FF | 0xE0B0..=0xE0BF)
+}
+
+/// 方塊元素（U+2580–259F）要填滿的範圍，以格子為 1 的比例（x0, y0, x1, y1），以及透明度（陰影字元 ░▒▓ 用）。
+fn block_element(c: char) -> Option<(Vec<(f32, f32, f32, f32)>, f32)> {
+    let n = c as u32;
+    let rects = match n {
+        0x2580 => vec![(0.0, 0.0, 1.0, 0.5)],
+        0x2581..=0x2588 => vec![(0.0, 1.0 - (n - 0x2580) as f32 / 8.0, 1.0, 1.0)],
+        0x2589..=0x258F => vec![(0.0, 0.0, (0x2590 - n) as f32 / 8.0, 1.0)],
+        0x2590 => vec![(0.5, 0.0, 1.0, 1.0)],
+        0x2591..=0x2593 => return Some((vec![(0.0, 0.0, 1.0, 1.0)], (n - 0x2590) as f32 * 0.25)),
+        0x2594 => vec![(0.0, 0.0, 1.0, 0.125)],
+        0x2595 => vec![(0.875, 0.0, 1.0, 1.0)],
+        0x2596..=0x259F => {
+            // 四個象限：左上、右上、左下、右下
+            let mask: [bool; 4] = match n {
+                0x2596 => [false, false, true, false],
+                0x2597 => [false, false, false, true],
+                0x2598 => [true, false, false, false],
+                0x2599 => [true, false, true, true],
+                0x259A => [true, false, false, true],
+                0x259B => [true, true, true, false],
+                0x259C => [true, true, false, true],
+                0x259D => [false, true, false, false],
+                0x259E => [false, true, true, false],
+                _ => [false, true, true, true],
+            };
+            let quads = [(0.0, 0.0, 0.5, 0.5), (0.5, 0.0, 1.0, 0.5), (0.0, 0.5, 0.5, 1.0), (0.5, 0.5, 1.0, 1.0)];
+            quads.iter().zip(mask).filter(|(_, on)| *on).map(|(q, _)| *q).collect()
+        }
+        _ => return None,
+    };
+    Some((rects, 1.0))
 }
 
 /// 終端機的顏色：16 色來自配色方案，256 色的其餘部分（色立方與灰階）是標準色，真彩色原樣畫。
@@ -1172,6 +1324,56 @@ mod tests {
     }
 
     #[test]
+    fn focus_reports_are_the_standard_sequences() {
+        assert_eq!(terminal::focus_report(true), b"\x1b[I");
+        assert_eq!(terminal::focus_report(false), b"\x1b[O");
+    }
+
+    /// 真的開 PowerShell：程式要求焦點回報（`?1004h`）並響鈴（Codex CLI 的通知方式）。
+    /// 沒有焦點：記下通知、告訴程式失去焦點；回到這個終端機：清掉通知、告訴程式取得焦點。
+    #[test]
+    fn a_bell_while_unfocused_marks_the_tab_and_focus_changes_are_reported_to_the_program() {
+        if !cfg!(windows) || !crate::terminal::shells_for(true, &|k| std::env::var(k).ok(), &|e| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(e).is_file())), &|_| false, "").iter().any(|s| s.command.starts_with("pwsh")) {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let shell = "pwsh -NoLogo -NoProfile";
+        let mut pane = TerminalPane::new(None, 1, shell.to_owned());
+        pane.term = Some(Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell, &[]).expect("開不了 pwsh"));
+        // 沒有鈴聲：就算沒有焦點也不記通知。Windows 的 PowerShell 不用等程式要求，焦點一變就回報
+        assert!(!pane.sync_focus(false));
+        assert!(!pane.has_attention());
+        assert_eq!(pane.app_thinks_focused, !cfg!(windows), "Windows 上 PowerShell 無條件回報焦點");
+        pane.sync_focus(true);
+        // 程式要求焦點回報，然後響鈴
+        let wait = |what: &str, done: &mut dyn FnMut() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while std::time::Instant::now() < deadline && !done() {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(done(), "{what}");
+        };
+        let term_mode = |pane: &TerminalPane| pane.term.as_ref().unwrap().mode();
+        pane.term.as_ref().unwrap().write(b"[Console]::Write([char]27 + '[?1004h' + [char]7)\r\n".to_vec());
+        wait("程式要求焦點回報", &mut || term_mode(&pane).contains(TermMode::FOCUS_IN_OUT));
+        // 鈴聲緊接在要求之後，等它到
+        let mut rang = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !rang && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            rang = pane.sync_focus(false);
+        }
+        assert!(rang, "沒有焦點時收到鈴聲");
+        assert!(pane.has_attention(), "分頁標籤要標出來");
+        assert!(pane.tab_title().ends_with('●'));
+        assert!(!pane.app_thinks_focused, "程式要被告知失去焦點");
+        // 回到這個終端機：清掉通知，告訴程式取得焦點
+        assert!(!pane.sync_focus(true));
+        assert!(!pane.has_attention() && !pane.tab_title().ends_with('●'));
+        assert!(pane.app_thinks_focused);
+    }
+
+    #[test]
     fn graphic_glyphs_are_exempt_from_the_contrast_guard() {
         for c in ['█', '▀', '─', '│', '┌', '⣿', '\u{e0b0}', '\u{e0b2}'] {
             assert!(is_graphic_glyph(c), "{c}");
@@ -1206,6 +1408,17 @@ mod tests {
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         parser.advance(&mut term, output.as_bytes());
         term
+    }
+
+    #[test]
+    fn block_elements_cover_the_expected_area() {
+        let area = |c| block_element(c).map(|(r, a)| (r.iter().map(|(x0, y0, x1, y1)| (x1 - x0) * (y1 - y0)).sum::<f32>(), a));
+        assert_eq!(area('█'), Some((1.0, 1.0)));
+        assert_eq!(area('▐'), Some((0.5, 1.0)));
+        assert_eq!(area('▛'), Some((0.75, 1.0)));
+        assert_eq!(area('▀'), Some((0.5, 1.0)));
+        assert_eq!(area('▒'), Some((1.0, 0.5)));
+        assert_eq!(area('a'), None);
     }
 
     #[test]

@@ -41,6 +41,96 @@ impl Dimensions for GridSize {
 struct Shared {
     exited: AtomicBool,
     sender: parking_lot_free::Mutex<Option<EventLoopSender>>,
+    /// shell 最近一次回報的目前資料夾（見 [`parse_cwd_title`]）。
+    cwd: parking_lot_free::Mutex<Option<PathBuf>>,
+    /// 裡面執行的程式（Claude Code、vim…）用標題序列設的標題（見 [`clean_program_title`]）。
+    program_title: parking_lot_free::Mutex<Option<String>>,
+    /// 收到的鈴聲（BEL）次數，還沒被 [`Terminal::take_bell`] 取走的。Codex CLI 等程式用它當通知。
+    bells: std::sync::atomic::AtomicUsize,
+}
+
+/// 告訴程式終端機取得（`ESC [ I`）或失去（`ESC [ O`）焦點。程式用 `ESC [ ? 1004 h` 要求時才送。
+pub fn focus_report(focused: bool) -> &'static [u8] {
+    if focused { b"\x1b[I" } else { b"\x1b[O" }
+}
+
+/// 程式設的標題，整理成可以放在分頁標籤上的樣子；不該顯示的回傳 `None`：
+/// - 空的；
+/// - shell 自己的預設標題（執行檔的路徑，例如 `C:\Program Files\PowerShell\7\pwsh.exe`）；
+/// - 開頭的點字轉圈圈（Claude Code 忙碌時 `⠂ ⠐` 那種動畫）去掉，不然標籤會一直在跳。
+///
+/// 太長的截短，免得分頁撐得太寬。
+pub fn clean_program_title(title: &str) -> Option<String> {
+    const MAX_CHARS: usize = 32;
+    let is_spinner = |c: char| ('\u{2800}'..='\u{28FF}').contains(&c);
+    let title = title.trim().trim_start_matches(is_spinner).trim();
+    let lower = title.to_ascii_lowercase();
+    let drive_path = title.len() > 2 && title.as_bytes()[1] == b':' && title.as_bytes()[0].is_ascii_alphabetic() && matches!(title.as_bytes()[2], b'\\' | b'/');
+    if title.is_empty() || lower.ends_with(".exe") || drive_path {
+        return None;
+    }
+    let mut chars = title.chars();
+    let head: String = chars.by_ref().take(MAX_CHARS).collect();
+    Some(if chars.next().is_some() { format!("{head}…") } else { head })
+}
+
+/// shell 用標題序列（OSC 2）回報目前資料夾時，標題的開頭。
+/// 不用 OSC 9;9 是因為 `alacritty_terminal` 不會把不認得的序列交出來，標題事件則一定會。
+const CWD_TITLE_PREFIX: &str = "feditor:cwd:";
+
+/// 標題是 shell 回報的目前資料夾（`feditor:cwd:路徑`）就回傳路徑；一般標題回傳 `None`。
+pub fn parse_cwd_title(title: &str) -> Option<PathBuf> {
+    let path = title.strip_prefix(CWD_TITLE_PREFIX)?.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+/// PowerShell 啟動時執行的小程式：包住原本的 `prompt`（保留使用者的設定，例如 oh-my-posh），
+/// 每次顯示提示字元就用標題序列回報目前資料夾。放在設定檔載入之後執行，所以不會被設定檔蓋掉。
+/// 原本的 `prompt` 一定是第一個敘述，才不會動到它讀的 `$?`。
+const POWERSHELL_CWD_SCRIPT: &str = "\
+$global:__feditor_prompt = $function:prompt
+function global:prompt {
+    $p = & $global:__feditor_prompt
+    $loc = $ExecutionContext.SessionState.Path.CurrentLocation
+    if ($loc.Provider.Name -eq 'FileSystem') {
+        [Console]::Write(([char]27) + ']2;feditor:cwd:' + $loc.ProviderPath + ([char]7))
+    }
+    $p
+}
+";
+
+/// 標準 Base64（有補 `=`）。
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// PowerShell 自己有指定要執行的東西（`-Command`、`-File`、`-EncodedCommand`）時，不能再加上我們的。
+fn has_command_arg(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        let name = a.trim_start_matches(['-', '/']).to_ascii_lowercase();
+        a.starts_with(['-', '/']) && ["c", "command", "f", "file", "e", "ec", "encodedcommand", "cwa", "commandwithargs"].contains(&name.as_str())
+    })
+}
+
+/// 開 PowerShell 時要多加的參數（`-NoExit -EncodedCommand …`），讓它回報目前資料夾；不需要加就是空的。
+fn powershell_cwd_args(args: &[String]) -> Vec<String> {
+    if has_command_arg(args) {
+        return Vec::new();
+    }
+    let utf16: Vec<u8> = POWERSHELL_CWD_SCRIPT.replace('\n', "\r\n").encode_utf16().flat_map(u16::to_le_bytes).collect();
+    vec!["-NoExit".to_owned(), "-EncodedCommand".to_owned(), base64(&utf16)]
 }
 
 /// `std::sync::Mutex` 的薄包裝：不會因為別的執行緒 panic 而中毒。
@@ -72,6 +162,19 @@ impl EventListener for Listener {
                     let _ = tx.send(Msg::Input(text.into_bytes().into()));
                 }
             }
+            Event::Title(title) => {
+                if let Some(dir) = parse_cwd_title(&title) {
+                    // shell 回報目前資料夾（夾在標題裡）：它正在顯示提示字元，表示前景沒有程式了，程式設的標題作廢
+                    *self.shared.cwd.lock() = Some(dir);
+                    *self.shared.program_title.lock() = None;
+                } else {
+                    *self.shared.program_title.lock() = clean_program_title(&title);
+                }
+            }
+            Event::ResetTitle => *self.shared.program_title.lock() = None,
+            Event::Bell => {
+                self.shared.bells.fetch_add(1, Ordering::Relaxed);
+            }
             _ => {}
         }
         self.ctx.request_repaint();
@@ -83,6 +186,43 @@ pub struct Terminal {
     sender: EventLoopSender,
     shared: Arc<Shared>,
     size: GridSize,
+    /// shell 的程序編號（Unix 上用來向作業系統問它目前的資料夾）。
+    #[cfg(unix)]
+    pid: u32,
+}
+
+/// 程序 `pid` 目前的工作資料夾，向作業系統問（Linux 讀 `/proc`，macOS 用 `proc_pidinfo`）。
+/// Unix 的 shell（bash、zsh、fish…）換資料夾就是真的 `chdir`，所以不用靠 shell 回報。
+#[cfg(target_os = "linux")]
+fn process_cwd(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn process_cwd(pid: u32) -> Option<PathBuf> {
+    use std::ffi::{c_void, CStr};
+    // SAFETY: `proc_vnodepathinfo` 是純 C 結構，全 0 是合法的值；`proc_pidinfo` 最多寫入 `size` 個位元組到它裡面
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    let written = unsafe { libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDVNODEPATHINFO, 0, &mut info as *mut _ as *mut c_void, size) };
+    if written != size {
+        return None; // 程序已經不在了，或沒有權限
+    }
+    // SAFETY: 路徑緩衝區（連續 1024 個位元組）以 NUL 結尾，而且活得比這個借用久
+    let path = unsafe { CStr::from_ptr(info.pvi_cdir.vip_path.as_ptr() as *const libc::c_char) };
+    let path = path.to_str().ok().filter(|p| !p.is_empty())?;
+    Some(PathBuf::from(path))
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn process_cwd(_pid: u32) -> Option<PathBuf> {
+    None
+}
+
+/// cmd 的提示字元：在原本的提示字元（沒設就是預設的 `$P$G`）前面加一段標題序列來回報目前的資料夾
+/// （`$E` 是 ESC，`$P` 是目前的路徑，`$E\` 結束序列）。
+fn cmd_prompt(original: Option<&str>) -> String {
+    format!("$E]2;{CWD_TITLE_PREFIX}$P$E\\{}", original.filter(|p| !p.is_empty()).unwrap_or("$P$G"))
 }
 
 /// 要執行的 shell：程式與參數。
@@ -340,8 +480,15 @@ impl Terminal {
         custom_shell: &str,
         extra_env: &[(String, String)],
     ) -> std::io::Result<Self> {
-        let shell = resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path);
+        let mut shell = resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path);
+        if ShellKind::of(&shell.program) == ShellKind::PowerShell {
+            let extra = powershell_cwd_args(&shell.args);
+            shell.args.extend(extra);
+        }
         let mut env = HashMap::from([("TERM".to_owned(), "xterm-256color".to_owned()), ("COLORTERM".to_owned(), "truecolor".to_owned())]);
+        if cfg!(windows) && ShellKind::of(&shell.program) == ShellKind::Cmd {
+            env.insert("PROMPT".to_owned(), cmd_prompt(std::env::var("PROMPT").ok().as_deref()));
+        }
         env.extend(extra_env.iter().cloned()); // 執行環境（虛擬環境的 PATH 等）
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program, shell.args)),
@@ -354,6 +501,8 @@ impl Terminal {
         let window = window_size(size, cell);
         tty::setup_env();
         let pty = tty::new(&options, window, 0)?;
+        #[cfg(unix)]
+        let pid = pty.child().id();
         let shared = Arc::new(Shared::default());
         let listener = Listener { ctx: ctx.clone(), shared: shared.clone() };
         let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, listener.clone())));
@@ -361,7 +510,14 @@ impl Terminal {
         let sender = event_loop.channel();
         *shared.sender.lock() = Some(sender.clone());
         event_loop.spawn();
-        Ok(Self { term, sender, shared, size })
+        Ok(Self {
+            term,
+            sender,
+            shared,
+            size,
+            #[cfg(unix)]
+            pid,
+        })
     }
 
     /// 視窗大小變了。格數沒變就什麼都不做。
@@ -379,6 +535,32 @@ impl Terminal {
         let _ = self.sender.send(Msg::Input(bytes.into()));
     }
 
+
+    /// 自從上次呼叫之後，有沒有收到鈴聲（BEL）；呼叫一次就清掉。
+    pub fn take_bell(&self) -> bool {
+        self.shared.bells.swap(0, Ordering::Relaxed) > 0
+    }
+
+    /// 裡面執行的程式設的標題（例如 Claude Code 的「✳ Claude Code」）；沒有程式設標題、或它已經結束就是 `None`。
+    pub fn program_title(&self) -> Option<String> {
+        self.shared.program_title.lock().clone()
+    }
+
+    /// shell 目前所在的資料夾。PowerShell 與 cmd 自己回報（見 [`parse_cwd_title`]）；
+    /// Unix 上其他 shell 向作業系統問；Windows 上的其他 shell（Git Bash、WSL…）目前沒有，是 `None`。
+    pub fn cwd(&self) -> Option<PathBuf> {
+        if let Some(dir) = self.shared.cwd.lock().clone() {
+            return Some(dir);
+        }
+        #[cfg(unix)]
+        {
+            process_cwd(self.pid)
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
 
     /// shell 已經結束。
     pub fn exited(&self) -> bool {
@@ -785,6 +967,137 @@ mod tests {
             assert_eq!(sh.program, "/bin/zsh");
             assert_eq!(default_shell(&|_| None, &has).program, "/bin/sh");
         }
+    }
+
+    #[test]
+    fn cwd_reports_ride_on_titles_and_ordinary_titles_are_ignored() {
+        assert_eq!(parse_cwd_title(r"feditor:cwd:C:\code\a;b"), Some(PathBuf::from(r"C:\code\a;b")));
+        assert_eq!(parse_cwd_title("feditor:cwd:"), None);
+        assert_eq!(parse_cwd_title("✳ Claude Code"), None);
+    }
+
+    #[test]
+    fn program_titles_are_cleaned_for_the_tab_label() {
+        assert_eq!(clean_program_title("✳ Claude Code").as_deref(), Some("✳ Claude Code"));
+        assert_eq!(clean_program_title("⠂ Claude Code").as_deref(), Some("Claude Code"), "忙碌的轉圈圈動畫去掉，標籤才不會一直跳");
+        assert_eq!(clean_program_title("  ⠐⠂ 修正終端機  ").as_deref(), Some("修正終端機"));
+        assert_eq!(clean_program_title("claude").as_deref(), Some("claude"));
+        // shell 自己的預設標題（執行檔路徑）和空標題不顯示
+        for plain in [r"C:\Program Files\PowerShell\7\pwsh.exe", r"C:\WINDOWS\system32\cmd.exe", "pwsh.exe", "", "   ", "⠂"] {
+            assert_eq!(clean_program_title(plain), None, "{plain:?}");
+        }
+        let long = clean_program_title(&"長".repeat(50)).unwrap();
+        assert_eq!(long.chars().count(), 33, "32 個字加上刪節號");
+        assert!(long.ends_with('…'));
+    }
+
+    /// 真的開 PowerShell：程式執行期間設的標題要出現，回到提示字元（程式結束）之後要消失。
+    #[test]
+    fn a_real_powershell_shows_a_program_title_only_while_the_program_runs() {
+        if !cfg!(windows) || !exists_in_path("pwsh.exe") {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let size = GridSize { cols: 80, lines: 24 };
+        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile", &[]).expect("開不了 pwsh");
+        // 等第一個提示字元（回報了資料夾）
+        let wait = |what: &str, done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while std::time::Instant::now() < deadline && !done() {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(done(), "{what}");
+        };
+        wait("第一個提示字元", &|| t.cwd().is_some());
+        t.write(b"$Host.UI.RawUI.WindowTitle = '\xE2\x9C\xB3 Fake CLI'; Start-Sleep 4\r\n".to_vec());
+        wait("程式設的標題", &|| t.program_title().as_deref() == Some("✳ Fake CLI"));
+        wait("程式結束後標題消失", &|| t.program_title().is_none());
+    }
+
+    #[test]
+    fn base64_matches_the_standard_vectors() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn powershell_gets_the_cwd_script_unless_it_already_has_something_to_run() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let added = powershell_cwd_args(&args(&["-NoLogo"]));
+        assert_eq!(&added[..2], ["-NoExit", "-EncodedCommand"]);
+        assert!(!added[2].is_empty());
+        for custom in [&["-Command", "dir"][..], &["-File", "a.ps1"], &["-c", "dir"], &["-EncodedCommand", "AAA="]] {
+            assert!(powershell_cwd_args(&args(custom)).is_empty(), "{custom:?}");
+        }
+    }
+
+    /// 真的開 PowerShell：`cd` 之後，回報的資料夾要跟著變，而且使用者原本的 prompt 還在。
+    #[test]
+    fn a_real_powershell_reports_its_folder_after_cd() {
+        if !cfg!(windows) || !exists_in_path("pwsh.exe") {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let size = GridSize { cols: 80, lines: 24 };
+        let start = std::env::temp_dir();
+        let t = Terminal::spawn(&ctx, size, (8, 16), Some(start.clone()), "pwsh -NoLogo -NoProfile", &[]).expect("開不了 pwsh");
+        let target = std::env::current_dir().unwrap();
+        t.write(format!("Set-Location -LiteralPath '{}'\r\n", target.display()).into_bytes());
+        let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut reported = None;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            reported = t.cwd();
+            if reported.as_ref().is_some_and(|d| canon(d) == canon(&target)) {
+                break;
+            }
+        }
+        assert_eq!(reported.map(|d| canon(&d)), Some(canon(&target)));
+    }
+
+    #[test]
+    fn the_cmd_prompt_keeps_the_original_after_the_report() {
+        assert_eq!(cmd_prompt(None), "$E]2;feditor:cwd:$P$E\\$P$G");
+        assert_eq!(cmd_prompt(Some("")), "$E]2;feditor:cwd:$P$E\\$P$G");
+        assert_eq!(cmd_prompt(Some("$T $P$G")), "$E]2;feditor:cwd:$P$E\\$T $P$G");
+    }
+
+    /// 開 `shell`、換到 `target`，等它回報的資料夾變成 `target`。
+    fn assert_shell_reports_cwd_after(shell: &str, cd_line: &str, target: &std::path::Path) {
+        let ctx = egui::Context::default();
+        let size = GridSize { cols: 80, lines: 24 };
+        let t = Terminal::spawn(&ctx, size, (8, 16), Some(std::env::temp_dir()), shell, &[]).expect("開不了 shell");
+        t.write(format!("{cd_line}\r\n").into_bytes());
+        let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut reported = None;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            reported = t.cwd();
+            if reported.as_ref().is_some_and(|d| canon(d) == canon(target)) {
+                break;
+            }
+        }
+        assert_eq!(reported.map(|d| canon(&d)), Some(canon(target)), "{shell}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_real_cmd_reports_its_folder_after_cd() {
+        let target = std::env::current_dir().unwrap();
+        assert_shell_reports_cwd_after("cmd", &format!("cd /d \"{}\"", target.display()), &target);
+    }
+
+    /// Unix：不靠 shell 回報，向作業系統問 shell 的工作資料夾。
+    #[cfg(unix)]
+    #[test]
+    fn a_real_unix_shell_reports_its_folder_after_cd() {
+        let target = std::env::current_dir().unwrap();
+        assert_shell_reports_cwd_after("sh", &format!("cd '{}'", target.display()), &target);
     }
 
     #[test]

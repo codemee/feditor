@@ -34,6 +34,9 @@ pub struct Document {
     pub lang: crate::syntax::LangChoice,
     /// 這個分頁是終端機（不是文字文件）：有的話分頁顯示終端機畫面，`buffer` 等欄位只是占位。
     pub terminal: Option<Box<crate::terminal_pane::TerminalPane>>,
+    /// 還沒有檔案的文件的序號（「未命名 2」的 2），好分辨好幾個未命名的分頁；0 是還沒編號。
+    /// 由 `App` 統一編：開著的未命名文件裡最小的空號，文件存成檔案之後空號就讓出來。
+    pub untitled_number: usize,
 }
 
 /// 磁碟上的檔案和分頁內容的關係。
@@ -226,13 +229,21 @@ impl Document {
     /// 顯示用檔名。
     pub fn name(&self) -> String {
         if let Some(terminal) = &self.terminal {
-            return terminal.title();
+            return terminal.tab_title();
         }
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| t("未命名").to_owned())
+            .unwrap_or_else(|| match self.untitled_number {
+                0 => t("未命名").to_owned(),
+                n => format!("{} {n}", t("未命名")),
+            })
+    }
+
+    /// 是不是還沒有檔案的文字文件（會編「未命名 N」的序號）。
+    pub fn is_untitled(&self) -> bool {
+        self.terminal.is_none() && self.path.is_none()
     }
 
     /// 終端機分頁：`number` 是標題上的編號，`dir` 是 shell 的起始資料夾，`shell` 是要執行的程式與參數（空字串是系統預設）。
@@ -287,6 +298,7 @@ impl Document {
                 disk_state: DiskState::Synced,
                 lang: Default::default(),
                 terminal: None,
+                untitled_number: 0,
                 buffer,
                 format: d.format,
                 dirty: false,

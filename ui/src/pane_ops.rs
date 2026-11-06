@@ -15,7 +15,7 @@ use crate::session::{Session, SessionEntry, SessionPane, SessionPreview, Session
 use crate::tabs::TabRecord;
 use crate::tabs::{Tab, TabSet};
 use std::collections::HashMap;
-use crate::{Action, App, Document, Icon, LogKind, editor_id, find_input_id, flat_list, icons, language, no_hover_outline, syntax, tight_buttons};
+use crate::{Action, App, Then, Document, Icon, LogKind, editor_id, find_input_id, flat_list, icons, language, no_hover_outline, syntax, tight_buttons};
 use eframe::egui;
 use feditor_core::i18n::t;
 use feditor_core::tf;
@@ -214,35 +214,57 @@ impl App {
         self.tab_changed();
     }
 
-    /// 關閉窗格：它的分頁全部移到相鄰的窗格（接在後面），不會關掉任何文件，也不會丟掉未儲存的修改。
+    /// 要求關閉窗格（按窗格分頁列右端的按鈕）：裡面有未儲存的文件就依序問（儲存、不儲存、全部不儲存、取消）。
+    /// 「儲存」「不儲存」處理完一份就當場把那個分頁關掉；中途按「取消」，已經關掉的不會回來，
+    /// 還沒處理的分頁（連同窗格）留著。都處理完才連窗格一起關。
+    pub(crate) fn request_close_pane(&mut self, id: PaneId) {
+        if self.tab_pane_count() <= 1 || self.set_ref(id).is_none() {
+            return;
+        }
+        self.closing_pane = Some(id);
+        self.next_pane_close_prompt();
+    }
+
+    /// 關閉窗格的下一步：還有未儲存的文件就問，沒有了就關。
+    pub(crate) fn next_pane_close_prompt(&mut self) {
+        let Some(id) = self.closing_pane else { return };
+        let pending: Vec<(PaneId, usize)> = self.all_dirty().into_iter().filter(|k| k.0 == id).collect();
+        match pending.first().copied() {
+            Some((pane, i)) => {
+                self.focus_pane(pane);
+                self.switch_tab(i);
+                self.ask_save_with(Then::ClosePane, t("關閉窗格"), pending.len() > 1);
+            }
+            None => self.finish_close_pane(),
+        }
+    }
+
+    /// 放棄關閉窗格（使用者取消，或儲存沒成功）。
+    pub(crate) fn cancel_close_pane(&mut self) {
+        self.closing_pane = None;
+    }
+
+    /// 真的關閉等著關的窗格（不再詢問）。窗格已經因為最後一個分頁關掉而不見了，就什麼都不做。
+    pub(crate) fn finish_close_pane(&mut self) {
+        if let Some(id) = self.closing_pane.take() {
+            self.close_pane(id);
+        }
+    }
+
+    /// 關閉窗格：裡面所有的分頁一起關掉（終端機的 shell 結束），不再詢問、也不搬到別的窗格。
+    /// 未儲存的文件要先由 [`App::request_close_pane`] 問過。焦點在被關的窗格時，交給相鄰的窗格。
     pub(crate) fn close_pane(&mut self, id: PaneId) {
         if self.tab_pane_count() <= 1 || self.set_ref(id).is_none() {
             return;
         }
-        let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
-        let Some(near) = self.layout.root.remove(id) else {
-            self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        if id == self.layout.focus {
+            self.remove_focused_pane();
             return;
-        };
-        let near = self.nearest_tab_pane(near);
-        let mut gone = if id == self.layout.focus {
-            std::mem::take(&mut self.tabs)
-        } else {
-            self.layout.others.remove(&id).expect("要關的窗格存在")
-        };
-        let (tabs, active) = gone.drain();
-        let dest = self.set_mut(near).expect("相鄰窗格存在");
-        let start = dest.len();
-        for (k, mut tab) in tabs.into_iter().enumerate() {
-            tab.editor.scroll_to_caret = true;
-            dest.push_tab(tab, start + k);
         }
-        dest.activate(start + active);
-        if near != self.layout.focus {
-            self.switch_focus_stashed(near);
+        if self.layout.root.remove(id).is_none() {
+            return;
         }
-        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
-        self.pending_editor_focus = true;
+        self.layout.others.remove(&id); // 整組分頁丟掉
         self.tab_changed();
     }
 
@@ -310,7 +332,7 @@ impl App {
                 }
                 match record {
                     TabRecord::File(path, caret) => files.push((path, caret)),
-                    TabRecord::Terminal { number, name } => terminals.push(SessionTerminal { at: pos, number, name }),
+                    TabRecord::Terminal { number, name, dir, shell } => terminals.push(SessionTerminal { at: pos, number, name, dir, shell }),
                 }
             }            panes.push(SessionPane { id, active, files, terminals });
         }
@@ -366,11 +388,13 @@ impl App {
                         editor.scroll_to_caret = true;
                         Tab { doc, editor }
                     }
-                    // 終端機：開一個新的 shell，放回同樣的位置、取同樣的名字
+                    // 終端機：開一個新的 shell，放回同樣的位置、取同樣的名字，從關掉程式時的資料夾開始（資料夾不在了就用預設的）
                     SessionEntry::Terminal(t) => {
-                        let mut doc = Document::new_terminal(t.number, terminal_dir.clone(), self.settings.terminal_shell.clone());
+                        let dir = t.dir.clone().filter(|d| d.is_dir()).or_else(|| terminal_dir.clone());
+                        let shell = t.shell.clone().unwrap_or_else(|| self.settings.terminal_shell.clone());
+                        let mut doc = Document::new_terminal(t.number, dir.clone(), shell);
                         if let Some(terminal) = doc.terminal.as_mut() {
-                            terminal.set_env(self.terminal_env(terminal_dir.as_deref()));
+                            terminal.set_env(self.terminal_env(dir.as_deref()));
                             if let Some(name) = &t.name {
                                 terminal.set_custom_name(name);
                             }
@@ -496,7 +520,7 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 tight_buttons(ui);
                 if show_close_pane
-                    && icons::small_button(ui, Icon::ClosePane, t("關閉窗格（裡面的分頁會移到相鄰的窗格）"), true).clicked()
+                    && icons::small_button(ui, Icon::ClosePane, t("關閉窗格（裡面的分頁一起關閉）"), true).clicked()
                 {
                     action = Some(Action::ClosePane(pane));
                 }
@@ -718,8 +742,9 @@ impl App {
         let several_tab_panes = self.tab_pane_count() > 1;
         self.pane_rects = arranged.panes.clone();
 
-        // 滑鼠按在別的窗格上：那個窗格取得焦點（拖曳分頁時不換）
-        if self.tab_drag.is_none() {
+        // 滑鼠按在別的窗格上：那個窗格取得焦點（拖曳分頁時不換；確認對話框開著時也不換：
+        // 按對話框的按鈕時，按下的位置底下可能是別的窗格，焦點被切走的話，「儲存」「不儲存」就會作用在錯的分頁上）
+        if self.tab_drag.is_none() && self.modal.is_none() {
             let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
             if let Some(pos) = pressed {
                 if let Some(&(id, _)) = arranged.panes.iter().find(|(_, r)| r.contains(pos)) {

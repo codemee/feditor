@@ -2,6 +2,37 @@
 
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Terminal tabs show the current folder**: the tab label becomes "Terminal 2 · feditor" and follows `cd`; a terminal you named yourself keeps its name. How the folder is obtained depends on the system and the shell:
+  - **PowerShell (7 and Windows PowerShell, on every system)**: it reports the folder through a title sequence (OSC 2) every time it shows its prompt. At startup the program wraps the original `prompt` with `-NoExit -EncodedCommand` (after the profile has loaded, so the user's own prompt and `$?` are unaffected); if the configured shell arguments already contain `-Command` / `-File` nothing is added.
+  - **cmd (Windows)**: a title sequence is put in front of the `PROMPT` environment variable; the original prompt is unchanged.
+  - **Shells on macOS and Linux (zsh, bash, fish, ...)**: no cooperation from the shell is needed; the operating system is asked for the shell process's working directory (`proc_pidinfo` on macOS, `/proc/<pid>/cwd` on Linux), and the user's config files are left alone.
+  - Git Bash, WSL and Nushell on Windows do not report yet, and their labels stay "Terminal N".
+- **A new terminal reuses the current folder**: when the input focus is in a terminal (the focused pane is showing one), a new terminal starts in that terminal's current folder; (when the shell does not report its folder, the folder it was opened in); with the focus in the editor it works as before and uses the folder of the current file.
+- **Terminals return to their folders when the program is reopened**: the `terminal =` line of the session file now also records the folder and the shell the terminal uses (records from older versions are still read). After a restart every terminal is still a fresh shell, but it starts in the folder it was in when the program was closed and runs the shell chosen originally; if the folder no longer exists the default is used. For shells that do not report a folder (Git Bash, WSL on Windows) the folder they were opened in is recorded.
+
+- **Terminal tabs show the title a CLI tool reports**: programs such as Claude Code report their state with a title sequence (OSC 0 / 2), and it is now shown on the tab label ("Terminal 2 · ✳ Claude Code"), taking priority over the folder name; when the program exits and the shell is back at its prompt the folder is shown again. The shell's own default title (the executable's path) is not shown; a leading braille spinner animation (`⠂`) is removed so the label does not keep jumping; titles longer than 32 characters are shortened. A terminal you named yourself keeps its name.
+
+- **Notifications from terminal programs (Codex CLI and others)**:
+  - **Focus reporting**: the terminal sends `ESC[I` / `ESC[O` whenever it gains or loses the keyboard focus (including the window going to the background, the tab being in the background, or the focus being in another pane). Codex CLI only notifies while the terminal is unfocused and assumes it is focused at the start; FEditor never reported anything, so it never notified. On macOS / Linux and for Git Bash, WSL and the like on Windows it is sent when the program asks with `ESC[?1004h`; for PowerShell and cmd on Windows it is sent unconditionally, because ConPTY turns these two sequences into console focus events without the program asking first (that is what Codex reads on Windows, where it even turns `?1004` off itself), and the program's input does not get any extra character from them.
+  - **The bell is the notification**: in FEditor (where `WT_SESSION`, `TERM_PROGRAM` and the other variables that identify a known terminal are not set) Codex CLI's "auto" mode notifies with the bell (BEL). When an unfocused terminal receives a bell, a ● appears after its tab label and goes away when you return to that terminal; when the window is not in the foreground the taskbar button also flashes.
+  - OSC 9 notifications are not handled yet (`alacritty_terminal` does not hand out that sequence); if Codex is set to `notification_method = "osc9"` nothing arrives, so use `"auto"` (the default) or `"bel"`.
+
+- **Untitled documents are numbered**: tabs without a file read "Untitled 1", "Untitled 2", ... so they can be told apart; each one takes the smallest free number among the open untitled documents, moving it to another pane does not renumber it, and the number is given up when it is saved to a file or closed. The path field of the status bar shows the same name.
+
+- **Shift / Ctrl / Alt+Enter is a newline, not submit, in the terminal**: PowerShell (PSReadLine), Claude Code and similar programs can break the line in their input; Ctrl+Enter sends LF so Node programs can tell it is a newline.
+
+### Changed
+- **Closing a pane now closes all the tabs in it**: it used to move the tabs to the neighbouring pane; now the close button at the right end of a pane closes the whole pane, including its terminals (the shells end) and the documents being edited. If the pane holds unsaved documents they are asked about one by one (Save / Don't save / Cancel, plus "Don't save all" when more than one is unsaved): "Save" and "Don't save" close that tab right away once it is dealt with, so if you press Cancel halfway the tabs already closed do not come back and the remaining tabs (and the pane) stay; "Don't save all" closes the whole pane at once.
+
+### Fixed
+- **IME composition in the terminal**: the caret inside the composition is drawn in the right place, the arrow keys move it within the composition, and the composed text wraps at the pane edge.
+- **Clicking on a pane under a confirmation dialog stole the focus**: when the position pressed on a dialog button had another pane underneath, that pane took the focus and "Save" / "Don't save" acted on the wrong tab. One symptom: when closing a pane, "Don't save" made the dialog appear again and the pane could not be closed, only "Don't save all" worked. The pane focus no longer changes while a dialog is open.
+- **Seams in the terminal's block characters**: block elements (U+2580–259F: halves, eighths, quadrants, shades) are now drawn as pixel-aligned rectangles and cell edges are aligned to physical pixels, so the Claude Code mascot no longer has a dark vertical line in the middle.
+- **Missing glyphs in the terminal (⏵ ⏸ and similar symbols)**: Segoe UI Symbol was added to the font fallback, so Claude Code's "⏵⏵ auto mode" is no longer two boxes.
+
 ## [0.8.0] - 2026-11-05
 
 ### Added

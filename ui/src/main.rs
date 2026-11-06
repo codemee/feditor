@@ -259,6 +259,8 @@ enum Then {
     /// 只是告知：按了按鈕就關掉，沒有後續動作。
     Notice,
     CloseTab,
+    /// 關閉窗格（`App::closing_pane`）之前，逐一問裡面未儲存的文件。
+    ClosePane,
     CloseWindow,
     Reload(&'static Encoding),
     DeleteMacro(usize),
@@ -593,7 +595,7 @@ enum Action {
     PrevTab,
     /// 某個窗格的分頁列上的操作（切換、關閉、改名）。先讓那個窗格取得焦點，再照一般的分頁操作處理。
     PaneTab(panes::PaneId, pane_ops::TabCmd),
-    /// 關閉窗格：裡面的分頁移到相鄰的窗格。
+    /// 關閉窗格：裡面的分頁一起關閉（有未儲存的文件先問）。
     ClosePane(panes::PaneId),
     /// 開啟或關閉有焦點的窗格的預覽。
     TogglePreview,
@@ -774,8 +776,10 @@ struct App {
     allow_close: bool,
     /// 目前顯示中的確認對話框，以及使用者回答之後要接著做的事。
     modal: Option<Pending>,
-    /// 關閉視窗時，使用者已經選了「不儲存」的分頁：（窗格, 分頁編號）。
+    /// 關閉視窗（或關閉窗格）時，使用者已經選了「不儲存」的分頁：（窗格, 分頁編號）。
     close_skipped: Vec<(panes::PaneId, usize)>,
+    /// 正在問未儲存的文件、問完要關閉的窗格。
+    closing_pane: Option<panes::PaneId>,
     find: FindState,
     /// 下一個畫面要把鍵盤焦點放到搜尋框。
     focus_find: bool,
@@ -854,6 +858,7 @@ impl App {
             allow_close: false,
             modal: None,
             close_skipped: Vec::new(),
+            closing_pane: None,
             find: FindState::default(),
             focus_find: false,
             editor: EditorState::default(),
@@ -1454,7 +1459,9 @@ impl App {
     /// 雙按終端機分頁：問新名字（留空就改回預設的「終端機 N」）。
     fn ask_rename_terminal(&mut self, text: Option<String>) {
         let Some(terminal) = self.doc.terminal.as_ref() else { return };
-        let (old, number) = (terminal.title(), terminal.number());
+        // 預填的是自己取的名字（沒有就是預設名稱），不能帶上資料夾，不然存下去就變成自訂名字了
+        let old = terminal.custom_name().map_or_else(|| terminal.default_title(), str::to_owned);
+        let number = terminal.number();
         let text = text.unwrap_or_else(|| old.clone());
         let len = text.chars().count();
         let spec = modal::Spec::new(
@@ -1587,6 +1594,17 @@ impl App {
                 No => self.close_active_tab(),
                 _ => {}
             },
+            Then::ClosePane => {
+                match answer {
+                    // 儲存／不儲存：這一份處理完了，把它的分頁關掉（最後一個分頁關掉時窗格也跟著關）
+                    Yes if self.save() => self.close_active_tab(),
+                    No => self.close_active_tab(),
+                    // 全部不儲存：剩下的也都不問了，直接關
+                    modal::Answer::NoToAll => return self.finish_close_pane(),
+                    _ => return self.cancel_close_pane(), // 取消，或儲存失敗／另存新檔被取消：窗格留著
+                }
+                self.next_pane_close_prompt();
+            }
             Then::CloseWindow => {
                 match answer {
                     Yes if self.save() => {}
@@ -1764,7 +1782,34 @@ impl App {
     }
 
     /// 分頁換了：搜尋結果屬於上一個分頁，作廢。
+    /// 幫還沒有檔案的文件編序號（「未命名 1」「未命名 2」…）：每份取開著的未命名文件裡最小的空號，
+    /// 存成檔案的文件讓出號碼。要在每個畫面和分頁變動時呼叫（很便宜）。
+    fn number_untitled_docs(&mut self) {
+        let mut docs: Vec<&mut Document> = vec![&mut self.doc];
+        docs.extend(self.tabs.docs_mut(true)); // 有焦點的窗格：作用中那格是占位，真的內容是 self.doc
+        for set in self.layout.others.values_mut() {
+            docs.extend(set.docs_mut(false));
+        }
+        let mut used = std::collections::HashSet::new();
+        for doc in docs.iter_mut() {
+            if !doc.is_untitled() {
+                doc.untitled_number = 0; // 已經有檔案或是終端機：號碼讓出來
+            } else if doc.untitled_number > 0 {
+                used.insert(doc.untitled_number);
+            }
+        }
+        let mut next = 1;
+        for doc in docs.iter_mut().filter(|d| d.is_untitled() && d.untitled_number == 0) {
+            while used.contains(&next) {
+                next += 1;
+            }
+            doc.untitled_number = next;
+            used.insert(next);
+        }
+    }
+
     fn tab_changed(&mut self) {
+        self.number_untitled_docs();
         // 換了分頁（切換、新增、開啟、關閉都算）：鍵盤焦點回到編輯區，可以直接打字
         self.pending_editor_focus = true;
         self.find.invalidate();
@@ -2334,7 +2379,7 @@ impl App {
                     pane_ops::TabCmd::Rename(i) => self.start_rename_tab(i),
                 }
             }
-            Action::ClosePane(pane) => self.close_pane(pane),
+            Action::ClosePane(pane) => self.request_close_pane(pane),
             Action::TogglePreview => self.toggle_preview(),
             Action::NewTerminal => self.new_terminal(),
             Action::NewTerminalWith(shell) => self.new_terminal_with(Some(shell)),
@@ -4412,7 +4457,7 @@ impl App {
                 .path
                 .as_ref()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| t("未命名").to_owned());
+                .unwrap_or_else(|| self.doc.name());
             // 整列由右往左排：先放右側的格式控制項，最後讓路徑吃掉剩下的空間，放不下時截斷。
             // 這樣路徑很長時，也不會和右邊的控制項重疊。（未儲存的標示在標題列，這裡不重複。）
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -4744,7 +4789,9 @@ impl eframe::App for App {
         // 畫每個編輯區的時候會再依各自的文件調整，畫完還原
         self.apply_tab_settings();
         // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
+        self.number_untitled_docs();
         self.terminal_input(&ctx);
+        self.sync_terminal_focus(&ctx);
         self.reap_terminals(&ctx);
         if ctx.input_mut(|i| i.consume_shortcut(&terminal_pane::NEW_TERMINAL)) {
             self.new_terminal();
@@ -5354,24 +5401,217 @@ mod tests {
         assert!(app.layout.others.is_empty());
     }
 
+    /// 在目前的分頁開頭加一個字，讓它變成有未儲存的修改。
+    fn make_active_tab_dirty(app: &mut App) {
+        app.doc.buffer.insert(0, "x");
+        assert!(app.doc.sync());
+        assert!(app.doc.dirty);
+    }
+
+    /// 回答「關閉窗格」的對話框：和真實流程一樣，先把這個對話框取走再處理答案。
+    fn answer_close_pane(app: &mut App, answer: modal::Answer, ctx: &egui::Context) {
+        assert!(app.modal.take().is_some(), "要有對話框");
+        app.resolve_modal(Then::ClosePane, answer, None, ctx);
+    }
+
+    fn modal_buttons(app: &App) -> Vec<modal::Answer> {
+        app.modal.as_ref().expect("要有對話框").spec.buttons.iter().map(|(_, a)| *a).collect()
+    }
+
     #[test]
-    fn closing_a_pane_moves_its_tabs_to_the_neighbour_and_keeps_unsaved_edits() {
+    fn closing_a_pane_closes_all_its_tabs_instead_of_moving_them() {
         let (mut app, _dir) = app_with_two_files();
         let first = app.layout.focus;
         app.move_tab(first, 1, Target::Split(first, Side::Right)); // [a] | [b]
         let second = app.layout.focus;
-        // b 有未儲存的修改
-        app.doc.buffer.insert(0, "x");
-        assert!(app.doc.sync());
-        app.close_pane(second);
+        app.request_close_pane(second);
+        assert!(app.modal.is_none(), "沒有未儲存的修改，不問直接關");
         assert_eq!(app.layout.pane_count(), 1);
-        assert_eq!(pane_names(&app)[0].1, ["a.txt", "b.txt"], "分頁接在相鄰窗格的後面");
-        assert_eq!(app.doc.text(), "xbbb", "沒有關掉任何文件，修改還在");
-        assert!(app.doc.dirty);
-        assert_eq!(app.all_dirty(), vec![(first, 1)]);
+        assert_eq!(pane_names(&app)[0].1, ["a.txt"], "b 跟著窗格關掉，沒有搬到相鄰的窗格");
+        assert_eq!(app.doc.text(), "aaa");
         // 只剩一個窗格時關不掉
-        app.close_pane(first);
+        app.request_close_pane(first);
         assert_eq!(app.layout.pane_count(), 1);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn closing_a_pane_asks_about_unsaved_edits_and_cancel_keeps_the_pane() {
+        let (mut app, _dir) = app_with_two_files();
+        let first = app.layout.focus;
+        app.move_tab(first, 1, Target::Split(first, Side::Right)); // [a] | [b]
+        let second = app.layout.focus;
+        make_active_tab_dirty(&mut app); // b 有未儲存的修改
+        let ctx = egui::Context::default();
+        app.request_close_pane(second);
+        assert_eq!(app.layout.pane_count(), 2, "問完才關");
+        assert_eq!(modal_buttons(&app), [modal::Answer::Yes, modal::Answer::No, modal::Answer::Cancel], "只有一份沒存，沒有「全部不儲存」");
+        answer_close_pane(&mut app, modal::Answer::Cancel, &ctx);
+        assert_eq!(app.layout.pane_count(), 2, "取消：窗格留著，修改還在");
+        assert!(app.doc.dirty);
+        assert!(app.closing_pane.is_none() && app.close_skipped.is_empty());
+        // 不儲存：整個窗格關掉，修改丟掉
+        app.request_close_pane(second);
+        answer_close_pane(&mut app, modal::Answer::No, &ctx);
+        assert_eq!(app.layout.pane_count(), 1);
+        assert_eq!(pane_names(&app)[0].1, ["a.txt"]);
+        assert!(app.all_dirty().is_empty());
+        assert_eq!(std::fs::read_to_string(_dir.path().join("b.txt")).unwrap(), "bbb", "沒有存檔");
+    }
+
+    /// 回報的問題（有遇到）：按「不儲存」之後對話框又出現、窗格關不掉，「全部不儲存」才關得掉。
+    /// 原因：按對話框按鈕時，按下的位置底下是別的窗格，那個窗格搶走焦點，「不儲存」就記在錯的分頁上。
+    #[test]
+    fn pressing_a_dialog_button_over_another_pane_does_not_move_the_focus() {
+        let (mut app, dir) = app_with_two_files();
+        app.open_path(&dir.path().join("c.txt"));
+        let first = app.layout.focus; // [a b c]
+        app.move_tab(first, 2, Target::Split(first, Side::Right)); // [a b] | [c]
+        let second = app.layout.focus;
+        app.focus_pane(first);
+        app.switch_tab(0);
+        make_active_tab_dirty(&mut app);
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)));
+        let frame = |app: &mut App, events: Vec<egui::Event>| {
+            let mut r = raw.clone();
+            r.events = events;
+            let mut output = ctx.run_ui(r, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    app.panes_ui(ui);
+                });
+            });
+            output.textures_delta.clear();
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        let over_second = app.pane_rects.iter().find(|(id, _)| *id == second).map(|(_, r)| r.center()).unwrap();
+        let press = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+            ]
+        };
+        // 對話框開著（正在問 first 窗格的 a.txt）：按在 second 窗格上，焦點不能跑掉
+        app.request_close_pane(first);
+        assert!(app.modal.is_some());
+        frame(&mut app, press(over_second));
+        assert_eq!(app.layout.focus, first, "對話框開著時，按在別的窗格上不換焦點");
+        // 對話框關掉之後，點窗格照常換焦點
+        app.modal = None;
+        app.cancel_close_pane();
+        frame(&mut app, vec![egui::Event::PointerButton { pos: over_second, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+        frame(&mut app, press(over_second));
+        assert_eq!(app.layout.focus, second);
+    }
+
+    /// 窗格裡有好幾份未儲存的文件，每一份都按「不儲存」，窗格要關掉、對話框要消失。
+    #[test]
+    fn answering_dont_save_to_every_unsaved_file_of_a_pane_closes_it() {
+        let (mut app, dir) = app_with_two_files();
+        app.open_path(&dir.path().join("c.txt"));
+        let first = app.layout.focus; // [a b c]
+        app.move_tab(first, 2, Target::Split(first, Side::Right)); // [a b] | [c]
+        let second = app.layout.focus;
+        // 焦點在別的窗格（右邊），從左邊窗格的按鈕關閉它；a、b 都有未儲存的修改
+        app.focus_pane(first);
+        for i in 0..2 {
+            app.switch_tab(i);
+            make_active_tab_dirty(&mut app);
+        }
+        app.focus_pane(second);
+        let ctx = egui::Context::default();
+        app.request_close_pane(first);
+        for round in 0..2 {
+            assert!(app.modal.is_some(), "第 {round} 份：要有對話框");
+            assert_eq!(app.layout.pane_count(), 2, "還沒問完，窗格還在");
+            answer_close_pane(&mut app, modal::Answer::No, &ctx);
+        }
+        assert!(app.modal.is_none(), "問完了，對話框要消失");
+        assert_eq!(app.layout.pane_count(), 1, "窗格要關掉");
+        assert_eq!(pane_names(&app)[0].1, ["c.txt"]);
+        assert!(app.closing_pane.is_none() && app.close_skipped.is_empty());
+    }
+
+    #[test]
+    fn closing_a_pane_with_several_unsaved_files_offers_discard_all() {
+        let (mut app, dir) = app_with_two_files();
+        app.open_path(&dir.path().join("c.txt"));
+        let first = app.layout.focus; // [a b c]
+        app.move_tab(first, 2, Target::Split(first, Side::Right)); // [a b] | [c]
+        let second = app.layout.focus;
+        app.focus_pane(first);
+        for i in 0..2 {
+            app.switch_tab(i);
+            make_active_tab_dirty(&mut app);
+        }
+        let ctx = egui::Context::default();
+        app.request_close_pane(first);
+        assert_eq!(modal_buttons(&app), [modal::Answer::Yes, modal::Answer::No, modal::Answer::NoToAll, modal::Answer::Cancel]);
+        // 「全部不儲存」：一次關掉整個窗格
+        answer_close_pane(&mut app, modal::Answer::NoToAll, &ctx);
+        assert_eq!(app.layout.pane_count(), 1);
+        assert_eq!(app.layout.focus, second);
+        assert_eq!(pane_names(&app)[0].1, ["c.txt"]);
+        assert!(app.modal.is_none() && app.all_dirty().is_empty());
+        for name in ["a.txt", "b.txt"] {
+            assert!(std::fs::read_to_string(dir.path().join(name)).unwrap().find('x').is_none(), "{name} 沒有存檔");
+        }
+    }
+
+    /// 回報的問題：多份未儲存時按一次「不儲存」，那個分頁要當場關掉；之後按「取消」，
+    /// 已經關掉的不會回來，剩下的分頁（連同窗格）留著。
+    #[test]
+    fn dont_save_closes_that_tab_right_away_and_cancel_keeps_only_the_rest() {
+        let (mut app, dir) = app_with_two_files();
+        app.open_path(&dir.path().join("c.txt"));
+        let first = app.layout.focus; // [a b c]
+        app.move_tab(first, 2, Target::Split(first, Side::Right)); // [a b] | [c]
+        app.focus_pane(first);
+        for i in 0..2 {
+            app.switch_tab(i);
+            make_active_tab_dirty(&mut app);
+        }
+        let ctx = egui::Context::default();
+        app.request_close_pane(first);
+        assert_eq!(app.doc.name(), "a.txt", "先問 a");
+        answer_close_pane(&mut app, modal::Answer::No, &ctx);
+        assert_eq!(pane_names(&app).iter().find(|(id, _)| *id == first).unwrap().1, ["b.txt"], "a 當場關掉了");
+        assert_eq!(modal_buttons(&app), [modal::Answer::Yes, modal::Answer::No, modal::Answer::Cancel], "只剩一份沒問，不再給「全部不儲存」");
+        answer_close_pane(&mut app, modal::Answer::Cancel, &ctx);
+        assert_eq!(app.layout.pane_count(), 2, "取消：窗格還在");
+        assert_eq!(pane_names(&app).iter().find(|(id, _)| *id == first).unwrap().1, ["b.txt"], "a 沒有回來，b 留著");
+        assert!(app.doc.dirty && app.modal.is_none() && app.closing_pane.is_none());
+        assert!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap().find('x').is_none(), "a 沒有存檔");
+    }
+
+    #[test]
+    fn untitled_documents_get_numbers_that_are_reused_and_freed_when_saved() {
+        let mut app = App::new(None, Settings::default());
+        app.number_untitled_docs();
+        assert_eq!(app.doc.name(), "未命名 1");
+        app.new_document(); // 第一份是空白的，不另開
+        make_active_tab_dirty(&mut app);
+        app.new_document();
+        assert_eq!(app.doc.name(), "未命名 2");
+        let first = app.layout.focus;
+        app.move_tab(first, 1, Target::Split(first, Side::Right)); // [未命名 1] | [未命名 2]
+        let names: Vec<_> = pane_names(&app).into_iter().flat_map(|(_, n)| n).collect();
+        assert_eq!(names, ["未命名 1", "未命名 2"], "搬到別的窗格也不會重編");
+        // 關掉 1，下一個新的拿到最小的空號
+        app.focus_pane(first);
+        app.close_tab(0);
+        app.number_untitled_docs();
+        app.new_document();
+        let names: Vec<_> = pane_names(&app).into_iter().flat_map(|(_, n)| n).collect();
+        assert!(names.contains(&"未命名 1".to_owned()) && names.contains(&"未命名 2".to_owned()), "{names:?}");
+        // 存成檔案之後不再用編號，號碼讓出來
+        let dir = tempfile::tempdir().unwrap();
+        app.doc.path = Some(dir.path().join("x.txt"));
+        app.number_untitled_docs();
+        assert_eq!(app.doc.name(), "x.txt");
+        assert_eq!(app.doc.untitled_number, 0);
     }
 
     #[test]
@@ -5579,11 +5819,11 @@ mod tests {
         assert_eq!(app.layout.root.leaves(), vec![a, pv, b], "[A | (預覽 / B)]");
         assert_eq!(app.tab_pane_count(), 2);
         assert_eq!(app.doc.name(), "c.txt");
-        // 預覽沒有因為任何窗格被關掉而消失：關掉 A，預覽還在，分頁併進 B
+        // 預覽沒有因為任何窗格被關掉而消失：關掉 A（連同它的分頁），預覽還在，只剩 B 的分頁
         app.close_pane(a);
         assert_eq!(app.tab_pane_count(), 1);
         assert!(app.preview_id().is_some(), "預覽窗格是獨立的，不跟著某個窗格");
-        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.layout.pane_count(), 2);
     }
 
@@ -6894,6 +7134,8 @@ mod tests {
         assert_eq!(saved.panes.len(), 1);
         assert_eq!(saved.panes[0].files.len(), 2);
         assert_eq!(saved.panes[0].terminals.len(), 2);
+        // 每個終端機記下它的資料夾（這裡是開它時的檔案所在資料夾），重開後從那裡開始
+        assert!(saved.panes[0].terminals.iter().all(|t| t.dir.as_deref() == Some(dir.path())), "{:?}", saved.panes[0].terminals);
 
         // 重新執行：同樣的檔案與終端機分頁、同樣的名字與順序，每個終端機是新開的 shell
         let mut fresh = App::new(None, Settings::default());
