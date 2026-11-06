@@ -2,7 +2,7 @@
 
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-11-07
 
 ### Added
 - **Terminal tabs show the current folder**: the tab label becomes "Terminal 2 · feditor" and follows `cd`; a terminal you named yourself keeps its name. How the folder is obtained depends on the system and the shell:
@@ -231,6 +231,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.9.0]: https://github.com/codemee/feditor/releases/tag/v0.9.0
 [0.8.0]: https://github.com/codemee/feditor/releases/tag/v0.8.0
 [0.7.0]: https://github.com/codemee/feditor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0

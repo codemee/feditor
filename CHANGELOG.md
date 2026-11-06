@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## [未發布]
+## [0.9.0] - 2026-11-07
 
 ### 新增
 - **終端機分頁顯示目前的資料夾**：分頁標籤變成「終端機 2 · feditor」，`cd` 之後標籤跟著變；自己取了名字的終端機維持原名。取得資料夾的方式依系統與 shell 而不同：
@@ -231,6 +231,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.9.0]: https://github.com/codemee/feditor/releases/tag/v0.9.0
 [0.8.0]: https://github.com/codemee/feditor/releases/tag/v0.8.0
 [0.7.0]: https://github.com/codemee/feditor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/codemee/feditor/releases/tag/v0.6.0
