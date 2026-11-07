@@ -401,6 +401,24 @@ impl App {
     /// 在終端機執行 `program args… file extra_args`（`extra_args` 是使用者寫的命令列參數，原樣交給 shell）：用上次「執行」用的那個終端機（還在的話），沒有就開一個新的。
     /// 重用時先送 Ctrl+C 中斷上次還沒跑完的程式、再切到檔案所在的資料夾。
     pub(crate) fn run_in_terminal(&mut self, program: &str, args: &[String], file: &std::path::Path, extra_args: &str) {
+        let (program, args, file_text, extra) = (program.to_owned(), args.to_vec(), file.to_string_lossy().into_owned(), extra_args.to_owned());
+        self.run_line_in_terminal(file.parent(), false, move |kind| kind.run_line(&program, &args, &file_text, &extra));
+    }
+
+    /// 在終端機執行專案命令（`cargo run`、`uv run 檔案`…）：資料夾是命令自己的（設定檔所在的資料夾），
+    /// 和檔案所在的資料夾不同時先切過去；`takes_file` 的命令才在後面接目前的檔案。
+    pub(crate) fn run_project_command(&mut self, command: &crate::project_cmd::ProjectCommand, file: &std::path::Path, extra_args: &str) {
+        let (command, file_text, extra) = (command.clone(), file.to_string_lossy().into_owned(), extra_args.to_owned());
+        let cwd = command.cwd.clone();
+        let cd_always = file.parent() != Some(cwd.as_path());
+        self.run_line_in_terminal(Some(&cwd), cd_always, move |kind| {
+            kind.command_line(&command.program.to_string_lossy(), &command.args, command.takes_file.then_some(file_text.as_str()), command.extra_sep, &extra)
+        });
+    }
+
+    /// 開（或沿用上次「執行」用的）終端機、送出 `make_line` 算出的命令列。沿用時先中斷上次還沒跑完的程式並切到 `cwd`；
+    /// 新開的終端機從目前檔案所在的資料夾開始，`cd_always` 為真時（命令要在別的資料夾執行）也先切過去。
+    fn run_line_in_terminal(&mut self, cwd: Option<&std::path::Path>, cd_always: bool, make_line: impl FnOnce(crate::terminal::ShellKind) -> String) {
         let reused = self.run_terminal.and_then(|uid| self.find_terminal_by_uid(uid));
         match reused {
             Some((pane, idx)) => self.show_terminal_tab(pane, idx),
@@ -423,12 +441,14 @@ impl App {
         let mut text = String::new();
         if reused.is_some() {
             text.push('\u{3}');
-            if let Some(dir) = file.parent() {
-                text.push_str(&kind.cd_line(&dir.to_string_lossy()));
-                text.push('\r');
-            }
         }
-        text.push_str(&kind.run_line(program, args, &file.to_string_lossy(), extra_args));
+        if (reused.is_some() || cd_always)
+            && let Some(dir) = cwd
+        {
+            text.push_str(&kind.cd_line(&dir.to_string_lossy()));
+            text.push('\r');
+        }
+        text.push_str(&make_line(kind));
         text.push('\r');
         terminal.queue_input(&text);
         self.run_terminal = Some(terminal.uid());

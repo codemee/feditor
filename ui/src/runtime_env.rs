@@ -1,4 +1,5 @@
-//! 自動搜尋執行環境：開啟某種語言的檔案時，找出該用哪個直譯器（目前只有 Python）。
+//! 自動搜尋執行環境：開啟某種語言的檔案時，找出該用哪個直譯器（Python，以及依 shebang 或副檔名判斷的
+//! bash、sh、zsh、PowerShell、cmd 腳本）。專案設定檔提供的命令（`cargo run`、`uv run`…）在 `project_cmd`。
 //!
 //! 搜尋順序（找到的都會列出來，第一個可以執行的是預設）：
 //! 1. 從檔案所在的資料夾往上，每一層找虛擬環境資料夾（`.venv`、`venv`、`env`；要有 `pyvenv.cfg` 才算）。
@@ -354,7 +355,7 @@ pub fn parse_version(rule: &Rule, output: &str) -> Option<String> {
 }
 
 /// 文字裡第一個「數字.數字…」的詞（前面不能緊接英數字）。
-fn first_dotted_number(text: &str) -> Option<String> {
+pub(crate) fn first_dotted_number(text: &str) -> Option<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {

@@ -402,13 +402,24 @@ impl ShellKind {
     /// 執行 `program args… file extra` 的一行指令（不含換行）。`extra` 是使用者寫的命令列參數，
     /// 原樣接在最後，交給 shell 自己解析（所以引號、變數、萬用字元都照那個 shell 的規則）。
     pub fn run_line(self, program: &str, args: &[String], file: &str, extra: &str) -> String {
+        self.command_line(program, args, Some(file), false, extra)
+    }
+
+    /// 一般的命令列：`program args… [file] [-- ]extra`。`file` 是 `None` 時不接檔案（`cargo run`）；
+    /// `extra_sep` 為真且有額外參數時，額外參數前面加 `--`（交給 `cargo run` 跑的程式本身）。
+    pub fn command_line(self, program: &str, args: &[String], file: Option<&str>, extra_sep: bool, extra: &str) -> String {
         // 固定參數（`-3`、`/c`）只有英數字與 `-/._` 時不加引號：`cmd "/c"` 這樣寫 cmd 會看不懂
         let plain = |a: &str| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || "-/._".contains(c));
         let mut words = vec![self.quote(program)];
         words.extend(args.iter().map(|a| if plain(a) { a.clone() } else { self.quote(a) }));
-        words.push(self.quote(file));
+        if let Some(file) = file {
+            words.push(self.quote(file));
+        }
         let extra = extra.trim();
         if !extra.is_empty() {
+            if extra_sep {
+                words.push("--".to_owned());
+            }
             words.push(extra.to_owned());
         }
         let line = words.join(" ");
@@ -770,6 +781,11 @@ mod tests {
         // 命令列參數原樣接在最後（前後空白去掉），交給 shell 解析
         assert_eq!(ShellKind::Posix.run_line("python", &[], "a.py", "  --port 8080 \"x y\"  "), r#"'python' 'a.py' --port 8080 "x y""#);
         assert_eq!(ShellKind::Posix.run_line("python", &[], "a.py", "   "), "'python' 'a.py'", "只有空白就當沒有");
+        // 專案命令：不接檔案；額外參數放在 -- 後面
+        assert_eq!(ShellKind::Posix.command_line("/u/cargo", &["run".to_owned()], None, true, "--port 1"), "'/u/cargo' run -- --port 1");
+        assert_eq!(ShellKind::Posix.command_line("/u/cargo", &["build".to_owned()], None, false, "--release"), "'/u/cargo' build --release");
+        assert_eq!(ShellKind::Posix.command_line("/u/cargo", &["run".to_owned()], None, true, "  "), "'/u/cargo' run", "沒有額外參數就不加 --");
+        assert_eq!(ShellKind::Posix.command_line("uv", &["run".to_owned()], Some("a b.py"), true, "-v"), "'uv' run 'a b.py' -- -v");
         assert_eq!(ShellKind::Posix.cd_line("/a b"), "cd '/a b'");
         assert_eq!(ShellKind::PowerShell.cd_line(r"C:\a b"), r"Set-Location -LiteralPath 'C:\a b'");
         assert_eq!(ShellKind::Cmd.cd_line(r"D:\a b"), r#"cd /d "D:\a b""#);

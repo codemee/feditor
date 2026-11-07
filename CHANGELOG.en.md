@@ -2,6 +2,14 @@
 
 # Changelog
 
+## [0.10.0] - 2026-11-08
+
+### Added
+- **Project commands (Rust and Python projects)**: when a `.rs` or `.py` file is open, FEditor looks upwards from its folder for `Cargo.toml` and `pyproject.toml` and puts the commands they can run (`cargo run` / `--example` / `--bin`, `cargo test`, `cargo build`, uv's `uv run file` and the `[project.scripts]` scripts, poetry's `poetry run`, scripts already installed in the `.venv`) in the "Project commands" section of the status bar runtime list, and the Run button uses it (the default is still the interpreter; Rust has none, so the first project command is used). **When the tool a command needs (`cargo`, `uv`, `poetry`) is not on the system or cannot run, no item that could not run is offered**; only one line of text with an install hint remains. Discovery only reads configuration files and checks that the tool works; it never runs a command from the project. See `docs/project-commands.en.md`.
+
+### Fixed
+- The code comment describing `runtime_env` still said "only Python for now"; corrected.
+
 ## [0.9.1] - 2026-11-07
 
 ### Fixed
@@ -242,6 +250,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0
 [0.9.1]: https://github.com/codemee/feditor/releases/tag/v0.9.1
 [0.9.0]: https://github.com/codemee/feditor/releases/tag/v0.9.0
 [0.8.0]: https://github.com/codemee/feditor/releases/tag/v0.8.0

@@ -25,6 +25,7 @@ mod session;
 mod settings;
 mod cli_command;
 mod file_assoc;
+mod project_cmd;
 mod runtime_env;
 mod shell_integration;
 #[cfg(target_os = "macos")]
@@ -380,6 +381,14 @@ fn form_row_tall(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)
     ui.end_row();
 }
 
+/// 「找到專案設定，但工具用不了」的說明文字（選單裡不能按的一行，也用在執行時的提示）。
+fn notice_text(notice: &project_cmd::Notice) -> String {
+    match &notice.problem {
+        None => tf!("找到專案設定（{}），但系統上沒有 {}", notice.evidence, notice.tool),
+        Some(reason) => tf!("找到專案設定（{}），但 {} 無法執行：{}", notice.evidence, notice.tool, reason),
+    }
+}
+
 /// 這一區的元件 hover／按下／展開時不畫外框，只保留底色。
 fn no_hover_outline(ui: &mut egui::Ui) {
     let w = &mut ui.visuals_mut().widgets;
@@ -580,6 +589,8 @@ enum Action {
     SetFileAssocGroup(String, bool),
     /// 手動選這個專案（專案資料夾）用的執行環境；`None` 是回到自動搜尋。
     SetRuntime(String, Option<String>),
+    /// 手動選專案命令：（`project_cmd::command_choice_key`, 命令的 id；`None` 回到自動）。
+    SetProjectCommand(String, Option<String>),
     /// 丟掉這個資料夾的搜尋結果重新搜尋。
     RefreshRuntime(PathBuf),
     /// 在終端機執行目前的檔案（用偵測到的執行環境）。
@@ -782,6 +793,8 @@ struct App {
     open_default_apps: fn(),
     /// 自動搜尋的執行環境（Python 的虛擬環境等）：背景搜尋與快取。
     runtime: runtime_env::Resolver,
+    /// 專案命令（`cargo run`、`uv run`…）的背景搜尋與快取，見 `project_cmd`。
+    project_runtime: project_cmd::Resolver,
     /// 「執行目前檔案」上次用的終端機（識別編號）；還在就重複使用，不會每次都多開一個。
     run_terminal: Option<u64>,
     allow_close: bool,
@@ -865,6 +878,7 @@ impl App {
             assoc_backend: file_assoc::apply,
             open_default_apps: file_assoc::open_default_apps_page,
             runtime: runtime_env::Resolver::default(),
+            project_runtime: project_cmd::Resolver::default(),
             run_terminal: None,
             allow_close: false,
             modal: None,
@@ -1675,6 +1689,12 @@ impl App {
     /// 目前這份文件能不能「在終端機執行」、用哪份規則找執行環境：不是終端機分頁、已經存成檔案、
     /// 而且是 Python，或是能判斷出直譯器的 shell 腳本（見 [`runtime_env::rule_for_file`]）。
     fn run_rule(&self) -> Option<&'static runtime_env::Rule> {
+        let lang = self.run_lang()?;
+        runtime_env::rule_for_file(lang, self.doc.path.as_deref()?, &self.doc.buffer.line_text(0))
+    }
+
+    /// 目前這份文件的語言名稱（語法上色的語言）：不是終端機分頁、已經存成檔案才有。
+    fn run_lang(&self) -> Option<&'static str> {
         if self.doc.terminal.is_some() {
             return None;
         }
@@ -1687,34 +1707,67 @@ impl App {
             let n = self.doc.buffer.len_chars().min(400);
             if n == 0 { None } else { syntax::detect(&self.doc.buffer.slice(0..n)) }
         })?;
-        runtime_env::rule_for_file(lang.name, path, &self.doc.buffer.line_text(0))
+        Some(lang.name)
     }
 
-    /// 在終端機執行目前的檔案：有未儲存的修改先存檔，用狀態列上選定（或自動找到）的直譯器。
+    /// 這份文件的專案命令（`cargo run`、`uv run`…）：語言有提供者才找；第一次問會在背景搜尋，回傳 `None`。
+    fn project_commands(&self, ctx: &egui::Context) -> Option<std::sync::Arc<project_cmd::ProjectResolved>> {
+        let lang = self.run_lang().filter(|l| project_cmd::supports(l))?;
+        self.project_runtime.get(ctx, lang, self.doc.path.as_deref()?)
+    }
+
+    /// 能不能「在終端機執行」目前的檔案：有直譯器規則（Python、shell 腳本），或找到了能執行的專案命令（Rust 的 Cargo 專案…）。
+    fn can_run(&self, ctx: &egui::Context) -> bool {
+        self.run_rule().is_some() || self.project_commands(ctx).is_some_and(|p| !p.commands.is_empty())
+    }
+
+    /// 在終端機執行目前的檔案：有未儲存的修改先存檔。用什麼執行見 [`project_cmd::active`]：
+    /// 手動選的專案命令、狀態列上選定（或自動找到）的直譯器、最後才是第一個專案命令。
     fn run_current_file(&mut self, ctx: &egui::Context) {
-        let Some(rule) = self.run_rule() else {
-            let message = if self.doc.path.is_none() { t("請先儲存檔案再執行") } else { t("這個檔案不能在終端機執行：支援 Python，以及有 shebang 或副檔名明確的 shell 腳本（.sh、.zsh、.ps1、.bat…）") };
+        let rule = self.run_rule();
+        let lang = self.run_lang().filter(|l| project_cmd::supports(l));
+        let Some(path) = self.doc.path.clone().filter(|_| rule.is_some() || lang.is_some()) else {
+            let message = if self.doc.path.is_none() {
+                t("請先儲存檔案再執行")
+            } else {
+                t("這個檔案不能在終端機執行：支援 Python、有 shebang 或副檔名明確的 shell 腳本（.sh、.zsh、.ps1、.bat…），以及有專案設定檔的 Rust、Python 專案")
+            };
             self.push(LogKind::Info, message.to_owned());
             return;
         };
-        let Some(path) = self.doc.path.clone() else { return };
         if self.doc.dirty && !self.save() {
             return; // 存檔失敗或取消：不要執行舊的內容
         }
         let Some(dir) = path.parent() else { return };
-        let choice = runtime_env::choice_key(rule, &runtime_env::project_root(dir).display().to_string());
-        let manual = self.settings.runtime_choices.get(&choice).cloned();
-        let Some(found) = self.runtime.get(ctx, rule, dir) else {
+        let root = runtime_env::project_root(dir).display().to_string();
+        let manual = rule.and_then(|r| self.settings.runtime_choices.get(&runtime_env::choice_key(r, &root)).cloned());
+        let manual_command = lang.and_then(|l| self.settings.runtime_choices.get(&project_cmd::command_choice_key(l, &root)).cloned());
+        let interpreters = rule.map(|r| self.runtime.get(ctx, r, dir));
+        let project = if lang.is_some() { self.project_commands(ctx) } else { None };
+        if interpreters.as_ref().is_some_and(Option::is_none) || (lang.is_some() && project.is_none()) {
             self.push(LogKind::Info, t("正在搜尋執行環境，請稍後再按一次").to_owned());
             return;
-        };
-        let Some(item) = found.chosen(manual.as_deref()) else {
-            self.push(LogKind::Warn, tf!("找不到可以執行 {} 的直譯器", rule.label));
-            return;
-        };
-        let candidate = item.candidate.clone();
+        }
+        let interpreters = interpreters.flatten();
         let extra = self.settings.run_args.get(&path.display().to_string()).cloned().unwrap_or_default();
-        self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path, &extra);
+        match project_cmd::active(manual_command.as_deref(), manual.as_deref(), interpreters.as_deref(), project.as_deref()) {
+            project_cmd::Active::Command(command) => {
+                let command = command.clone();
+                self.run_project_command(&command, &path, &extra);
+            }
+            project_cmd::Active::Interpreter(item) => {
+                let candidate = item.candidate.clone();
+                self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path, &extra);
+            }
+            project_cmd::Active::None => {
+                let notice = project.as_ref().and_then(|p| p.notices.first());
+                match (rule, notice) {
+                    (_, Some(notice)) => self.push(LogKind::Warn, notice_text(notice)),
+                    (Some(rule), None) => self.push(LogKind::Warn, tf!("找不到可以執行 {} 的直譯器", rule.label)),
+                    (None, None) => self.push(LogKind::Warn, tf!("找不到可以執行 {} 檔案的專案設定", lang.unwrap_or_default())),
+                }
+            }
+        }
     }
 
     /// 套用「預設開啟」的設定（總開關 `on`、類別 `groups`）。成功才記進設定；失敗就維持原樣並顯示錯誤。
@@ -2458,7 +2511,21 @@ impl App {
                     self.update_file_assoc(self.settings.file_assoc, groups);
                 }
             }
+            Action::SetProjectCommand(key, choice) => {
+                match choice {
+                    Some(id) => {
+                        self.settings.runtime_choices.insert(key, id);
+                    }
+                    None => {
+                        self.settings.runtime_choices.remove(&key);
+                    }
+                }
+                self.mark_settings_dirty();
+            }
             Action::SetRuntime(project, choice) => {
+                // 改選直譯器（或回到自動）就不再用手動選的專案命令：命令的鍵是「專案#cmd:語言」，直譯器的鍵是專案本身
+                let command_prefix = format!("{project}#cmd:");
+                self.settings.runtime_choices.retain(|k, _| !k.starts_with(&command_prefix));
                 match choice {
                     Some(program) => {
                         self.settings.runtime_choices.insert(project, program);
@@ -2469,7 +2536,10 @@ impl App {
                 }
                 self.mark_settings_dirty();
             }
-            Action::RefreshRuntime(dir) => self.runtime.refresh(Some(&dir)),
+            Action::RefreshRuntime(dir) => {
+                self.runtime.refresh(Some(&dir));
+                self.project_runtime.refresh();
+            }
             Action::RunFile => self.run_current_file(ctx),
             Action::SetRunArgs(file, args) => {
                 if args.trim().is_empty() {
@@ -2656,12 +2726,12 @@ impl App {
                     });
                 });
             }
-            // 在終端機執行目前的檔案：存成檔案、而且語言有執行環境規則（Python）才能按
-            let can_run = self.run_rule().is_some();
+            // 在終端機執行目前的檔案：存成檔案、而且語言有執行環境規則（Python、shell 腳本），或找得到專案命令才能按
+            let can_run = self.can_run(ui.ctx());
             let run_tip = if can_run {
                 t("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）")
             } else {
-                t("在終端機執行目前的檔案（要先儲存成檔案，而且是 Python，或有 shebang 或副檔名明確的 shell 腳本）")
+                t("在終端機執行目前的檔案（要先儲存成檔案，而且是 Python、有 shebang 或副檔名明確的 shell 腳本，或有專案設定檔的 Rust、Python 專案）")
             };
             ui.spacing_mut().item_spacing.x = 0.0; // 和下拉箭頭同一組：中間不留縫
             if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
@@ -4568,46 +4638,86 @@ impl App {
 
                 // 執行環境（語言的左邊，前後各有分隔線自成一組）：Python、能判斷出直譯器的 shell 腳本才顯示。
                 // 做成和語言、編碼一樣的下拉清單，看得出來可以點；清單裡有所有候選、手動改選、重新搜尋
-                if let Some(rule) = self.run_rule()
+                // Rust、Python 專案另外有專案命令（Cargo.toml、pyproject.toml 裡的命令），放在同一個清單的下一段
+                let rule = self.run_rule();
+                let lang = self.run_lang().filter(|l| project_cmd::supports(l));
+                let project_found = self.project_commands(ui.ctx());
+                if (rule.is_some() || project_found.as_ref().is_some_and(|p| !p.is_empty()))
                     && let Some(file) = self.doc.path.as_deref()
                     && let Some(dir) = file.parent()
                 {
-                    // 手動選擇依專案、依直譯器種類記住（Python 與各種 shell 各選各的）
-                    let project = runtime_env::choice_key(rule, &runtime_env::project_root(dir).display().to_string());
-                    let manual = self.settings.runtime_choices.get(&project).cloned();
-                    let found = self.runtime.get(ui.ctx(), rule, dir);
-                    let text = match &found {
-                        None => format!("{}…", rule.label),
-                        Some(r) => match r.chosen(manual.as_deref()) {
-                            Some(item) => format!("{} · {}", runtime_env::describe(rule, item), item.candidate.origin),
-                            None => tf!("{}：找不到", rule.label),
+                    // 手動選擇依專案、依直譯器種類記住（Python 與各種 shell 各選各的）；專案命令另外用「專案#cmd:語言」記
+                    let root = runtime_env::project_root(dir).display().to_string();
+                    let project = rule.map(|r| runtime_env::choice_key(r, &root)).unwrap_or_else(|| root.clone());
+                    let manual = rule.and_then(|_| self.settings.runtime_choices.get(&project).cloned());
+                    let command_key = lang.map(|l| project_cmd::command_choice_key(l, &root)).unwrap_or_default();
+                    let manual_command = self.settings.runtime_choices.get(&command_key).cloned();
+                    let found = rule.and_then(|r| self.runtime.get(ui.ctx(), r, dir));
+                    let label = rule.map_or_else(|| lang.unwrap_or_default().to_owned(), |r| r.label.to_owned());
+                    let active = project_cmd::active(manual_command.as_deref(), manual.as_deref(), found.as_deref(), project_found.as_deref());
+                    let pending = rule.is_some() && found.is_none();
+                    let text = match &active {
+                        project_cmd::Active::Command(c) => c.label.clone(),
+                        project_cmd::Active::Interpreter(item) => match rule {
+                            Some(rule) => format!("{} · {}", runtime_env::describe(rule, item), item.candidate.origin),
+                            None => String::new(),
                         },
+                        project_cmd::Active::None if pending => format!("{label}…"),
+                        project_cmd::Active::None => tf!("{}：找不到", label),
                     };
                     status_separator(ui);
-                    // 找不到的時候，旁邊直接放一個重新搜尋鈕（剛建好環境不用先打開清單）
-                    let not_found = found.as_ref().is_some_and(|r| r.chosen(manual.as_deref()).is_none());
+                    // 找不到的時候，旁邊直接放一個重新搜尋鈕（剛建好環境、剛裝好工具不用先打開清單）
+                    let not_found = matches!(active, project_cmd::Active::None) && !pending;
                     if not_found && icons::small_button(ui, Icon::Reload, t("重新搜尋執行環境"), true).clicked() {
                         action = Some(Action::RefreshRuntime(dir.to_path_buf()));
                     }
+                    let command_active = matches!(active, project_cmd::Active::Command(_));
                     egui::ComboBox::from_id_salt("runtime_env")
                         .icon(icons::combo_chevron)
                         .width(combo_width(ui, [text.as_str()]))
                         .selected_text(text.as_str())
                         .show_ui(ui, |ui| {
                             flat_list(ui, |ui| {
-                                ui.label(egui::RichText::new(tf!("{} 執行環境", rule.label)).color(ui.visuals().weak_text_color()));
-                                if ui.selectable_label(manual.is_none(), t("自動")).clicked() {
-                                    action = Some(Action::SetRuntime(project.clone(), None));
+                                let weak = |ui: &egui::Ui, text: String| egui::RichText::new(text).color(ui.visuals().weak_text_color());
+                                if let Some(rule) = rule {
+                                    ui.label(weak(ui, tf!("{} 執行環境", rule.label)));
+                                    if ui.selectable_label(manual.is_none() && manual_command.is_none(), t("自動")).clicked() {
+                                        action = Some(Action::SetRuntime(project.clone(), None));
+                                    }
+                                    for item in found.iter().flat_map(|r| r.items.iter()) {
+                                        let c = &item.candidate;
+                                        let label = match &item.version {
+                                            Some(_) => format!("{} · {}  ({})", runtime_env::describe(rule, item), c.origin, c.program.display()),
+                                            None => format!("{}（{}）", c.program.display(), t("無法執行")),
+                                        };
+                                        let selected = !command_active && manual.as_deref() == Some(c.key().as_str());
+                                        if ui.add_enabled(item.version.is_some(), egui::Button::selectable(selected, label)).clicked() {
+                                            action = Some(Action::SetRuntime(project.clone(), Some(c.key())));
+                                        }
+                                    }
                                 }
-                                for item in found.iter().flat_map(|r| r.items.iter()) {
-                                    let c = &item.candidate;
-                                    let label = match &item.version {
-                                        Some(_) => format!("{} · {}  ({})", runtime_env::describe(rule, item), c.origin, c.program.display()),
-                                        None => format!("{}（{}）", c.program.display(), t("無法執行")),
+                                // 專案命令：只放確認能執行的；工具用不了的只留一行不能按的說明（不放按了也執行不了的項目）
+                                if let Some(found_project) = project_found.as_ref().filter(|p| !p.is_empty()) {
+                                    if rule.is_some() {
+                                        ui.separator();
+                                    }
+                                    let heading = if found_project.sources.is_empty() {
+                                        t("專案命令").to_owned()
+                                    } else {
+                                        tf!("專案命令（{}）", found_project.sources.join(", "))
                                     };
-                                    let selected = manual.as_deref() == Some(c.key().as_str());
-                                    if ui.add_enabled(item.version.is_some(), egui::Button::selectable(selected, label)).clicked() {
-                                        action = Some(Action::SetRuntime(project.clone(), Some(c.key())));
+                                    ui.label(weak(ui, heading));
+                                    if rule.is_none() && !found_project.commands.is_empty() && ui.selectable_label(manual_command.is_none(), t("自動")).clicked() {
+                                        action = Some(Action::SetProjectCommand(command_key.clone(), None));
+                                    }
+                                    for c in &found_project.commands {
+                                        let selected = matches!(&active, project_cmd::Active::Command(a) if a.id == c.id);
+                                        if ui.add(egui::Button::selectable(selected, c.label.as_str())).on_hover_text(c.tooltip()).clicked() {
+                                            action = Some(Action::SetProjectCommand(command_key.clone(), Some(c.id.clone())));
+                                        }
+                                    }
+                                    for notice in &found_project.notices {
+                                        ui.label(weak(ui, notice_text(notice))).on_hover_text(tf!("安裝提示：{}", notice.hint));
                                     }
                                 }
                                 ui.separator();
@@ -6058,6 +6168,51 @@ mod tests {
         assert_eq!(app.settings.run_args.get("/a/x.py").map(String::as_str), Some("--debug"));
         app.handle(Action::SetRunArgs("/a/x.py".to_owned(), "   ".to_owned()), &ctx);
         assert!(app.settings.run_args.is_empty(), "空白就是沒有參數");
+    }
+
+    #[test]
+    fn choosing_a_project_command_is_remembered_and_choosing_an_interpreter_clears_it() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        let key = project_cmd::command_choice_key("Python", "/proj");
+        app.handle(Action::SetProjectCommand(key.clone(), Some("uv:file".to_owned())), &ctx);
+        assert_eq!(app.settings.runtime_choices.get(&key).map(String::as_str), Some("uv:file"));
+        assert!(app.settings_dirty_since.is_some(), "要寫進設定");
+        // 手動選了直譯器：不再用手動選的專案命令；別的專案的選擇不受影響
+        app.handle(Action::SetProjectCommand(project_cmd::command_choice_key("Python", "/other"), Some("uv:file".to_owned())), &ctx);
+        app.handle(Action::SetRuntime("/proj".to_owned(), Some("/usr/bin/python3".to_owned())), &ctx);
+        assert!(!app.settings.runtime_choices.contains_key(&key));
+        assert_eq!(app.settings.runtime_choices.get("/proj").map(String::as_str), Some("/usr/bin/python3"));
+        assert!(app.settings.runtime_choices.contains_key(&project_cmd::command_choice_key("Python", "/other")));
+        // 回到自動：直譯器與專案命令的手動選擇都清掉
+        app.handle(Action::SetProjectCommand(key.clone(), Some("uv:file".to_owned())), &ctx);
+        app.handle(Action::SetRuntime("/proj".to_owned(), None), &ctx);
+        assert!(!app.settings.runtime_choices.contains_key(&key) && !app.settings.runtime_choices.contains_key("/proj"));
+        app.handle(Action::SetProjectCommand(project_cmd::command_choice_key("Python", "/other"), None), &ctx);
+        assert!(app.settings.runtime_choices.is_empty());
+    }
+
+    #[test]
+    fn a_rust_file_outside_any_cargo_project_cannot_be_run() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap(); // 搜尋到這裡就停，不會用到外面的 Cargo.toml
+        let rs = dir.path().join("a.rs");
+        std::fs::write(&rs, "fn main() {}\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.open_path(&rs);
+        assert_eq!(app.run_lang(), Some("Rust"));
+        // 背景搜尋完以後：沒有專案設定，就沒有命令也沒有說明
+        let start = std::time::Instant::now();
+        let found = loop {
+            if let Some(found) = app.project_commands(&ctx) {
+                break found;
+            }
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "背景搜尋太久");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(found.is_empty());
+        assert!(!app.can_run(&ctx));
     }
 
     #[test]

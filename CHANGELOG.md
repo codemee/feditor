@@ -2,6 +2,14 @@
 
 # 更新紀錄
 
+## [0.10.0] - 2026-11-08
+
+### 新增
+- **專案命令（Rust、Python 專案）**：開啟 `.rs` 或 `.py` 檔時，從檔案所在的資料夾往上找 `Cargo.toml`、`pyproject.toml`，把裡面能執行的命令（`cargo run`／`--example`／`--bin`、`cargo test`、`cargo build`，uv 的 `uv run 檔案` 與 `[project.scripts]` 腳本，poetry 的 `poetry run`，`.venv` 裡已經裝好的腳本）放進狀態列執行環境清單的「專案命令」一段，「執行」鈕就用它（預設仍是直譯器；Rust 沒有直譯器就用第一個專案命令）。**命令需要的工具（`cargo`、`uv`、`poetry`）不在系統上或跑不起來時，不放按了也執行不了的項目**，只留一行說明與安裝提示。探測只讀設定檔、確認工具能用，不執行專案裡的任何命令。設計見 `docs/project-commands.md`。
+
+### 修正
+- 程式碼註解裡 `runtime_env` 的說明仍寫「目前只有 Python」，已更正。
+
 ## [0.9.1] - 2026-11-07
 
 ### 修正
@@ -242,6 +250,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0
 [0.9.1]: https://github.com/codemee/feditor/releases/tag/v0.9.1
 [0.9.0]: https://github.com/codemee/feditor/releases/tag/v0.9.0
 [0.8.0]: https://github.com/codemee/feditor/releases/tag/v0.8.0
