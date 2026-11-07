@@ -6,6 +6,7 @@
 
 ### Fixed
 - **Boxes (missing glyphs) in the interface on Linux**: the fullwidth "＋", "－" and "／" in some help texts exist in Windows' Microsoft JhengHei but the fallback CJK fonts on Linux often lack them (for example the font-size hint under "Editor" in the settings panel). Interface texts now use the ASCII `+`, `-` and `/`, which every font has, and a test keeps fullwidth ＋ － ／ ＝ out of them.
+- **A new blank document could not be added while a blank untitled tab was active**: pressing "New" did nothing when the active tab was a blank, unmodified untitled one. It now adds another one ("Untitled 2", ...); opening a file still reuses the active blank tab so no empty tab is left behind.
 - **The font-size hint in the settings panel was too small to read**: it used a reduced size together with a pale gray; it is now as large as the other settings (still pale gray).
 
 ## [0.9.0] - 2026-11-07

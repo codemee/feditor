@@ -1781,7 +1781,6 @@ impl App {
         self.doc.terminal.is_none() && self.doc.path.is_none() && !self.doc.dirty && self.doc.buffer.is_empty()
     }
 
-    /// 分頁換了：搜尋結果屬於上一個分頁，作廢。
     /// 幫還沒有檔案的文件編序號（「未命名 1」「未命名 2」…）：每份取開著的未命名文件裡最小的空號，
     /// 存成檔案的文件讓出號碼。要在每個畫面和分頁變動時呼叫（很便宜）。
     fn number_untitled_docs(&mut self) {
@@ -1808,6 +1807,7 @@ impl App {
         }
     }
 
+    /// 分頁換了：搜尋結果屬於上一個分頁，作廢。
     fn tab_changed(&mut self) {
         self.number_untitled_docs();
         // 換了分頁（切換、新增、開啟、關閉都算）：鍵盤焦點回到編輯區，可以直接打字
@@ -1949,10 +1949,9 @@ impl App {
         }
     }
 
+    /// 新增一份空白文件（開在新分頁）。已經有空白的未命名分頁也照開：每份有自己的序號（「未命名 2」），
+    /// 要多開幾份由使用者決定。（開檔案時才會重用作用中的空白分頁，見 [`App::open_path`]。）
     fn new_document(&mut self) {
-        if self.is_pristine() {
-            return;
-        }
         self.tabs
             .push(&mut self.doc, &mut self.editor, Document::new());
         self.tab_changed();
@@ -5591,10 +5590,9 @@ mod tests {
         let mut app = App::new(None, Settings::default());
         app.number_untitled_docs();
         assert_eq!(app.doc.name(), "未命名 1");
-        app.new_document(); // 第一份是空白的，不另開
-        make_active_tab_dirty(&mut app);
-        app.new_document();
+        app.new_document(); // 已經在空白的未命名分頁上，照樣新增
         assert_eq!(app.doc.name(), "未命名 2");
+        assert_eq!(app.tabs.len(), 2);
         let first = app.layout.focus;
         app.move_tab(first, 1, Target::Split(first, Side::Right)); // [未命名 1] | [未命名 2]
         let names: Vec<_> = pane_names(&app).into_iter().flat_map(|(_, n)| n).collect();
@@ -6594,7 +6592,13 @@ mod tests {
         app.new_document();
         assert_eq!(app.tabs.len(), 3);
         app.new_document();
-        assert_eq!(app.tabs.len(), 3, "已經在空白文件上就不再多開");
+        assert_eq!(app.tabs.len(), 4, "已經在空白文件上，「新增」照樣多開一份（各有序號）");
+        // 開檔案時才會用掉作用中的空白分頁：不會因此多出空分頁
+        let c = dir.path().join("c.txt");
+        std::fs::write(&c, "ccc").unwrap();
+        app.open_path(&c);
+        assert_eq!(app.tabs.len(), 4, "作用中的空白分頁被開檔案用掉");
+        assert_eq!(app.doc.text(), "ccc");
     }
 
     #[test]
