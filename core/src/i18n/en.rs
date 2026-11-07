@@ -292,7 +292,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("語法上色（依副檔名）", "Syntax coloring (by file extension)"),
     ("自動換行（超過 {} 行的檔案不支援）", "Word wrap (not supported for files over {} lines)"),
     ("自動換行", "Word wrap"),
-    ("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設（點在預覽窗格或終端機上時，調的是它們各自的字級）", "Font size: Ctrl + / − or Ctrl + mouse wheel; Ctrl + 0 resets it (when the preview pane or a terminal is clicked, it adjusts that one's own font size)"),
+    ("調整字級：Ctrl + / - 或 Ctrl + 滾輪；Ctrl + 0 還原預設（點在預覽窗格或終端機上時，調的是它們各自的字級）", "Font size: Ctrl + / - or Ctrl + mouse wheel; Ctrl + 0 resets it (when the preview pane or a terminal is clicked, it adjusts that one's own font size)"),
     ("終端機字級", "Terminal font size"),
     ("最低對比度", "Minimum contrast"),
     ("終端機文字和底色的對比低於這個值時，自動把文字調整到看得清楚；拉到最小就是不調整", "When the contrast between terminal text and its background is below this value, the text is adjusted until it is readable; the minimum means no adjustment"),
@@ -346,7 +346,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("開不了終端機，沒辦法執行", "Could not open a terminal to run it in"),
     ("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）", "Run the current file in the terminal (using the environment shown in the status bar; unsaved changes are saved first)"),
     (
-        "在終端機執行目前的檔案（要先儲存成檔案，而且是 Python，或有 shebang／副檔名明確的 shell 腳本）",
+        "在終端機執行目前的檔案（要先儲存成檔案，而且是 Python，或有 shebang 或副檔名明確的 shell 腳本）",
         "Run the current file in the terminal (the file must be saved and be Python or a shell script with a shebang or a clear extension)",
     ),
     ("重新搜尋", "Search again"),

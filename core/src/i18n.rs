@@ -327,4 +327,17 @@ mod tests {
             assert_eq!(names(zh), names(en), "參數名稱要一致：{zh}");
         }
     }
+
+    /// 全形的 ＋ － ／ ＝ 在 Windows 的微軟正黑體裡有，但 Linux 上後備的中文字型常常沒有，介面就會出現方框（缺字）。
+    /// 介面文字一律用半形的 + - / =，任何字型都畫得出來。
+    #[test]
+    fn interface_strings_avoid_fullwidth_math_symbols_that_linux_fonts_often_lack() {
+        for (zh, en) in en::ENGLISH {
+            for text in [zh, en] {
+                if let Some(c) = text.chars().find(|c| "＋－／＝".contains(*c)) {
+                    panic!("介面文字不要用全形的「{c}」（有些字型沒有這個字）：{zh}");
+                }
+            }
+        }
+    }
 }

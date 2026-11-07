@@ -2651,7 +2651,7 @@ impl App {
             let run_tip = if can_run {
                 t("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）")
             } else {
-                t("在終端機執行目前的檔案（要先儲存成檔案，而且是 Python，或有 shebang／副檔名明確的 shell 腳本）")
+                t("在終端機執行目前的檔案（要先儲存成檔案，而且是 Python，或有 shebang 或副檔名明確的 shell 腳本）")
             };
             ui.spacing_mut().item_spacing.x = 0.0; // 和下拉箭頭同一組：中間不留縫
             if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
@@ -3613,8 +3613,8 @@ impl App {
         });
         ui.add_space(2.0);
         ui.label(
-            egui::RichText::new(t("調整字級：Ctrl ＋／－ 或 Ctrl＋滾輪；Ctrl＋0 還原預設（點在預覽窗格或終端機上時，調的是它們各自的字級）"))
-                .small()
+            // 說明文字和其他設定項目一樣大：縮小的字加上淡灰色，在設定面板裡幾乎看不清楚
+            egui::RichText::new(t("調整字級：Ctrl + / - 或 Ctrl + 滾輪；Ctrl + 0 還原預設（點在預覽窗格或終端機上時，調的是它們各自的字級）"))
                 .color(ui.visuals().weak_text_color()),
         );
         }
