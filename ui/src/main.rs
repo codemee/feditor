@@ -369,6 +369,17 @@ fn form_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     ui.end_row();
 }
 
+/// 內容會往下長的一列（例如一串勾選框）：右欄用直向排列，格子才會算進整個高度，
+/// 下一列不會疊上來（`form_row` 的右欄是橫向、置中對齊，內容比一列高時高度算不進去）。
+fn form_row_tall(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.set_min_height(icons::BUTTON_HEIGHT);
+        ui.label(label);
+    });
+    ui.vertical(add);
+    ui.end_row();
+}
+
 /// 這一區的元件 hover／按下／展開時不畫外框，只保留底色。
 fn no_hover_outline(ui: &mut egui::Ui) {
     let w = &mut ui.visuals_mut().widgets;
@@ -3410,26 +3421,24 @@ impl App {
             }
             // 預設開啟：雙按選到的類別的檔案時直接用 FEditor 開啟；類別在下面一個一個勾
             if file_assoc::supported() {
-                form_row(ui, t("預設開啟"), |ui| {
-                    ui.vertical(|ui| {
-                        let mut on = self.settings.file_assoc;
+                form_row_tall(ui, t("預設開啟"), |ui| {
+                    let mut on = self.settings.file_assoc;
+                    let response = ui
+                        .checkbox(&mut on, t("雙按檔案時用 FEditor 開啟"))
+                        .on_hover_text(t("雙按選到的類別的檔案時，直接用 FEditor 開啟（Windows 登記在「預設應用程式」、macOS 設定預設處理程式、Linux 寫 mimeapps.list）；取消勾選就還原"));
+                    if response.changed() {
+                        action = Some(Action::SetFileAssoc(on));
+                    }
+                    for group in file_assoc::GROUPS {
+                        let mut checked = self.settings.file_assoc_groups.contains(group.key);
+                        let extensions: Vec<String> = group.extensions.iter().map(|e| format!(".{e}")).collect();
                         let response = ui
-                            .checkbox(&mut on, t("雙按檔案時用 FEditor 開啟"))
-                            .on_hover_text(t("雙按選到的類別的檔案時，直接用 FEditor 開啟（Windows 登記在「預設應用程式」、macOS 設定預設處理程式、Linux 寫 mimeapps.list）；取消勾選就還原"));
+                            .add_enabled(self.settings.file_assoc, egui::Checkbox::new(&mut checked, group.label()))
+                            .on_hover_text(extensions.join(" "));
                         if response.changed() {
-                            action = Some(Action::SetFileAssoc(on));
+                            action = Some(Action::SetFileAssocGroup(group.key.to_owned(), checked));
                         }
-                        for group in file_assoc::GROUPS {
-                            let mut checked = self.settings.file_assoc_groups.contains(group.key);
-                            let extensions: Vec<String> = group.extensions.iter().map(|e| format!(".{e}")).collect();
-                            let response = ui
-                                .add_enabled(self.settings.file_assoc, egui::Checkbox::new(&mut checked, group.label()))
-                                .on_hover_text(extensions.join(" "));
-                            if response.changed() {
-                                action = Some(Action::SetFileAssocGroup(group.key.to_owned(), checked));
-                            }
-                        }
-                    });
+                    }
                 });
             }
             // 終端機指令（macOS、Linux）：在 ~/.local/bin 放一個 feditor 指令
@@ -6338,6 +6347,46 @@ mod tests {
         assert_eq!(app.settings.preview_font_size, settings::MAX_FONT_SIZE, "拉回範圍內");
         app.handle(Action::SetPreviewFontSize(f32::NAN), &ctx);
         assert_eq!(app.settings.preview_font_size, DEFAULT_PREVIEW_FONT_SIZE, "不是數字就用預覽自己的預設");
+    }
+
+    /// 設定面板「介面」頁：「預設開啟」那一列有一串勾選框（比一般列高），
+    /// 它下面的「終端機指令」列不能疊在最後一個勾選框上。
+    #[test]
+    fn settings_row_after_the_tall_default_open_row_does_not_overlap_it() {
+        if !cli_command::supported() {
+            return; // 「預設開啟」後面有下一列的只有 macOS、Linux
+        }
+        let (app, _dir) = app_for_preview();
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0)));
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(raw.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    app.settings_page(ui, 0);
+                });
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.galley.rect.translate(t.pos.to_vec2()))),
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for s in &shapes {
+            texts(&s.shape, &mut found);
+        }
+        let rect_of = |text: &str| found.iter().find(|(t, _)| t == text).map(|(_, r)| *r);
+        let last_group = file_assoc::GROUPS.last().unwrap().label().to_owned();
+        let (Some(last), Some(cli)) = (rect_of(&last_group), rect_of(&t("終端機指令"))) else {
+            panic!("找不到文字：{found:?}");
+        };
+        assert!(cli.top() >= last.bottom(), "「終端機指令」（{cli:?}）疊在「{last_group}」（{last:?}）上");
     }
 
     #[test]

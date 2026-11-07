@@ -9,6 +9,8 @@
 - **A new blank document could not be added while a blank untitled tab was active**: pressing "New" did nothing when the active tab was a blank, unmodified untitled one. It now adds another one ("Untitled 2", ...); opening a file still reuses the active blank tab so no empty tab is left behind.
 - **The font-size hint in the settings panel was too small to read**: it used a reduced size together with a pale gray; it is now as large as the other settings (still pale gray).
 
+- **The "Terminal command" row in the settings panel overlapped the "Open by default" checkboxes** (macOS, Linux): the "Open by default" row holds a column of checkboxes taller than a normal row, the grid did not count that height, so the next row was drawn over it. The cell now uses a vertical layout, and a test measures the layout.
+
 ## [0.9.0] - 2026-11-07
 
 ### Added
