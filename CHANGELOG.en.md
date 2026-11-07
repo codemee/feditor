@@ -2,14 +2,16 @@
 
 # Changelog
 
-## [Unreleased]
+## [0.9.1] - 2026-11-07
 
 ### Fixed
 - **Boxes (missing glyphs) in the interface on Linux**: the fullwidth "＋", "－" and "／" in some help texts exist in Windows' Microsoft JhengHei but the fallback CJK fonts on Linux often lack them (for example the font-size hint under "Editor" in the settings panel). Interface texts now use the ASCII `+`, `-` and `/`, which every font has, and a test keeps fullwidth ＋ － ／ ＝ out of them.
 - **A new blank document could not be added while a blank untitled tab was active**: pressing "New" did nothing when the active tab was a blank, unmodified untitled one. It now adds another one ("Untitled 2", ...); opening a file still reuses the active blank tab so no empty tab is left behind.
 - **The font-size hint in the settings panel was too small to read**: it used a reduced size together with a pale gray; it is now as large as the other settings (still pale gray).
-
 - **The "Terminal command" row in the settings panel overlapped the "Open by default" checkboxes** (macOS, Linux): the "Open by default" row holds a column of checkboxes taller than a normal row, the grid did not count that height, so the next row was drawn over it. The cell now uses a vertical layout, and a test measures the layout.
+
+### Documentation
+- Known issues now explains the Chinese boxes in the WSL (WSLg) title bar and the fix: it happens with a `C.UTF-8` system locale and goes away with a Chinese locale.
 
 ## [0.9.0] - 2026-11-07
 
@@ -240,6 +242,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.9.1]: https://github.com/codemee/feditor/releases/tag/v0.9.1
 [0.9.0]: https://github.com/codemee/feditor/releases/tag/v0.9.0
 [0.8.0]: https://github.com/codemee/feditor/releases/tag/v0.8.0
 [0.7.0]: https://github.com/codemee/feditor/releases/tag/v0.7.0

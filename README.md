@@ -153,6 +153,7 @@
 
 - 輸入法只在 Windows 上驗證過，macOS 與 Linux 尚未驗證。
 - macOS 的 `FEditor.app` 沒有 Apple 公證，也還沒有完整實測過。Finder 對檔案按右鍵 →「打開檔案的應用程式」會列出 FEditor（宣告成文字類檔案的 Alternate 編輯器，不會搶走預設程式），選了就開檔；把檔案拖到 Dock 的圖示上也行。
+- WSL（WSLg）裡視窗標題列的中文變成方框：系統語系是 `C.UTF-8`（沒有安裝中文語系）時會這樣，不是 FEditor 的問題。把 `LANG` 設成已安裝的中文語系（例如 `zh_TW.UTF-8`）、重開 FEditor 就正常。沒有 root 時可以用 `localedef -i zh_TW -f UTF-8 ~/.local/share/locale-gen/zh_TW.UTF-8` 在家目錄產生語系，再在 `~/.profile` 加 `export LOCPATH="$HOME/.local/share/locale-gen"` 與 `export LANG=zh_TW.UTF-8`。
 - 單行極長（數十萬字元）時該行會變慢；行數超過約 1,000,000 時垂直捲動的位置有精度限制（400 萬行、346 MB 的檔案可以開啟操作，但行距會有肉眼可見的抖動）。
 - Windows 的輸入法有焦點時，部分 Ctrl+Alt＋字母的組合會被輸入法吃掉。
 - 終端機是實驗功能，目前在 Windows 上測試最完整。

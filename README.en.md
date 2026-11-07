@@ -153,6 +153,7 @@ The full API and the header markers are in [Macros](docs/macros.en.md); examples
 
 - The IME has only been verified on Windows; macOS and Linux are untested.
 - The macOS `FEditor.app` is not notarized and has not been fully tested. Right-click a file in Finder → "Open With" lists FEditor (declared as an Alternate editor for text-like files, so it does not take over the default app) and opens the file; dropping files on the Dock icon works too.
+- In WSL (WSLg) the Chinese in the window title bar shows as boxes: this happens when the system locale is `C.UTF-8` (no Chinese locale installed) and is not a FEditor problem. Set `LANG` to an installed Chinese locale (for example `zh_TW.UTF-8`) and restart FEditor. Without root you can generate the locale in your home folder with `localedef -i zh_TW -f UTF-8 ~/.local/share/locale-gen/zh_TW.UTF-8` and add `export LOCPATH="$HOME/.local/share/locale-gen"` and `export LANG=zh_TW.UTF-8` to `~/.profile`.
 - A single very long line (hundreds of thousands of characters) makes that line slow; above about 1,000,000 lines the vertical scroll position has limited precision (a 4-million-line, 346 MB file opens and can be edited, but the line spacing visibly jitters).
 - While the IME has the focus on Windows, some Ctrl+Alt+letter combinations are swallowed by the IME.
 - The terminal is experimental and is best tested on Windows so far.
