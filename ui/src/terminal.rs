@@ -450,6 +450,7 @@ pub fn is_default_shell(option: &ShellOption, configured: &str, system: &ShellCo
 
 /// 指令（程式加參數）裡那個程式的實際檔案路徑：寫了路徑就用它，只有程式名稱就在 PATH 裡找（也試加上 `.exe`）。
 /// `path_var` 是 PATH 的內容，`is_file` 判斷檔案存不存在（測試時可以換掉）。
+#[cfg(any(windows, test))]
 pub fn program_path_in(command: &str, path_var: Option<&std::ffi::OsStr>, is_file: &dyn Fn(&std::path::Path) -> bool) -> Option<PathBuf> {
     let program = split_command(command).into_iter().next()?;
     let direct = std::path::Path::new(&program);
@@ -462,6 +463,7 @@ pub fn program_path_in(command: &str, path_var: Option<&std::ffi::OsStr>, is_fil
 }
 
 /// 指令裡那個程式的實際檔案路徑（用目前的 PATH 找）。
+#[cfg(windows)]
 pub fn program_path(command: &str) -> Option<PathBuf> {
     program_path_in(command, std::env::var_os("PATH").as_deref(), &|p| p.is_file())
 }

@@ -5,10 +5,10 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{self, Color32, Sense, TextureHandle, TextureOptions, Ui, vec2};
+use eframe::egui::{self, Color32, Sense, TextureHandle, Ui, vec2};
 
 use crate::icons::{self, Icon};
-use crate::terminal::{self, ShellOption};
+use crate::terminal::ShellOption;
 
 /// 清單上一列的高度與圖示的大小（邏輯像素）。
 const ROW_HEIGHT: f32 = 24.0;
@@ -36,10 +36,11 @@ impl ShellIcons {
 
 #[cfg(windows)]
 fn load(ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
+    use crate::terminal;
     let effective = if command.trim().is_empty() { terminal::system_default_shell().program } else { command.to_owned() };
     let path = terminal::program_path(&effective)?;
     let image = exe_icon(&path)?;
-    Some(ctx.load_texture(format!("shell-icon:{command}"), image, TextureOptions::LINEAR))
+    Some(ctx.load_texture(format!("shell-icon:{command}"), image, egui::TextureOptions::LINEAR))
 }
 
 #[cfg(not(windows))]

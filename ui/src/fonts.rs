@@ -323,7 +323,8 @@ fn symbol_font_bytes() -> Option<&'static [u8]> {
 mod tests {
     use super::*;
 
-    /// 家族名稱是否在清單裡（不分大小寫）。
+    /// 家族名稱是否在清單裡（不分大小寫）；只有 Windows 的測試用到。
+    #[cfg(windows)]
     fn contains(list: &[String], name: &str) -> bool {
         list.iter().any(|n| n.eq_ignore_ascii_case(name))
     }
