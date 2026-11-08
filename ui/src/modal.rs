@@ -69,6 +69,9 @@ pub struct Input {
     /// 一開始要選取的字元範圍（例如檔名的主檔名，不含副檔名）；`None` 表示全選。
     select: Option<Range<usize>>,
     focused: bool,
+    /// 文字框下面的單選項目（沒有就不畫）；`choice` 是選到的那一個。
+    pub choices: Vec<String>,
+    pub choice: usize,
 }
 
 impl Input {
@@ -77,7 +80,16 @@ impl Input {
             text: text.into(),
             select: None,
             focused: false,
+            choices: Vec::new(),
+            choice: 0,
         }
+    }
+
+    /// 文字框下面加一排單選項目，一開始選 `selected`。
+    pub fn with_choices(mut self, labels: Vec<String>, selected: usize) -> Self {
+        self.choice = selected.min(labels.len().saturating_sub(1));
+        self.choices = labels;
+        self
     }
 
     pub fn select(mut self, range: Range<usize>) -> Self {
@@ -123,6 +135,13 @@ pub fn show(ctx: &egui::Context, spec: &Spec, mut input: Option<&mut Input>) -> 
                 ui.ctx().request_repaint();
             } else if out.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 answer = spec.buttons.first().map(|(_, a)| *a);
+            }
+            if !input.choices.is_empty() {
+                ui.add_space(6.0);
+                let choices = input.choices.clone();
+                for (i, label) in choices.iter().enumerate() {
+                    ui.radio_value(&mut input.choice, i, label.as_str());
+                }
             }
         }
         if let Some(err) = &spec.error {

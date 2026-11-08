@@ -4,6 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-feditor-core = { version = "0.10.0", path = "../core" }
-feditor-script = { version = "0.10.0", path = "../script" }
+feditor-core = { version = "0.11.0", path = "../core" }
+feditor-script = { version = "0.11.0", path = "../script" }
 rquickjs = "0.14.0"

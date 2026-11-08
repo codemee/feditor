@@ -115,6 +115,8 @@ pub enum Recorded {
     Command(String),
     Type(String),
     Paste(String),
+    /// 用兩段文字包住選取（前, 後）。
+    Wrap(String, String),
 }
 
 trait IntoTrue {
@@ -167,6 +169,10 @@ fn render_macro(rec: &[Recorded]) -> String {
                 lines.push(format!("editor.paste({});", js_string(t)));
                 i += 1;
             }
+            Recorded::Wrap(prefix, suffix) => {
+                lines.push(format!("editor.wrap({}, {});", js_string(prefix), js_string(suffix)));
+                i += 1;
+            }
             Recorded::Command(name) => {
                 let mut n = 0;
                 while rec.get(i) == Some(&Recorded::Command(name.clone())) {
@@ -193,6 +199,17 @@ mod tests {
         let mut s = EditorState::default();
         s.sel = Selection::collapsed(caret);
         (Buffer::from_text(text), s)
+    }
+
+    #[test]
+    fn wrapping_is_recorded_as_editor_wrap_and_replays_to_the_same_result() {
+        let (mut b, mut s) = state("a b", 0);
+        s.start_recording();
+        s.command(&mut b, "selectWordRight");
+        s.wrap_selections(&mut b, "\"", "\"");
+        let source = s.stop_recording().unwrap();
+        assert_eq!(source, "// 由錄製產生\neditor.run(\"selectWordRight\");\neditor.wrap(\"\\\"\", \"\\\"\");\n");
+        assert_eq!(b.text(), "\"a \"b");
     }
 
     #[test]

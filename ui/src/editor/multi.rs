@@ -238,6 +238,48 @@ impl EditorState {
         true
     }
 
+    /// 用 `prefix`、`suffix` 包住每一個選取（沒有多重選取時就是那一個）：前面加 `prefix`、後面加 `suffix`，
+    /// 選取留在原本的文字上（可以接著再包一層）。沒有內容的游標就插入 `prefix` 加 `suffix`，游標停在兩者之間。
+    /// 整個動作是一個復原步驟。兩段都是空的就什麼也不做，回傳 `false`。
+    pub fn wrap_selections(&mut self, buf: &mut Buffer, prefix: &str, suffix: &str) -> bool {
+        let (prefix, suffix) = (normalize_newlines(prefix), normalize_newlines(suffix));
+        if prefix.is_empty() && suffix.is_empty() {
+            return false;
+        }
+        self.interrupt_composition();
+        let (all, primary) = self.all_selections();
+        buf.break_group();
+        let depth = buf.undo_depth();
+        // 由後往前改，前面的位置才不會被後面的插入推開
+        for s in all.iter().rev() {
+            let range = s.range();
+            buf.insert(range.end, &suffix);
+            buf.insert(range.start, &prefix);
+        }
+        buf.merge_undo_since(depth);
+        buf.break_group();
+        let (pl, sl) = (prefix.chars().count(), suffix.chars().count());
+        let mut shift = 0;
+        let mut wrapped = Vec::with_capacity(all.len());
+        for s in &all {
+            let (start, end) = (s.range().start + shift + pl, s.range().end + shift + pl);
+            // 方向（游標在前還是在後）不變
+            wrapped.push(if s.anchor <= s.head {
+                Selection { anchor: start, head: end }
+            } else {
+                Selection { anchor: end, head: start }
+            });
+            shift += pl + sl;
+        }
+        self.set_selections(buf, wrapped, primary);
+        self.goal_col = None;
+        self.scroll_to_caret = true;
+        if let Some(rec) = &mut self.recording {
+            rec.push(super::commands::Recorded::Wrap(prefix, suffix));
+        }
+        true
+    }
+
     pub(super) fn multi_insert(&mut self, buf: &mut Buffer, text: &str) -> bool {
         let text = normalize_newlines(text);
         self.edit_each(buf, |_, s, _| (s.range(), text.clone()))
@@ -365,6 +407,65 @@ mod tests {
 
     fn carets(s: &EditorState) -> Vec<usize> {
         s.all_selections().0.iter().map(|x| x.head).collect()
+    }
+
+    #[test]
+    fn wrapping_surrounds_the_selection_keeps_it_on_the_original_text_and_is_one_undo_step() {
+        let (mut b, mut s) = setup("say hello now", &[(4, 9)]);
+        assert!(s.wrap_selections(&mut b, "\"", "\""));
+        assert_eq!(b.text(), "say \"hello\" now");
+        assert_eq!(s.sel.range(), 5..10, "選取仍然是 hello，可以再包一層");
+        assert!(s.wrap_selections(&mut b, "(", ")"));
+        assert_eq!(b.text(), "say \"(hello)\" now", "第二次包的是選取的 hello，不是外面的引號");
+        assert_eq!(s.sel.range(), 6..11);
+        b.undo();
+        assert_eq!(b.text(), "say \"hello\" now", "每次包住是一個復原步驟");
+        b.undo();
+        assert_eq!(b.text(), "say hello now");
+    }
+
+    #[test]
+    fn wrapping_keeps_the_direction_of_the_selection() {
+        let (mut b, mut s) = setup("abc", &[(3, 0)]); // 由後往前選
+        s.wrap_selections(&mut b, "[", "]");
+        assert_eq!((s.sel.anchor, s.sel.head), (4, 1), "游標仍然在前面");
+    }
+
+    #[test]
+    fn wrapping_an_empty_caret_inserts_the_pair_and_stays_between_them() {
+        let (mut b, mut s) = setup("ab", &[(1, 1)]);
+        assert!(s.wrap_selections(&mut b, "{", "}"));
+        assert_eq!(b.text(), "a{}b");
+        assert_eq!(s.sel, Selection::collapsed(2), "游標在前後兩段之間");
+        assert!(!s.wrap_selections(&mut b, "", ""), "兩段都空：什麼也不做");
+        assert_eq!(b.text(), "a{}b");
+    }
+
+    #[test]
+    fn wrapping_applies_to_every_selection_at_once() {
+        let (mut b, mut s) = setup("one two three", &[(0, 3), (4, 7), (8, 13)]);
+        assert!(s.wrap_selections(&mut b, "<", ">"));
+        assert_eq!(b.text(), "<one> <two> <three>");
+        let ranges: Vec<_> = s.all_selections().0.iter().map(|x| x.range()).collect();
+        assert_eq!(ranges, vec![1..4, 7..10, 13..18], "每個選取都留在自己的文字上");
+        b.undo();
+        assert_eq!(b.text(), "one two three", "全部一次還原");
+        // 碰在一起的兩個選取：各包各的，不會互相壓到
+        let (mut b, mut s) = setup("abcde", &[(0, 3), (3, 5)]);
+        s.wrap_selections(&mut b, "[", "]");
+        assert_eq!(b.text(), "[abc][de]");
+    }
+
+    #[test]
+    fn wrapping_with_newlines_gives_a_code_fence() {
+        let (mut b, mut s) = setup("let x = 1;", &[(0, 10)]);
+        s.wrap_selections(&mut b, "```\n", "\n```");
+        assert_eq!(b.text(), "```\nlet x = 1;\n```");
+        assert_eq!(s.sel.range(), 4..14);
+        // \r\n 也會統一成 \n
+        let (mut b, mut s) = setup("x", &[(0, 1)]);
+        s.wrap_selections(&mut b, "a\r\n", "b");
+        assert_eq!(b.text(), "a\nxb");
     }
 
     #[test]

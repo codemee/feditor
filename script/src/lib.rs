@@ -86,6 +86,16 @@ pub trait EditorApi {
         self.type_text(text);
     }
 
+    /// 用 `prefix`、`suffix` 包住目前的選取（沒有選取就插入兩者，游標停在中間）；選取留在原本的文字上。
+    fn wrap_text(&mut self, prefix: &str, suffix: &str) {
+        let (a, b) = self.selection();
+        let (start, end) = (a.min(b), a.max(b));
+        self.insert(end, suffix);
+        self.insert(start, prefix);
+        let shift = prefix.chars().count();
+        self.set_selection(a + shift, b + shift);
+    }
+
     fn alert(&mut self, _message: &str) {}
 
     fn confirm(&mut self, _message: &str) -> bool {
@@ -267,6 +277,10 @@ mod tests {
         assert!(!m.confirm("?"));
         m.type_text("!");
         assert!(m.text().ends_with('!'));
+        // wrap_text 的預設實作：沒有選取（預設是 (0, 0)）就在游標處插入一對
+        let mut m = Minimal("ab".to_owned());
+        m.wrap_text("(", ")");
+        assert_eq!(m.text(), "()ab");
     }
 
     #[test]

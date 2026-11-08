@@ -27,6 +27,7 @@ mod cli_command;
 mod file_assoc;
 mod project_cmd;
 mod runtime_env;
+mod shortcuts;
 mod shell_integration;
 #[cfg(target_os = "macos")]
 mod macos_open;
@@ -315,6 +316,9 @@ fn drop_key_text(events: &mut Vec<egui::Event>, key: egui::Key) -> usize {
     before - events.len()
 }
 
+/// 巨集面板每一列「適用的檔案類型」下拉清單的寬度。
+const MACRO_TYPES_WIDTH: f32 = 120.0;
+
 /// 圖示按鈕之間的間距（像素）。
 const BUTTON_GAP: f32 = 4.0;
 
@@ -324,7 +328,9 @@ fn tight_buttons(ui: &mut egui::Ui) {
 }
 
 /// 設定面板左側的標籤（順序與 `settings_page` 的頁碼一致）。
-const SETTINGS_TABS: [&str; 6] = ["介面", "編輯區", "檔案類型", "預覽", "終端機", "狀態列"];
+const SETTINGS_TABS: [&str; 7] = ["介面", "編輯區", "檔案類型", "預覽", "終端機", "狀態列", "快捷鍵"];
+/// 「快捷鍵」頁在 [`SETTINGS_TABS`] 裡的索引。
+const SHORTCUTS_TAB: usize = 6;
 
 /// 設定面板每一頁至少這麼寬（內容更寬的頁面會把全部的頁面一起撐寬）。
 const SETTINGS_PAGE_MIN_WIDTH: f32 = 420.0;
@@ -381,6 +387,78 @@ fn form_row_tall(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)
     ui.end_row();
 }
 
+/// 巨集「適用的檔案類型」清單裡列出的名稱：目前支援的每一種語言；巨集檔頭寫了清單裡沒有的名稱
+/// （例如自訂語言檔被刪了）時，照樣列在最前面，讓使用者能取消它。
+fn macro_type_names(current: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = syntax::all_languages().iter().map(|l| l.name.to_owned()).collect();
+    for extra in current.iter().rev() {
+        if !names.iter().any(|n| n.eq_ignore_ascii_case(extra)) {
+            names.insert(0, extra.clone());
+        }
+    }
+    names
+}
+
+/// 在適用的檔案類型 `current` 裡勾選（`checked`）或取消 `name` 之後的新清單；其餘的順序不變。
+fn toggled_langs(current: &[String], name: &str, checked: bool) -> Vec<String> {
+    let mut next: Vec<String> = current.iter().filter(|c| !c.eq_ignore_ascii_case(name)).cloned().collect();
+    if checked {
+        next.push(name.to_owned());
+    }
+    next
+}
+/// 「用文字包住選取」清單裡的一項。
+struct WrapPreset {
+    prefix: &'static str,
+    suffix: &'static str,
+    /// 清單上顯示的樣子（`"…"`）；前後有換行的項目用文字表示。
+    shown: &'static str,
+    name: String,
+}
+
+/// 「用文字包住選取」的常用項目。
+fn wrap_presets() -> Vec<WrapPreset> {
+    let p = |prefix, suffix, shown, name: &str| WrapPreset { prefix, suffix, shown, name: name.to_owned() };
+    vec![
+        p("\"", "\"", "\"…\"", t("雙引號")),
+        p("'", "'", "'…'", t("單引號")),
+        p("`", "`", "`…`", t("反引號")),
+        p("(", ")", "(…)", t("括號")),
+        p("[", "]", "[…]", t("方括號")),
+        p("{", "}", "{…}", t("大括號")),
+        p("<", ">", "<…>", t("角括號")),
+        p("**", "**", "**…**", t("粗體（Markdown）")),
+        p("```\n", "\n```", "```…```", t("程式碼區塊（Markdown，前後各一行）")),
+    ]
+}
+
+/// 自訂欄位裡的 `\n`、`\t`、`\\` 換成真正的換行、Tab、反斜線；其他的反斜線照原樣。
+fn unescape_wrap_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('n') => {
+                out.push('\n');
+                chars.next();
+            }
+            Some('t') => {
+                out.push('\t');
+                chars.next();
+            }
+            Some('\\') => {
+                out.push('\\');
+                chars.next();
+            }
+            _ => out.push('\\'),
+        }
+    }
+    out
+}
 /// 「找到專案設定，但工具用不了」的說明文字（選單裡不能按的一行，也用在執行時的提示）。
 fn notice_text(notice: &project_cmd::Notice) -> String {
     match &notice.problem {
@@ -593,6 +671,10 @@ enum Action {
     SetProjectCommand(String, Option<String>),
     /// 丟掉這個資料夾的搜尋結果重新搜尋。
     RefreshRuntime(PathBuf),
+    /// 把第 i 支巨集適用的檔案類型設成這些（空的是所有檔案；改檔頭的 `@lang`）。
+    SetMacroLangs(usize, Vec<String>),
+    /// 打開設定面板的「快捷鍵」頁（看內建與巨集的快捷鍵）。
+    ShowShortcuts,
     /// 在終端機執行目前的檔案（用偵測到的執行環境）。
     RunFile,
     /// 設定這個檔案（完整路徑）執行時的命令列參數；空白就是沒有參數。
@@ -654,6 +736,8 @@ enum Action {
     ConvertIndent { to_tabs: bool },
     /// 排列格式：依語言重排縮排、去行尾空白（JSON 重新排版）。
     Reformat,
+    /// 用（前, 後）兩段文字包住每個選取。
+    Wrap(String, String),
     /// 按 Enter 時依語言自動加深／減淺縮排。
     SetAutoIndent(bool),
     OpenMacroDir,
@@ -776,6 +860,11 @@ struct App {
     /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
     pane_rects: Vec<(panes::PaneId, egui::Rect)>,
     last_macro: Option<PathBuf>,
+    /// 「用文字包住選取」自訂欄位的內容（前面、後面；\n 代表換行）。
+    wrap_prefix: String,
+    wrap_suffix: String,
+    /// 最後一個回答的對話框裡，單選項目選了第幾個（錄製的巨集要不要限定檔案類型）。
+    modal_choice: usize,
     log: Vec<(LogKind, String)>,
     last_title: String,
     /// 命令列給的路徑（從檔案總管、Finder 的右鍵選單或「開啟檔案」帶進來的）：第一個畫面才開，
@@ -828,6 +917,8 @@ struct App {
     scheme_edit: Option<scheme::Scheme>,
     /// 設定按鈕在畫面上的位置（面板要貼在它的下方）。
     settings_anchor: Option<egui::Rect>,
+    /// 下一次畫設定面板時要切到的那一頁（「查看快捷鍵」鈕設的）；畫面函式只有 `&self`，所以用 `Cell`。
+    settings_tab_request: std::cell::Cell<Option<usize>>,
     /// 使用者的巨集清單（來自巨集資料夾）。
     macros: Vec<macro_lib::MacroEntry>,
     /// 巨集面板是否展開，以及巨集按鈕的位置。
@@ -869,6 +960,9 @@ impl App {
             preview_plugins: Vec::new(),
             pane_rects: Vec::new(),
             last_macro: None,
+            modal_choice: 0,
+            wrap_prefix: String::new(),
+            wrap_suffix: String::new(),
             log: Vec::new(),
             last_title: String::new(),
             startup_paths: Vec::new(),
@@ -897,6 +991,7 @@ impl App {
             schemes: scheme::builtins(),
             scheme_edit: None,
             settings_anchor: None,
+            settings_tab_request: std::cell::Cell::new(None),
             macros: Vec::new(),
             macro_open: false,
             macro_anchor: None,
@@ -1440,8 +1535,61 @@ impl App {
             .button(t("儲存"), modal::Answer::Yes)
             .button(t("放棄"), modal::Answer::No)
             .no_dismiss(); // Esc 或點到外面不關閉，免得錄好的東西一不小心就丟了
+        // 目前的檔案有語言時，可以把巨集限定在這一種檔案；輸入有誤重新詢問時，保留使用者剛才的選擇
+        let mut input = modal::Input::new(text);
+        if let Some(lang) = self.doc_lang() {
+            let selected = if error.is_some() { self.modal_choice } else { 0 };
+            input = input.with_choices(vec![t("所有檔案").to_owned(), tf!("只有 {} 檔案", lang)], selected);
+        }
         spec.error = error;
-        self.modal = Some(Pending::new(spec, Then::SaveRecording(source)).with_input(modal::Input::new(text)));
+        self.modal = Some(Pending::new(spec, Then::SaveRecording(source)).with_input(input));
+    }
+
+    /// 錄好的巨集要限定的檔案類型：對話框選了「只有 X 檔案」就是目前檔案的語言，否則是空的（所有檔案）。
+    fn recording_langs(&self) -> Vec<String> {
+        if self.modal_choice == 1 { self.doc_lang().map(|l| vec![l.to_owned()]).unwrap_or_default() } else { Vec::new() }
+    }
+
+    /// 把第 `i` 支巨集適用的檔案類型設成 `langs`（空的是所有檔案）：改寫檔頭的 `@lang`。
+    /// 快捷鍵會和別支適用範圍重疊的巨集衝突時不改，說明原因。
+    fn set_macro_langs(&mut self, i: usize, langs: Vec<String>) {
+        let Some(entry) = self.macros.get(i).cloned() else { return };
+        if let Some(sc) = entry.shortcut.as_ref() {
+            let same = |a: &egui::KeyboardShortcut| a.logical_key == sc.logical_key && a.modifiers == sc.modifiers;
+            if let Some(other) = self.macros.iter().enumerate().find(|(j, m)| *j != i && m.shortcut.as_ref().is_some_and(same) && macro_lib::scopes_overlap(&langs, &m.langs)) {
+                let message = tf!("「{}」也用了 {}，適用範圍重疊；請先換掉其中一個的快捷鍵", other.1.name, macro_lib::format_shortcut(sc));
+                self.push(LogKind::Warn, message);
+                return;
+            }
+        }
+        let result = std::fs::read_to_string(&entry.path).and_then(|src| std::fs::write(&entry.path, macro_lib::set_header_langs(&src, &langs)));
+        match result {
+            Ok(()) => {
+                let scope = if langs.is_empty() { t("所有檔案").to_owned() } else { langs.join(", ") };
+                self.push(LogKind::Info, tf!("巨集「{}」的適用範圍設為：{}", entry.name, scope));
+            }
+            Err(e) => self.push(LogKind::Error, tf!("無法更新 {}：{}", entry.path.display(), e)),
+        }
+        self.refresh_macros();
+    }
+
+    /// 巨集「適用的檔案類型」下拉清單的內容：「所有檔案」加上目前支援的每一種語言（可以多選）；
+    /// 勾選或取消就回傳新的類型清單。巨集檔頭寫了清單裡沒有的名稱（例如自訂語言檔被刪了）時，照樣列在最前面讓使用者取消。
+    fn macro_types_menu(ui: &mut egui::Ui, i: usize, current: &[String]) -> Option<Action> {
+        let mut action = None;
+        if ui.selectable_label(current.is_empty(), t("所有檔案")).clicked() {
+            action = Some(Action::SetMacroLangs(i, Vec::new()));
+        }
+        ui.separator();
+        egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+            for name in macro_type_names(current) {
+                let mut checked = current.iter().any(|c| c.eq_ignore_ascii_case(&name));
+                if ui.checkbox(&mut checked, name.as_str()).changed() {
+                    action = Some(Action::SetMacroLangs(i, toggled_langs(current, &name, checked)));
+                }
+            }
+        });
+        action
     }
 
     /// 「錄製的巨集」、「錄製的巨集 2」…：第一個還沒被用掉的顯示名稱。
@@ -1535,12 +1683,12 @@ impl App {
     }
 
     /// 錄好的巨集以 `name` 為名存進巨集庫。
-    fn save_recording(&mut self, source: &str, name: &str) {
+    fn save_recording(&mut self, source: &str, name: &str, langs: &[String]) {
         let Some(dir) = macro_lib::macros_dir() else {
             self.push(LogKind::Error, t("找不到設定資料夾，無法儲存錄好的巨集"));
             return;
         };
-        match macro_lib::save_named(&dir, name, source) {
+        match macro_lib::save_named(&dir, name, source, langs) {
             Ok(path) => {
                 self.last_macro = Some(path);
                 self.refresh_macros();
@@ -1557,6 +1705,10 @@ impl App {
     fn resolve_modal(&mut self, then: Then, answer: modal::Answer, text: Option<String>, ctx: &egui::Context) {
         use modal::Answer::{No, Yes};
         let typed = text.as_deref().map(str::trim).unwrap_or_default().to_owned();
+        // 巨集相關的對話框關掉之後，鍵盤焦點回到編輯區（錄完巨集接著打字）
+        if matches!(then, Then::SaveRecording(_) | Then::RenameMacro(_) | Then::DeleteMacro(_)) {
+            self.pending_editor_focus = true;
+        }
         match then {
             Then::Notice => {}
             Then::ReplaceInFolder => {
@@ -1568,7 +1720,11 @@ impl App {
                 Yes if typed.is_empty() => {
                     self.ask_recording_name(source, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
                 }
-                Yes => self.save_recording(&source, &typed),
+                Yes => {
+                    // 選了「只有 X 檔案」：寫進 @lang，之後只在這種檔案上適用
+                    let langs = self.recording_langs();
+                    self.save_recording(&source, &typed, &langs);
+                }
                 _ => self.push(LogKind::Info, t("已放棄錄好的巨集")),
             },
             Then::RenameMacro(i) => {
@@ -1695,11 +1851,18 @@ impl App {
 
     /// 目前這份文件的語言名稱（語法上色的語言）：不是終端機分頁、已經存成檔案才有。
     fn run_lang(&self) -> Option<&'static str> {
+        self.doc.path.as_ref()?;
+        self.doc_lang()
+    }
+
+    /// 作用中文件目前生效的語言名稱（狀態列「語言」顯示的那個）：終端機分頁、純文字、認不出來的是 `None`。
+    /// 沒存檔的文件也有（看內容猜）。巨集的適用範圍（`@lang`）比對的就是它。
+    fn doc_lang(&self) -> Option<&'static str> {
         if self.doc.terminal.is_some() {
             return None;
         }
-        let path = self.doc.path.as_deref()?;
-        let lang = syntax::resolve(self.doc.lang, Some(path), &self.doc.buffer).or_else(|| {
+        let path = self.doc.path.as_deref();
+        let lang = syntax::resolve(self.doc.lang, path, &self.doc.buffer).or_else(|| {
             // 沒有副檔名的檔案（`deploy`）：自動模式下看 shebang 判斷是什麼腳本；使用者指定了純文字就不猜
             if self.doc.lang != syntax::LangChoice::Auto {
                 return None;
@@ -2278,6 +2441,25 @@ impl App {
         {
             return;
         }
+        // 這些動作多半是按工具列或面板上的按鈕觸發的：按完之後鍵盤焦點還留在按鈕上，要交還編輯區，
+        // 使用者才能接著打字；不然得再點一下編輯區，而點了就會清掉原本的選取
+        let refocus_editor = matches!(
+            action,
+            Action::ToggleRecord
+                | Action::Save
+                | Action::SaveAs
+                | Action::RerunMacro
+                | Action::RunMacroEntry(_)
+                | Action::Reload(_)
+                | Action::TogglePreview
+                | Action::Wrap(..)
+                | Action::SetRuntime(..)
+                | Action::SetProjectCommand(..)
+                | Action::RefreshRuntime(_)
+        );
+        if refocus_editor {
+            self.pending_editor_focus = true;
+        }
         match action {
             Action::New => self.new_document(),
             Action::Open => self.open(),
@@ -2290,8 +2472,15 @@ impl App {
             Action::RunMacro => self.pick_and_run_macro(),
             Action::RerunMacro => {
                 if let Some(path) = self.last_macro.clone() {
-                    self.run_macro_file(path);
+                    self.run_macro_if_applicable(path);
                 }
+            }
+            Action::SetMacroLangs(i, langs) => self.set_macro_langs(i, langs),
+            Action::ShowShortcuts => {
+                self.macro_open = false;
+                self.capturing_shortcut = None;
+                self.settings_open = true;
+                self.settings_tab_request.set(Some(SHORTCUTS_TAB));
             }
             Action::ClearLog => self.log.clear(),
             Action::ToggleOutput => self.toggle_output(),
@@ -2421,6 +2610,15 @@ impl App {
                         self.push(LogKind::Info, t("沒有需要重排的內容").to_owned());
                     }
                     self.pending_editor_focus = true;
+                }
+            }
+            Action::Wrap(prefix, suffix) => {
+                if self.doc.terminal.is_none() {
+                    self.editor.clamp(&self.doc.buffer);
+                    if self.editor.wrap_selections(&mut self.doc.buffer, &prefix, &suffix) {
+                        self.doc.sync();
+                        self.find.invalidate();
+                    }
                 }
             }
             Action::SetAutoIndent(on) => {
@@ -2681,6 +2879,30 @@ impl App {
             if icons::button(ui, Icon::Reformat, t("排列格式：依檔案類型重排縮排並去掉行尾空白，JSON 重新排版（有選取只處理選到的行，否則整份文件）"), editable).clicked() {
                 action = Some(Action::Reformat);
             }
+            // 用文字包住選取：常用的（引號、括號、Markdown）一點就套用，也可以自己寫前後兩段文字
+            let wrap_button = icons::button(ui, Icon::Surround, t("用文字包住選取的內容（引號、括號、程式碼區塊…）；沒有選取就插入一對"), editable);
+            egui::Popup::menu(&wrap_button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                ui.set_min_width(230.0);
+                for preset in wrap_presets() {
+                    if ui.button(format!("{}   {}", preset.shown, preset.name)).clicked() {
+                        action = Some(Action::Wrap(preset.prefix.to_owned(), preset.suffix.to_owned()));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                ui.label(t("自訂（\\n 代表換行，\\t 代表 Tab）"));
+                ui.horizontal(|ui| {
+                    ui.label(t("前面"));
+                    ui.add(egui::TextEdit::singleline(&mut self.wrap_prefix).desired_width(70.0));
+                    ui.label(t("後面"));
+                    ui.add(egui::TextEdit::singleline(&mut self.wrap_suffix).desired_width(70.0));
+                });
+                let empty = self.wrap_prefix.is_empty() && self.wrap_suffix.is_empty();
+                if ui.add_enabled(!empty, egui::Button::new(t("套用"))).clicked() {
+                    action = Some(Action::Wrap(unescape_wrap_text(&self.wrap_prefix), unescape_wrap_text(&self.wrap_suffix)));
+                    ui.close();
+                }
+            });
 
             group_separator(ui);
 
@@ -3033,8 +3255,20 @@ impl App {
 
     fn run_macro_entry(&mut self, i: usize) {
         if let Some(path) = self.macros.get(i).map(|m| m.path.clone()) {
-            self.run_macro_file(path);
+            self.run_macro_if_applicable(path);
         }
+    }
+
+    /// 執行巨集庫裡的巨集：它限定了檔案類型（`@lang`）而目前的檔案不是那種類型時，不執行並說明原因。
+    /// 不在巨集庫裡的檔案（「從檔案執行」選的）沒有適用範圍，照常執行。
+    fn run_macro_if_applicable(&mut self, path: PathBuf) {
+        let lang = self.doc_lang();
+        if let Some(entry) = self.macros.iter().find(|m| m.path == path).filter(|m| !m.applies_to(lang)) {
+            let message = tf!("巨集「{}」只適用於 {}，目前的檔案不是", entry.name, entry.langs.join(", "));
+            self.push(LogKind::Warn, message);
+            return;
+        }
+        self.run_macro_file(path);
     }
 
     fn delete_macro(&mut self, i: usize) {
@@ -3115,7 +3349,8 @@ impl App {
                 .macros
                 .iter()
                 .enumerate()
-                .find(|(j, m)| *j != i && m.shortcut.as_ref().is_some_and(same))
+                // 適用範圍沒有重疊的巨集（Rust 專用的和 Python 專用的）可以共用同一個快捷鍵
+                .find(|(j, m)| *j != i && m.shortcut.as_ref().is_some_and(same) && macro_lib::scopes_overlap(&entry.langs, &m.langs))
             {
                 self.push(
                     LogKind::Warn,
@@ -3188,6 +3423,81 @@ impl App {
         }
     }
 
+    /// 巨集面板裡的一列：執行、名稱、適用的檔案類型、快捷鍵、編輯、刪除。`applicable` 為假（適用別種檔案）時不能執行。
+    fn macro_row(&self, ui: &mut egui::Ui, i: usize, applicable: bool, shortcut_width: f32) -> Option<Action> {
+        let entry = &self.macros[i];
+        let mut action = None;
+        ui.horizontal(|ui| {
+            tight_buttons(ui);
+            let run_tip = if applicable {
+                t("執行這支巨集").to_owned()
+            } else {
+                tf!("這支巨集只適用於 {}，目前的檔案不是", entry.langs.join(", "))
+            };
+            if icons::small_button(ui, Icon::Run, &run_tip, applicable).clicked() {
+                action = Some(Action::RunMacroEntry(i));
+            }
+            ui.add_space(4.0);
+            // 名稱雙按也可以重新命名
+            let name = ui
+                .add(egui::Label::new(&entry.name).sense(egui::Sense::click()))
+                .on_hover_text(t("雙按重新命名"));
+            if name.double_clicked() {
+                action = Some(Action::RenameMacro(i));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icons::small_button(ui, Icon::Clear, t("刪除這支巨集"), true).clicked() {
+                    action = Some(Action::DeleteMacro(i));
+                }
+                if icons::small_button(ui, Icon::Rename, t("重新命名這支巨集"), true).clicked() {
+                    action = Some(Action::RenameMacro(i));
+                }
+                if icons::small_button(ui, Icon::Edit, t("編輯原始碼（開在新分頁）"), true).clicked() {
+                    action = Some(Action::EditMacro(i));
+                }
+                let capturing = self.capturing_shortcut == Some(i);
+                let tip = t("設定快捷鍵：點一下再按下組合鍵（Esc 取消、Delete 清除）");
+                if icons::small_toggle(ui, Icon::Keyboard, tip, capturing, true).clicked() {
+                    action = Some(Action::CaptureShortcut(i));
+                }
+                let label = if capturing {
+                    t("請按下快捷鍵…").to_owned()
+                } else {
+                    entry.shortcut.as_ref().map(macro_lib::format_shortcut).unwrap_or_default()
+                };
+                // 快捷鍵文字放在固定寬度的欄位裡（靠右）：每一列的欄位一樣寬，右邊的圖示與左邊的下拉清單才會上下對齊
+                ui.allocate_ui_with_layout(
+                    egui::vec2(shortcut_width, ui.spacing().interact_size.y),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        // 文字再短，這一欄也要佔滿寬度（只靠 allocate 給的大小，欄位會縮成文字的寬度）
+                        ui.set_min_width(shortcut_width);
+                        ui.label(egui::RichText::new(label).color(ui.visuals().weak_text_color()));
+                    },
+                );
+                // 適用的檔案類型：直接顯示成下拉清單，目前的選擇就寫在上面（沒限定就是「所有檔案」）；
+                // 清單裡勾選目前支援的檔案類型，可以多選，勾選後立刻存進檔頭的 `@lang`，清單不關
+                let current = if entry.langs.is_empty() { t("所有檔案").to_owned() } else { entry.langs.join(", ") };
+                egui::ComboBox::from_id_salt(("macro_types", i))
+                    .icon(icons::combo_chevron)
+                    .width(MACRO_TYPES_WIDTH)
+                    .wrap_mode(egui::TextWrapMode::Truncate)
+                    .selected_text(current)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            if let Some(a) = Self::macro_types_menu(ui, i, &entry.langs) {
+                                action = Some(a);
+                            }
+                        })
+                    })
+                    .response
+                    .on_hover_text(t("這支巨集適用的檔案類型：勾選目前支援的類型，可以多選；都不勾就是所有檔案"));
+            });
+        });
+        action
+    }
+
     /// 巨集面板：執行、設快捷鍵、編輯、刪除。
     fn macro_panel(&self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
@@ -3199,47 +3509,37 @@ impl App {
                     .color(ui.visuals().weak_text_color()),
             );
         }
-        for (i, entry) in self.macros.iter().enumerate() {
-            ui.horizontal(|ui| {
-                tight_buttons(ui);
-                if icons::small_button(ui, Icon::Run, t("執行這支巨集"), true).clicked() {
-                    action = Some(Action::RunMacroEntry(i));
-                }
-                ui.add_space(4.0);
-                // 名稱雙按也可以重新命名
-                let name = ui
-                    .add(egui::Label::new(&entry.name).sense(egui::Sense::click()))
-                    .on_hover_text(t("雙按重新命名"));
-                if name.double_clicked() {
-                    action = Some(Action::RenameMacro(i));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icons::small_button(ui, Icon::Clear, t("刪除這支巨集"), true).clicked() {
-                        action = Some(Action::DeleteMacro(i));
+        // 適用於目前檔案的（通用的、和限定了這種檔案類型的）在最上面；限定了別種檔案類型的收在下面，
+        // 不會因為換了檔案就找不到，照樣能改名、改適用範圍、刪除
+        // 快捷鍵欄的寬度：所有巨集裡最寬的快捷鍵（或「請按下快捷鍵…」）決定，每一列都用同一個寬度，欄位才對得齊
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let text_width = |text: &str| ui.painter().layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE).size().x;
+        let shortcut_width = self
+            .macros
+            .iter()
+            .filter_map(|m| m.shortcut.as_ref().map(macro_lib::format_shortcut))
+            .chain([t("請按下快捷鍵…").to_owned()])
+            .map(|s| text_width(&s))
+            .fold(0.0, f32::max)
+            + 2.0;
+        let lang = self.doc_lang();
+        let (here, elsewhere): (Vec<usize>, Vec<usize>) = (0..self.macros.len()).partition(|&i| self.macros[i].applies_to(lang));
+        for i in here {
+            if let Some(a) = self.macro_row(ui, i, true, shortcut_width) {
+                action = Some(a);
+            }
+        }
+        if !elsewhere.is_empty() {
+            egui::CollapsingHeader::new(egui::RichText::new(tf!("其他檔案類型的巨集（{}）", elsewhere.len())).color(ui.visuals().weak_text_color()))
+                .id_salt("macros_elsewhere")
+                .default_open(false)
+                .show(ui, |ui| {
+                    for i in elsewhere {
+                        if let Some(a) = self.macro_row(ui, i, false, shortcut_width) {
+                            action = Some(a);
+                        }
                     }
-                    if icons::small_button(ui, Icon::Rename, t("重新命名這支巨集"), true).clicked() {
-                        action = Some(Action::RenameMacro(i));
-                    }
-                    if icons::small_button(ui, Icon::Edit, t("編輯原始碼（開在新分頁）"), true).clicked() {
-                        action = Some(Action::EditMacro(i));
-                    }
-                    let capturing = self.capturing_shortcut == Some(i);
-                    let tip = t("設定快捷鍵：點一下再按下組合鍵（Esc 取消、Delete 清除）");
-                    if icons::small_toggle(ui, Icon::Keyboard, tip, capturing, true).clicked() {
-                        action = Some(Action::CaptureShortcut(i));
-                    }
-                    let label = if capturing {
-                        t("請按下快捷鍵…").to_owned()
-                    } else {
-                        entry
-                            .shortcut
-                            .as_ref()
-                            .map(macro_lib::format_shortcut)
-                            .unwrap_or_default()
-                    };
-                    ui.label(egui::RichText::new(label).color(ui.visuals().weak_text_color()));
                 });
-            });
         }
         ui.separator();
         ui.horizontal(|ui| {
@@ -3248,6 +3548,9 @@ impl App {
             }
             if ui.button(t("開啟巨集資料夾")).clicked() {
                 action = Some(Action::OpenMacroDir);
+            }
+            if ui.button(t("查看快捷鍵")).on_hover_text(t("列出內建的快捷鍵，以及已經設給巨集的快捷鍵")).clicked() {
+                action = Some(Action::ShowShortcuts);
             }
         });
         action
@@ -3258,6 +3561,8 @@ impl App {
         let Some(anchor) = self.macro_anchor else {
             return;
         };
+        // 「適用的檔案類型」下拉清單開著時，點清單的項目在面板外面：不能因此把面板關掉（要在畫面開始時就記下來）
+        let dropdown_open = egui::Popup::is_any_open(ctx);
         let shown = egui::Area::new(egui::Id::unique("macro_area"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::LEFT_TOP)
@@ -3282,7 +3587,7 @@ impl App {
         let clicked_outside =
             clicked && pointer.is_some_and(|p| !panel_rect.contains(p) && !anchor.contains(p));
         // 等著按快捷鍵時，Esc 是「取消設定」，不要連面板一起關掉
-        if (clicked_outside || escape) && self.capturing_shortcut.is_none() {
+        if (clicked_outside || escape) && self.capturing_shortcut.is_none() && !dropdown_open {
             self.macro_open = false;
         }
     }
@@ -3405,6 +3710,9 @@ impl App {
         no_hover_outline(ui);
         let tab_id = ui.make_persistent_id("settings_tab");
         let mut tab: usize = ui.data(|d| d.get_temp(tab_id)).unwrap_or(0);
+        if let Some(requested) = self.settings_tab_request.take() {
+            tab = requested.min(SETTINGS_TABS.len() - 1);
+        }
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_min_width(76.0);
@@ -3915,6 +4223,48 @@ impl App {
                     .on_hover_text(t("狀態列「行、欄」的欄號算法：1 是一個字一欄（多數編輯器），2 是和畫面寬度一致"));
             });
         });
+        }
+        if tab == 6 {
+        // ── 快捷鍵：內建的與巨集的，只是看，要改巨集的在巨集面板 ──
+        group_title(ui, t("快捷鍵"));
+        let weak = |ui: &egui::Ui, text: &str| egui::RichText::new(text.to_owned()).color(ui.visuals().weak_text_color());
+        for (i, group) in shortcuts::builtin_groups().iter().enumerate() {
+            ui.label(egui::RichText::new(group.title.as_str()).strong());
+            settings_grid(ui, &format!("shortcuts_{i}"), |ui| {
+                for row in &group.rows {
+                    ui.label(row.action.as_str());
+                    ui.label(egui::RichText::new(row.keys.as_str()).monospace());
+                    ui.end_row();
+                }
+            });
+            ui.add_space(6.0);
+        }
+        ui.label(egui::RichText::new(t("巨集的快捷鍵")).strong());
+        let rows = shortcuts::macro_rows(&self.macros, self.doc_lang());
+        if rows.is_empty() {
+            ui.label(weak(ui, t("還沒有替巨集設快捷鍵。到巨集面板點鍵盤圖示設定。")));
+        } else {
+            settings_grid(ui, "shortcuts_macros", |ui| {
+                for (name, langs, keys, applicable) in &rows {
+                    // 不適用於目前檔案的巨集用淡色，名稱後面註明適用的檔案類型
+                    let label = if langs.is_empty() { name.clone() } else { format!("{name} [{}]", langs.join(", ")) };
+                    let (label, keys) = (egui::RichText::new(label), egui::RichText::new(keys.as_str()).monospace());
+                    if *applicable {
+                        ui.label(label);
+                        ui.label(keys);
+                    } else {
+                        ui.label(label.color(ui.visuals().weak_text_color()));
+                        ui.label(keys.color(ui.visuals().weak_text_color()));
+                    }
+                    ui.end_row();
+                }
+            });
+            ui.label(weak(ui, t("淡色的是只適用於別種檔案類型的巨集，在目前的檔案上不會觸發。")));
+        }
+        if cfg!(target_os = "macos") {
+            ui.add_space(6.0);
+            ui.label(weak(ui, t("在 macOS 上，這裡的 Ctrl 指的是 Command 鍵。")));
+        }
         }
         action
     }
@@ -4603,6 +4953,7 @@ impl App {
                 if let Some((enc, bom)) = chosen {
                     self.doc.set_encoding(enc);
                     self.doc.set_bom(bom);
+                    self.pending_editor_focus = true; // 選完編碼，鍵盤焦點回到編輯區
                 }
 
                 // 語言（語法上色）：「自動」依副檔名，沒有檔名時看內容猜
@@ -4634,6 +4985,7 @@ impl App {
                     .on_hover_text(t("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定"));
                 if let Some(choice) = picked {
                     self.doc.lang = choice;
+                    self.pending_editor_focus = true; // 選完語言，鍵盤焦點回到編輯區
                 }
 
                 // 執行環境（語言的左邊，前後各有分隔線自成一組）：Python、能判斷出直譯器的 shell 腳本才顯示。
@@ -5026,10 +5378,13 @@ impl eframe::App for App {
             }
         }
         if action.is_none() {
+            // 限定了檔案類型的巨集，目前的檔案不是那種類型時不觸發（按鍵照常交給編輯區）
+            let doc_lang = self.doc_lang();
             let hit = self.macros.iter().position(|m| {
-                m.shortcut
-                    .as_ref()
-                    .is_some_and(|sc| ctx.input_mut(|i| i.consume_shortcut(sc)))
+                m.applies_to(doc_lang)
+                    && m.shortcut
+                        .as_ref()
+                        .is_some_and(|sc| ctx.input_mut(|i| i.consume_shortcut(sc)))
             });
             if let Some(i) = hit {
                 if let Some(sc) = self.macros[i].shortcut {
@@ -5094,7 +5449,10 @@ impl eframe::App for App {
         self.scheme_editor(&ctx);
         if let Some(mut p) = self.modal.take() {
             match modal::show(&ctx, &p.spec, p.input.as_mut()) {
-                Some(answer) => self.resolve_modal(p.then, answer, p.input.map(|i| i.text), &ctx),
+                Some(answer) => {
+                    self.modal_choice = p.input.as_ref().map_or(0, |i| i.choice);
+                    self.resolve_modal(p.then, answer, p.input.map(|i| i.text), &ctx)
+                }
                 None => self.modal = Some(p),
             }
         }
@@ -6921,11 +7279,316 @@ mod tests {
             path: PathBuf::from(format!("{name}.js")),
             name: name.to_owned(),
             shortcut: None,
+            langs: Vec::new(),
         };
         app.macros.clear(); // 不受這台機器真實的巨集資料夾影響
         assert_eq!(app.unused_macro_name(), "錄製的巨集");
         app.macros = vec![entry("錄製的巨集"), entry("錄製的巨集 2")];
         assert_eq!(app.unused_macro_name(), "錄製的巨集 3");
+    }
+
+    /// 巨集庫裡的一支巨集：寫成真的檔案（要能被改寫檔頭），回傳放進 `app.macros` 的那一筆。
+    fn macro_file(dir: &std::path::Path, file: &str, header: &str) -> macro_lib::MacroEntry {
+        let path = dir.join(file);
+        std::fs::write(&path, format!("{header}run();\n")).unwrap();
+        macro_lib::scan(dir).into_iter().find(|m| m.path == path).unwrap()
+    }
+
+    #[test]
+    fn toolbar_and_panel_actions_hand_the_keyboard_focus_back_to_the_editor() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        let actions: Vec<(&str, Action)> = vec![
+            ("開始錄製", Action::ToggleRecord),
+            ("停止錄製", Action::ToggleRecord),
+            ("重跑上一個巨集", Action::RerunMacro),
+            ("開關預覽", Action::TogglePreview),
+            ("改選執行環境", Action::SetRuntime("/p".into(), None)),
+            ("改選專案命令", Action::SetProjectCommand("/p#cmd:Rust".into(), None)),
+            ("重新搜尋執行環境", Action::RefreshRuntime(PathBuf::new())),
+            ("用文字包住選取", Action::Wrap("(".into(), ")".into())),
+        ];
+        for (what, action) in actions {
+            app.pending_editor_focus = false;
+            app.handle(action, &ctx);
+            assert!(app.pending_editor_focus, "{what}之後鍵盤焦點要回到編輯區，不然得點編輯區才能打字，點了就會清掉選取");
+        }
+        // 巨集相關的對話框關掉之後也是
+        let macros = tempfile::tempdir().unwrap();
+        app.macros = vec![macro_file(macros.path(), "m.js", "// @name M\n")];
+        for then in [Then::SaveRecording("x;".into()), Then::RenameMacro(0), Then::DeleteMacro(0)] {
+            app.pending_editor_focus = false;
+            app.resolve_modal(then, modal::Answer::Cancel, None, &ctx);
+            assert!(app.pending_editor_focus);
+        }
+        // 設定面板、搜尋等本來就要輸入的地方不受影響：只有上面這些動作才會交還
+        app.pending_editor_focus = false;
+        app.handle(Action::FindNext, &ctx);
+        assert!(!app.pending_editor_focus);
+    }
+
+    #[test]
+    fn macro_panel_columns_line_up_whatever_the_names_and_shortcuts_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let rs = dir.path().join("a.rs");
+        std::fs::write(&rs, "fn main() {}\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&rs);
+        app.macros = vec![
+            macro_file(dir.path(), "a.js", "// @name 短\n// @shortcut Alt+M\n"),
+            macro_file(dir.path(), "b.js", "// @name 名稱很長很長很長很長的巨集\n// @lang Rust\n"),
+            macro_file(dir.path(), "c.js", "// @name C\n// @shortcut Ctrl+Alt+K\n"),
+        ];
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0)));
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(raw.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    app.macro_panel(ui);
+                });
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.galley.rect.translate(t.pos.to_vec2()))),
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for s in &shapes {
+            texts(&s.shape, &mut found);
+        }
+        let rects = |text: &str| found.iter().filter(|(t, _)| t == text).map(|(_, r)| *r).collect::<Vec<_>>();
+        // 適用的檔案類型下拉清單：不管名稱多長、有沒有快捷鍵，文字都從同一個 x 開始
+        let mut lefts: Vec<f32> = rects("所有檔案").iter().chain(rects("Rust").iter()).map(|r| r.left()).collect();
+        assert_eq!(lefts.len(), 3, "三列各有一個下拉清單：{found:?}");
+        lefts.sort_by(f32::total_cmp);
+        assert!(lefts[2] - lefts[0] < 0.5, "下拉清單沒有對齊：{lefts:?}");
+        // 快捷鍵文字靠右對齊在同一欄
+        let (alt_m, ctrl_k) = (rects("Alt+M"), rects("Ctrl+Alt+K"));
+        assert!(alt_m.len() == 1 && ctrl_k.len() == 1, "{found:?}");
+        assert!((alt_m[0].right() - ctrl_k[0].right()).abs() < 0.5, "快捷鍵沒有靠右對齊：{:?} {:?}", alt_m[0], ctrl_k[0]);
+    }
+
+    #[test]
+    fn the_wrap_tool_surrounds_the_selection_and_hands_the_focus_back_without_clearing_it() {
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.doc.buffer = feditor_core::Buffer::from_text("say hello now");
+        app.editor.sel = editor::model::Selection { anchor: 4, head: 9 };
+        app.pending_editor_focus = false;
+        app.handle(Action::Wrap("\"".into(), "\"".into()), &ctx);
+        assert_eq!(app.doc.buffer.text(), "say \"hello\" now");
+        assert_eq!(app.editor.sel.range(), 5..10, "選取還在，按完可以直接接著打字或再包一層");
+        assert!(app.pending_editor_focus, "鍵盤焦點回到編輯區，不用點編輯區（點了會清掉選取）");
+        assert!(app.doc.dirty, "文件標成有修改");
+        app.handle(Action::Wrap("(".into(), ")".into()), &ctx);
+        assert_eq!(app.doc.buffer.text(), "say \"(hello)\" now");
+    }
+
+    #[test]
+    fn wrap_presets_are_well_formed_and_custom_text_understands_backslash_escapes() {
+        let presets = wrap_presets();
+        assert!(presets.len() >= 8 && presets.iter().all(|p| !p.prefix.is_empty() && !p.suffix.is_empty() && p.shown.contains('…') && !p.name.is_empty()));
+        let fence = presets.iter().find(|p| p.shown == "```…```").unwrap();
+        assert_eq!((fence.prefix, fence.suffix), ("```\n", "\n```"), "程式碼區塊前後各一行");
+        assert_eq!(unescape_wrap_text(r"a\nb\tc\\d"), "a\nb\tc\\d");
+        assert_eq!(unescape_wrap_text(r"\x 與結尾的\"), r"\x 與結尾的\", "不認得的跳脫照原樣");
+        assert_eq!(unescape_wrap_text("<b>"), "<b>");
+    }
+
+    #[test]
+    fn show_shortcuts_opens_the_settings_panel_on_the_shortcuts_page() {
+        let mut app = App::new(None, Settings::default());
+        app.macro_open = true;
+        app.handle(Action::ShowShortcuts, &egui::Context::default());
+        assert!(app.settings_open && !app.macro_open);
+        assert_eq!(app.settings_tab_request.get(), Some(SHORTCUTS_TAB));
+        assert_eq!(SETTINGS_TABS[SHORTCUTS_TAB], "快捷鍵");
+    }
+
+    #[test]
+    fn the_shortcuts_page_lists_built_in_shortcuts_and_the_macros_that_have_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.macros = vec![
+            macro_file(dir.path(), "a.js", "// @name 通用巨集\n// @shortcut Ctrl+Alt+U\n"),
+            macro_file(dir.path(), "b.js", "// @name 只給 Python\n// @lang Python\n// @shortcut Alt+P\n"),
+            macro_file(dir.path(), "c.js", "// @name 沒設快捷鍵\n"),
+        ];
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 1400.0)));
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(raw.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    app.settings_page(ui, SHORTCUTS_TAB);
+                });
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                egui::Shape::Text(t) => out.push(t.galley.job.text.clone()),
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for s in &shapes {
+            texts(&s.shape, &mut found);
+        }
+        for expected in ["Ctrl+S", "Ctrl+Shift+S", "F5", "Ctrl+Alt+U", "Alt+P", "通用巨集", "只給 Python [Python]"] {
+            assert!(found.iter().any(|t| t == expected), "快捷鍵頁沒有「{expected}」：{found:?}");
+        }
+        assert!(!found.iter().any(|t| t.contains("沒設快捷鍵")), "沒有快捷鍵的巨集不列");
+    }
+
+    #[test]
+    fn recording_can_limit_the_macro_to_the_current_file_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let rs = dir.path().join("a.rs");
+        std::fs::write(&rs, "fn main() {}\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.macros.clear();
+        // 沒有語言的文件（新的空白文件）：沒有選項，只能是所有檔案
+        app.ask_recording_name("x;".into(), None, None);
+        assert!(app.modal.as_ref().unwrap().input.as_ref().unwrap().choices.is_empty());
+        app.modal = None;
+        app.open_path(&rs);
+        app.ask_recording_name("x;".into(), None, None);
+        let input = app.modal.as_ref().unwrap().input.as_ref().unwrap();
+        assert_eq!(input.choices, ["所有檔案", "只有 Rust 檔案"]);
+        assert_eq!(input.choice, 0, "預設是所有檔案");
+        // 輸入有誤重新詢問時，保留使用者剛才選的
+        app.modal = None;
+        app.modal_choice = 1;
+        app.ask_recording_name("x;".into(), Some(String::new()), Some("錯".into()));
+        assert_eq!(app.modal.as_ref().unwrap().input.as_ref().unwrap().choice, 1);
+    }
+
+    #[test]
+    fn the_file_types_dropdown_lists_every_language_and_toggling_one_gives_the_new_list() {
+        let names = macro_type_names(&[]);
+        assert!(["Rust", "Python", "Go"].iter().all(|n| names.iter().any(|x| x == n)), "目前支援的語言都在清單裡：{names:?}");
+        // 檔頭寫了清單裡沒有的名稱：列在最前面，才能取消
+        let with_extra = macro_type_names(&["Klingon".to_owned(), "rust".to_owned()]);
+        assert_eq!(with_extra[0], "Klingon");
+        assert_eq!(with_extra.iter().filter(|n| n.eq_ignore_ascii_case("rust")).count(), 1, "已經有的不重複列");
+        // 勾選加在後面，取消拿掉（不分大小寫），其餘順序不變
+        let langs = |l: &[&str]| l.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(toggled_langs(&[], "Rust", true), ["Rust"]);
+        assert_eq!(toggled_langs(&langs(&["Rust"]), "Python", true), ["Rust", "Python"]);
+        assert_eq!(toggled_langs(&langs(&["Rust", "Python"]), "rust", false), ["Python"]);
+        assert!(toggled_langs(&langs(&["Python"]), "Python", false).is_empty(), "全部取消就回到所有檔案");
+    }
+
+    #[test]
+    fn choosing_file_types_rewrites_the_lang_tag_and_clearing_them_makes_the_macro_universal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.macros = vec![macro_file(dir.path(), "m.js", "// @name M\n")];
+        let ctx = egui::Context::default();
+        let read = || std::fs::read_to_string(dir.path().join("m.js")).unwrap();
+        // 改完會重新掃描「真正的」巨集資料夾，所以每次都先把測試用的清單放回去，免得改到使用者自己的巨集
+        let reload = |app: &mut App| app.macros = macro_lib::scan(dir.path());
+        app.handle(Action::SetMacroLangs(0, vec!["Rust".into(), "Python".into()]), &ctx);
+        assert_eq!(read(), "// @lang Rust, Python\n// @name M\nrun();\n");
+        reload(&mut app);
+        assert_eq!(app.macros[0].langs, ["Rust", "Python"]);
+        app.handle(Action::SetMacroLangs(0, vec!["Go".into()]), &ctx);
+        assert_eq!(read(), "// @lang Go\n// @name M\nrun();\n");
+        reload(&mut app);
+        app.handle(Action::SetMacroLangs(0, Vec::new()), &ctx);
+        assert_eq!(read(), "// @name M\nrun();\n", "清空：回到所有檔案");
+        reload(&mut app);
+        assert!(app.macros[0].langs.is_empty());
+        assert!(app.modal.is_none(), "不再跳對話框");
+    }
+    #[test]
+    fn macros_for_different_file_types_may_share_a_shortcut_but_overlapping_scopes_may_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        let key = egui::KeyboardShortcut::new(egui::Modifiers::ALT | egui::Modifiers::COMMAND, egui::Key::K);
+        app.macros = vec![
+            macro_file(dir.path(), "rust.js", "// @name R\n// @lang Rust\n// @shortcut Ctrl+Alt+K\n"),
+            macro_file(dir.path(), "py.js", "// @name P\n// @lang Python\n"),
+            macro_file(dir.path(), "all.js", "// @name A\n"),
+        ];
+        let by_name = |app: &App, n: &str| app.macros.iter().position(|m| m.name == n).unwrap();
+        // Python 專用的可以用 Rust 專用的那個快捷鍵
+        let p = by_name(&app, "P");
+        app.set_macro_shortcut(p, Some(key));
+        assert!(std::fs::read_to_string(dir.path().join("py.js")).unwrap().contains("@shortcut Ctrl+Alt+K"));
+        // 通用的和任何範圍都重疊：拒絕
+        app.macros = macro_lib::scan(dir.path());
+        let a = by_name(&app, "A");
+        app.set_macro_shortcut(a, Some(key));
+        assert!(!std::fs::read_to_string(dir.path().join("all.js")).unwrap().contains("@shortcut"), "通用的不能搶");
+        assert!(app.log.iter().any(|(_, t)| t.contains("已經是巨集")));
+        // 把 Python 專用的改成也適用 Rust：範圍重疊，快捷鍵衝突，不改並說明原因
+        let ctx = egui::Context::default();
+        app.macros = macro_lib::scan(dir.path());
+        let p = by_name(&app, "P");
+        app.handle(Action::SetMacroLangs(p, vec!["Python".into(), "Rust".into()]), &ctx);
+        assert!(app.log.iter().any(|(_, t)| t.contains("重疊")), "要說明原因");
+        assert_eq!(macro_lib::parse_langs(&std::fs::read_to_string(dir.path().join("py.js")).unwrap()), ["Python"]);
+    }
+
+    #[test]
+    fn a_macro_limited_to_a_file_type_does_not_run_on_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let rs = dir.path().join("a.rs");
+        let txt = dir.path().join("a.txt");
+        std::fs::write(&rs, "fn main() {}\n").unwrap();
+        std::fs::write(&txt, "plain\n").unwrap();
+        let macros = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.macros = vec![macro_file(macros.path(), "py.js", "// @name P\n// @lang Python\n"), macro_file(macros.path(), "all.js", "// @name A\n")];
+        app.open_path(&rs);
+        assert_eq!(app.doc_lang(), Some("Rust"));
+        let (py, all) = (app.macros[0].clone(), app.macros[1].clone());
+        assert!(!py.applies_to(app.doc_lang()) && all.applies_to(app.doc_lang()));
+        // 面板、快捷鍵、F5 都走這個檢查：不適用就不執行，也不記成「上一個巨集」
+        app.run_macro_entry(0);
+        assert!(app.last_macro.is_none());
+        assert!(app.log.iter().any(|(_, t)| t.contains("只適用於 Python")), "要說明原因");
+        app.last_macro = Some(py.path.clone());
+        let before = app.log.len();
+        app.handle(Action::RerunMacro, &egui::Context::default());
+        assert!(app.log.len() > before && app.log.last().unwrap().1.contains("只適用於"), "F5 也一樣");
+        // 通用的照常執行
+        app.run_macro_entry(1);
+        assert_eq!(app.last_macro.as_deref(), Some(all.path.as_path()));
+        // 純文字檔：只有通用的適用
+        app.open_path(&txt);
+        assert_eq!(app.doc_lang(), None);
+        assert!(!py.applies_to(None) && all.applies_to(None));
+    }
+
+    #[test]
+    fn recording_saves_the_current_language_only_when_the_limited_choice_is_picked() {
+        let dir = tempfile::tempdir().unwrap();
+        let rs = dir.path().join("a.rs");
+        std::fs::write(&rs, "fn main() {}\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&rs);
+        app.modal_choice = 0;
+        assert!(app.recording_langs().is_empty(), "預設：所有檔案");
+        app.modal_choice = 1;
+        assert_eq!(app.recording_langs(), ["Rust"]);
+        // 沒有語言的檔案（純文字）選不到第二個選項；就算殘留著 1 也不會寫出空的限定
+        let txt = dir.path().join("a.txt");
+        std::fs::write(&txt, "plain\n").unwrap();
+        app.open_path(&txt);
+        assert!(app.recording_langs().is_empty());
     }
 
     #[test]
@@ -6934,7 +7597,7 @@ mod tests {
         let path = dir.path().join("m.js");
         std::fs::write(&path, "// @shortcut F6\nrun();\n").unwrap();
         let mut app = App::new(None, Settings::default());
-        app.macros = vec![macro_lib::MacroEntry { path: path.clone(), name: "m".into(), shortcut: None }];
+        app.macros = vec![macro_lib::MacroEntry { path: path.clone(), name: "m".into(), shortcut: None, langs: Vec::new() }];
         let ctx = egui::Context::default();
         app.resolve_modal(Then::RenameMacro(0), modal::Answer::Yes, Some("  ".into()), &ctx);
         assert!(app.modal.as_ref().unwrap().spec.error.is_some(), "空名稱要重新詢問");

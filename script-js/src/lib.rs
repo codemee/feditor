@@ -19,6 +19,7 @@
 //! | `editor.path()` | 目前檔案的完整路徑，沒存過為 `undefined` |
 //! | `editor.run(name, count = 1)` | 執行編輯器指令（`selectAll`、`moveLineDown`…），與按鍵相同 |
 //! | `editor.type(text)` / `editor.paste(text)` | 像使用者打字／貼上（取代選取、游標跟著移動） |
+//! | `editor.wrap(prefix, suffix)` | 用兩段文字包住每個選取（前面加 `prefix`、後面加 `suffix`，選取留在原文字上）；沒有選取就插入兩者，游標停在中間 |
 //! | `editor.find(query, from = 0, opts)` | 找到回傳 `[start, end]`，否則 `undefined`；`opts`：`regex`、`caseSensitive`、`wholeWord`、`backward` |
 //! | `editor.alert(msg)` / `editor.confirm(msg)` | 對話框；`confirm` 回傳是否按了「是」 |
 //! | `console.log(...)` | 輸出，由 [`JsEngine::take_output`] 取回 |
@@ -272,6 +273,14 @@ fn install_api<'js>(
         "paste",
         Function::new(ctx.clone(), move |c: Ctx<'_>, text: String| {
             with_editor(&h, &c, |e| e.paste_text(&text))
+        }),
+    )?;
+
+    let h = host.clone();
+    editor.set(
+        "wrap",
+        Function::new(ctx.clone(), move |c: Ctx<'_>, prefix: String, suffix: String| {
+            with_editor(&h, &c, |e| e.wrap_text(&prefix, &suffix))
         }),
     )?;
 
@@ -624,6 +633,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, vec!["false"]);
+    }
+
+    #[test]
+    fn wrap_without_a_ui_host_inserts_the_pair_at_the_start() {
+        let mut buf = Buffer::from_text("ab");
+        run("editor.wrap('[', ']');", &mut buf).unwrap();
+        assert_eq!(buf.text(), "[]ab");
     }
 
     #[test]

@@ -2,6 +2,18 @@
 
 # Changelog
 
+## [0.11.0] - 2026-11-08
+
+### Added
+- **Macros can apply to certain file types only**: a `// @lang Rust, Python` header (names as in the status bar language list) limits a macro to those file types; a macro without `@lang` applies to all files, so old macros need no change. The macro panel lists only the macros that apply to the current file, those limited to other types are collapsed under "Macros for other file types"; shortcuts and F5 do not fire on a file the macro does not apply to. **Macros whose scopes do not overlap can share a shortcut.** The naming dialog at the end of a recording has one more choice (all files, or only files of the current language), and the dropdown on each row of the panel changes it later. See `docs/macros.en.md`.
+- **Every row of the macro list has a "file types it applies to" dropdown**: it shows the current choice ("All files" when not limited); open it and tick the supported file types (several allowed), and the change takes effect at once. A shortcut that would clash with a macro whose scope overlaps is refused with an explanation.
+- **A new "Shortcuts" page in the settings panel** lists the built-in shortcuts (file, tabs and terminals, editing, search, view, macros) and the shortcuts given to macros (pale when they do not apply to the current file); "Show shortcuts" at the bottom of the macro panel opens that page directly.
+
+- **Wrap the selection in text**: a new `[ - ]` button next to "Reformat" on the toolbar opens the common choices (double quotes, single quotes, backticks, parentheses, square brackets, curly braces, angle brackets, bold, a Markdown code block), and you can type your own text for before and after (`\n` is a newline). The selection stays on the original text so it can be wrapped again; with no selection a pair is inserted and the caret stays between them; multiple carets each wrap their own; one undo step; the focus returns to the editor afterwards. Macros get `editor.wrap(before, after)`, which is recorded too.
+
+### Fixed
+- **After starting or stopping a macro recording, or running a macro, the keyboard focus stayed on the button**, so you had to click the editor to type, and clicking cleared the existing selection. The focus now returns to the editor. The same problem is fixed after: Save, Save as, F5 to rerun a macro, running a macro from the macro panel, reloading with an encoding, toggling the preview, changing the language / encoding / runtime in the status bar, and closing the macro naming, renaming, scope and delete dialogs.
+
 ## [0.10.0] - 2026-11-08
 
 ### Added
@@ -250,6 +262,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.11.0]: https://github.com/codemee/feditor/releases/tag/v0.11.0
 [0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0
 [0.9.1]: https://github.com/codemee/feditor/releases/tag/v0.9.1
 [0.9.0]: https://github.com/codemee/feditor/releases/tag/v0.9.0

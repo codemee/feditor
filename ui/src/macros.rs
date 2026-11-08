@@ -119,6 +119,10 @@ impl EditorApi for Host<'_> {
         self.state.clamp(self.buffer);
         self.state.paste(self.buffer, text);
     }
+    fn wrap_text(&mut self, prefix: &str, suffix: &str) {
+        self.state.clamp(self.buffer);
+        self.state.wrap_selections(self.buffer, prefix, suffix);
+    }
     fn alert(&mut self, message: &str) {
         if self.interactive {
             rfd::MessageDialog::new()
@@ -335,6 +339,14 @@ mod tests {
         assert_eq!(r.error, None, "{:?}", r.error);
         assert_eq!(buf.text(), "YX");
         assert_eq!(state.sel.head, 1);
+    }
+
+    #[test]
+    fn wrap_surrounds_the_selection_and_keeps_it_on_the_original_text() {
+        let (buf, state, r) = run_in("editor.wrap('<', '>'); editor.wrap('\"', '\"');", "abc def ghi", (4, 7));
+        assert_eq!(r.error, None, "{:?}", r.error);
+        assert_eq!(buf.text(), "abc <\"def\"> ghi", "第二次包的是還選著的 def");
+        assert_eq!(state.sel.range(), 6..9, "選取還在 def 上");
     }
 
     #[test]
