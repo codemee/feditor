@@ -2,7 +2,7 @@
 
 # Changelog
 
-## [Unreleased]
+## [0.12.1] - 2026-11-10
 
 ### Added
 - **The terminal has a scroll bar**: when output has scrolled off the screen, a scroll bar appears at the right edge (same style as the editor's: hidden until the pointer comes near), so you can drag back through the output and see how much there is. It is not shown for blank-only history or while a full-screen program such as vim runs.
@@ -277,6 +277,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.12.1]: https://github.com/codemee/feditor/releases/tag/v0.12.1
 [0.12.0]: https://github.com/codemee/feditor/releases/tag/v0.12.0
 [0.11.0]: https://github.com/codemee/feditor/releases/tag/v0.11.0
 [0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0

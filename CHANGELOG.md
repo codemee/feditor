@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## [未發布]
+## [0.12.1] - 2026-11-10
 
 ### 新增
 - **終端機有捲軸了**：有捲出畫面的輸出時，右邊緣出現捲軸（樣式和編輯區一致：平常不顯示，滑鼠靠近才浮現），拖曳就能往回捲，也看得出前面還有多少輸出。只有空白的歷史、或 vim 這類全螢幕程式執行時不顯示。
@@ -277,6 +277,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.12.1]: https://github.com/codemee/feditor/releases/tag/v0.12.1
 [0.12.0]: https://github.com/codemee/feditor/releases/tag/v0.12.0
 [0.11.0]: https://github.com/codemee/feditor/releases/tag/v0.11.0
 [0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0
