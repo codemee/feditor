@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Recently opened files**: the last 10 files you opened are remembered; a new dropdown arrow next to "Open" on the toolbar lists them (the file name plus the folder in pale text), one click opens one, and the list can be cleared at the bottom. A file that cannot be opened (deleted, moved) is removed from the list with an explanation. Only files you open yourself count (the Open dialog, dropping on the window, hand-over from Explorer / Finder, the command line, Save as); restoring the previous tabs and jumping from a search result do not.
+- **The Windows taskbar jump list**: right-clicking FEditor's icon shows a "Recent" category; one click opens the file in FEditor (handed to the running window when there is one). Files that no longer exist are not listed, and an item the user removed from the jump list is not added back.
+- **The macOS Dock menu**: newly opened files are reported to the system's recent documents, so the Dock icon's menu lists them; clearing the list clears the system's too. (Not yet verified on a real Mac.)
+
 ## [0.11.0] - 2026-11-08
 
 ### Added

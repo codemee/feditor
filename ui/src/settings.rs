@@ -174,6 +174,8 @@ pub struct Settings {
     pub runtime_choices: std::collections::BTreeMap<String, String>,
     /// 「執行目前檔案」的命令列參數：鍵是檔案的完整路徑，值是原樣接在檔案後面的文字。沒有的就沒有參數。
     pub run_args: std::collections::BTreeMap<String, String>,
+    /// 最近開啟的檔案（完整路徑，最近的在最前面，最多 `recent::MAX_RECENT` 個）。設定檔裡一行一個 `recent = 路徑`。
+    pub recent_files: Vec<String>,
     /// 輸入 Tab 時改成輸入空白（縮排也用空白）。所有檔案類型共用。
     pub tab_spaces: bool,
     /// 按 Enter 時依語言自動加深／減淺縮排（預設開）。
@@ -222,6 +224,7 @@ impl Default for Settings {
             wrap_styles: Default::default(),
             runtime_choices: Default::default(),
             run_args: Default::default(),
+            recent_files: Vec::new(),
             tab_spaces: false,
             auto_indent: true,
             shell_menu: false,
@@ -324,6 +327,12 @@ impl Settings {
                     let file = key["run_args.".len()..].trim();
                     if !file.is_empty() && !value.is_empty() {
                         settings.run_args.insert(file.to_owned(), value.to_owned());
+                    }
+                }
+                // recent = 路徑：最近開啟的檔案（一行一個，最近的在前面）
+                "recent" => {
+                    if !value.is_empty() {
+                        settings.recent_files.push(value.to_owned());
                     }
                 }
                 // runtime.專案資料夾 = 直譯器：這個專案手動選的執行環境
@@ -452,6 +461,8 @@ impl Settings {
                 _ => {}
             }
         }
+        // 最近開啟的檔案：去掉重複與不能用的，最多十個
+        settings.recent_files = crate::recent::clean(std::mem::take(&mut settings.recent_files));
         settings
     }
 
@@ -484,6 +495,9 @@ impl Settings {
             if !project.is_empty() && !project.contains(['\r', '\n', '=']) && !program.contains(['\r', '\n']) {
                 text.push_str(&format!("runtime.{project} = {program}\n"));
             }
+        }
+        for path in crate::recent::clean(self.recent_files.clone()) {
+            text.push_str(&format!("recent = {path}\n"));
         }
         for (file, args) in &self.run_args {
             if !file.is_empty() && !file.contains(['\r', '\n', '=']) && !args.contains(['\r', '\n']) && !args.trim().is_empty() {
@@ -795,6 +809,21 @@ mod tests {
         let back = Settings::parse(&t.to_text());
         assert_eq!(back.run_args.get("/home/me/a.py").map(String::as_str), Some("-v"));
         assert_eq!(back.run_args.len(), 1, "空白與含等號的路徑不寫進設定檔");
+    }
+
+    #[test]
+    fn recent_files_round_trip_in_order_and_are_capped_and_deduplicated() {
+        assert!(Settings::default().recent_files.is_empty());
+        let s = Settings::parse("recent = C:\\a b\\x=1.txt\nrecent = /home/me/y.md\nrecent =\nrecent = /home/me/y.md\n");
+        assert_eq!(s.recent_files, ["C:\\a b\\x=1.txt", "/home/me/y.md"], "順序保留（最近的在前面），路徑裡的等號與空白原樣，空的、重複的去掉");
+        let text = s.to_text();
+        assert!(text.contains("recent = C:\\a b\\x=1.txt\nrecent = /home/me/y.md\n"));
+        assert_eq!(Settings::parse(&text).recent_files, s.recent_files);
+        let many: String = (0..25).map(|i| format!("recent = /f/{i}.txt\n")).collect();
+        assert_eq!(Settings::parse(&many).recent_files.len(), crate::recent::MAX_RECENT);
+        let mut t = Settings::default();
+        t.recent_files = vec!["/ok.txt".to_owned(), "bad\nname".to_owned()];
+        assert_eq!(Settings::parse(&t.to_text()).recent_files, ["/ok.txt"], "含換行的路徑不寫進設定檔");
     }
 
     #[test]

@@ -26,11 +26,15 @@ mod settings;
 mod cli_command;
 mod file_assoc;
 mod project_cmd;
+mod recent;
+mod recent_os;
 mod runtime_env;
 mod shortcuts;
 mod shell_integration;
 #[cfg(target_os = "macos")]
 mod macos_open;
+#[cfg(windows)]
+mod jump_list;
 mod single_instance;
 mod syntax;
 mod tabs;
@@ -738,6 +742,10 @@ enum Action {
     Reformat,
     /// 用（前, 後）兩段文字包住每個選取。
     Wrap(String, String),
+    /// 開啟「最近開啟」清單裡的檔案（完整路徑）。
+    OpenRecent(String),
+    /// 清除「最近開啟」清單。
+    ClearRecent,
     /// 按 Enter 時依語言自動加深／減淺縮排。
     SetAutoIndent(bool),
     OpenMacroDir,
@@ -860,6 +868,8 @@ struct App {
     /// 上一個畫面每個窗格的位置（切預覽時用來判斷放不放得下）。
     pane_rects: Vec<(panes::PaneId, egui::Rect)>,
     last_macro: Option<PathBuf>,
+    /// 最近開啟的檔案要不要通知作業系統（Windows 的跳躍清單、macOS 的 Dock）：只有正式啟動才開，測試不會動到真的系統。
+    os_recent_enabled: bool,
     /// 「用文字包住選取」自訂欄位的內容（前面、後面；\n 代表換行）。
     wrap_prefix: String,
     wrap_suffix: String,
@@ -961,6 +971,7 @@ impl App {
             pane_rects: Vec::new(),
             last_macro: None,
             modal_choice: 0,
+            os_recent_enabled: false,
             wrap_prefix: String::new(),
             wrap_suffix: String::new(),
             log: Vec::new(),
@@ -2218,8 +2229,55 @@ impl App {
     fn open(&mut self) {
         if let Some(paths) = rfd::FileDialog::new().set_title(t("開啟檔案")).pick_files() {
             for path in paths {
-                self.open_path(&path);
+                self.open_path_recent(&path);
             }
+        }
+    }
+
+    /// 記下剛開啟（或另存）的檔案：移到「最近開啟」的最前面，並通知作業系統（跳躍清單、Dock）。
+    fn remember_recent(&mut self, path: &std::path::Path) {
+        let Some(text) = recent::push(&mut self.settings.recent_files, path) else { return };
+        self.mark_settings_dirty();
+        if self.os_recent_enabled {
+            recent_os::update(&self.settings.recent_files, Some(std::path::Path::new(&text)));
+        }
+    }
+
+    /// 從「最近開啟」拿掉一個檔案（開不了的）。
+    fn forget_recent(&mut self, path: &str) {
+        recent::remove(&mut self.settings.recent_files, path);
+        self.mark_settings_dirty();
+        if self.os_recent_enabled {
+            recent_os::update(&self.settings.recent_files, None);
+        }
+    }
+
+    /// 清除「最近開啟」。
+    fn clear_recent(&mut self) {
+        if self.settings.recent_files.is_empty() {
+            return;
+        }
+        self.settings.recent_files.clear();
+        self.mark_settings_dirty();
+        if self.os_recent_enabled {
+            recent_os::clear();
+        }
+        self.push(LogKind::Info, t("已清除最近開啟的檔案"));
+    }
+
+    /// 程式啟動時把清單同步給作業系統（上次的清單、或換了版本之後執行檔的位置變了）。
+    fn sync_recent_os(&self) {
+        if self.os_recent_enabled && !self.settings.recent_files.is_empty() {
+            recent_os::update(&self.settings.recent_files, None);
+        }
+    }
+
+    /// 使用者要開的檔案（選檔交談窗、拖進視窗、檔案總管轉交、跳躍清單、Dock）：開起來，成功就記進「最近開啟」。
+    /// 還原上次的分頁、搜尋結果、巨集編輯這些不是使用者「開檔案」的動作，不走這裡，所以不會把清單搞亂。
+    fn open_path_recent(&mut self, path: &std::path::Path) {
+        self.open_path(path);
+        if self.find_open_path(path).is_some() {
+            self.remember_recent(path);
         }
     }
 
@@ -2274,12 +2332,12 @@ impl App {
             seen.push(path.clone());
             if path.is_dir() {
                 for picked in (self.pick_files_in)(&path) {
-                    self.open_path(&picked);
+                    self.open_path_recent(&picked);
                 }
             } else if path.symlink_metadata().is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
                 self.open_new_file(&path);
             } else {
-                self.open_path(&path);
+                self.open_path_recent(&path);
             }
         }
     }
@@ -2338,9 +2396,10 @@ impl App {
         else {
             return false;
         };
-        match self.doc.save_as(path) {
+        match self.doc.save_as(path.clone()) {
             Ok(()) => {
                 self.push(LogKind::Info, tf!("已儲存 {}", self.doc.name()));
+                self.remember_recent(&path);
                 true
             }
             Err(e) => {
@@ -2612,6 +2671,18 @@ impl App {
                     self.pending_editor_focus = true;
                 }
             }
+            Action::OpenRecent(path) => {
+                let file = PathBuf::from(&path);
+                self.open_path(&file);
+                if self.find_open_path(&file).is_some() {
+                    self.remember_recent(&file); // 移到最前面
+                } else {
+                    // 檔案不見了或開不了（原因已經顯示在輸出面板）：從清單拿掉
+                    self.forget_recent(&path);
+                    self.push(LogKind::Warn, tf!("「{}」開不了，已從最近開啟的清單移除", path));
+                }
+            }
+            Action::ClearRecent => self.clear_recent(),
             Action::Wrap(prefix, suffix) => {
                 if self.doc.terminal.is_none() {
                     self.editor.clamp(&self.doc.buffer);
@@ -2856,9 +2927,34 @@ impl App {
             if icons::button(ui, Icon::New, t("新增空白文件 (Ctrl+N)"), true).clicked() {
                 action = Some(Action::New);
             }
+            // 「開啟」和旁邊的下拉箭頭同一組：中間不留縫。箭頭展開最近開啟的檔案
+            let gap_open = ui.spacing().item_spacing.x;
+            ui.spacing_mut().item_spacing.x = 0.0;
             if icons::button(ui, Icon::Open, t("開啟檔案 (Ctrl+O)"), true).clicked() {
                 action = Some(Action::Open);
             }
+            let recent_button = icons::dropdown_button(ui, Icon::ChevronDown, t("最近開啟的檔案"), !self.settings.recent_files.is_empty());
+            ui.spacing_mut().item_spacing.x = gap_open;
+            egui::Popup::menu(&recent_button).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
+                ui.set_min_width(260.0);
+                let font = egui::TextStyle::Button.resolve(ui.style());
+                for path in &self.settings.recent_files {
+                    let (name, folder) = recent::name_and_folder(path);
+                    // 檔名用一般的顏色，後面接淡色的資料夾（太長就留最後一段），滑鼠停上去看完整路徑
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(&name, 0.0, egui::TextFormat::simple(font.clone(), ui.visuals().text_color()));
+                    if !folder.is_empty() {
+                        job.append(&format!("   {}", recent::shorten_folder(&folder, 44)), 0.0, egui::TextFormat::simple(font.clone(), ui.visuals().weak_text_color()));
+                    }
+                    if ui.add(egui::Button::new(job)).on_hover_text(path.as_str()).clicked() {
+                        action = Some(Action::OpenRecent(path.clone()));
+                    }
+                }
+                ui.separator();
+                if ui.button(t("清除最近開啟的檔案")).clicked() {
+                    action = Some(Action::ClearRecent);
+                }
+            });
             if icons::button(ui, Icon::Save, t("儲存 (Ctrl+S)"), true).clicked() {
                 action = Some(Action::Save);
             }
@@ -7403,6 +7499,84 @@ mod tests {
     }
 
     #[test]
+    fn files_the_user_opens_are_remembered_newest_first_but_restoring_and_searching_do_not_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |n: &str| {
+            let p = dir.path().join(n);
+            std::fs::write(&p, n).unwrap();
+            p
+        };
+        let (a, b, c) = (file("a.txt"), file("b.txt"), file("c.txt"));
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&a); // 還原上次的分頁、搜尋結果、巨集編輯走的是 open_path：不算「使用者開檔案」
+        assert!(app.settings.recent_files.is_empty());
+        app.open_path_recent(&a);
+        app.open_path_recent(&b);
+        app.open_dropped(vec![c.clone()]);
+        let abs = |p: &std::path::Path| std::path::absolute(p).unwrap().to_string_lossy().into_owned();
+        assert_eq!(app.settings.recent_files, [abs(&c), abs(&b), abs(&a)], "最近的在最前面");
+        assert!(app.settings_dirty_since.is_some(), "要寫進設定檔");
+        app.open_path_recent(&a); // 已經開著、切過去：也算，移到最前面
+        assert_eq!(app.settings.recent_files[0], abs(&a));
+        assert_eq!(app.settings.recent_files.len(), 3, "不重複");
+        // 開不了的檔案不記
+        app.open_path_recent(&dir.path().join("不存在.txt"));
+        assert_eq!(app.settings.recent_files.len(), 3);
+    }
+
+    #[test]
+    fn only_the_ten_most_recent_files_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        for i in 0..13 {
+            let p = dir.path().join(format!("f{i}.txt"));
+            std::fs::write(&p, "x").unwrap();
+            app.open_path_recent(&p);
+        }
+        assert_eq!(app.settings.recent_files.len(), recent::MAX_RECENT);
+        assert!(app.settings.recent_files[0].ends_with("f12.txt") && app.settings.recent_files[9].ends_with("f3.txt"));
+    }
+
+    #[test]
+    fn opening_from_the_recent_list_moves_the_file_up_and_a_missing_file_is_dropped_with_a_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.open_path_recent(&a);
+        app.open_path_recent(&b);
+        let first = app.settings.recent_files[1].clone(); // a
+        app.handle(Action::OpenRecent(first.clone()), &ctx);
+        assert_eq!(app.settings.recent_files[0], first, "點了的移到最前面");
+        assert_eq!(app.doc.path.as_deref().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).as_deref(), Some("a.txt"));
+        // 清單裡的檔案在清單外被刪了（沒有開在分頁裡）：開不了，從清單拿掉並說明
+        let c = dir.path().join("c.txt");
+        std::fs::write(&c, "c").unwrap();
+        let gone = recent::push(&mut app.settings.recent_files, &c).unwrap();
+        std::fs::remove_file(&c).unwrap();
+        app.handle(Action::OpenRecent(gone.clone()), &ctx);
+        assert!(!app.settings.recent_files.contains(&gone));
+        assert!(app.log.iter().any(|(k, t)| matches!(k, LogKind::Warn) && t.contains("已從最近開啟的清單移除")));
+    }
+
+    #[test]
+    fn clearing_the_recent_list_empties_it_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        std::fs::write(&a, "a").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path_recent(&a);
+        app.handle(Action::ClearRecent, &egui::Context::default());
+        assert!(app.settings.recent_files.is_empty());
+        assert!(app.log.iter().any(|(_, t)| t.contains("已清除")));
+        let before = app.log.len();
+        app.handle(Action::ClearRecent, &egui::Context::default());
+        assert_eq!(app.log.len(), before, "已經是空的：不重複說");
+    }
+
+    #[test]
     fn show_shortcuts_opens_the_settings_panel_on_the_shortcuts_page() {
         let mut app = App::new(None, Settings::default());
         app.macro_open = true;
@@ -8135,6 +8309,8 @@ fn main() -> eframe::Result {
             app.sync_shell_menu();
             app.sync_cli_command();
             app.sync_file_assoc();
+            app.os_recent_enabled = true;
+            app.sync_recent_os();
             for m in syntax_msgs {
                 app.push(LogKind::Warn, m);
             }
