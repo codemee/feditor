@@ -2,7 +2,7 @@
 
 # Changelog
 
-## [Unreleased]
+## [0.12.0] - 2026-11-10
 
 ### Added
 - **Recently opened files**: the last 10 files you opened are remembered; a new dropdown arrow next to "Open" on the toolbar lists them (the file name plus the folder in pale text), one click opens one, and the list can be cleared at the bottom. A file that cannot be opened (deleted, moved) is removed from the list with an explanation. Only files you open yourself count (the Open dialog, dropping on the window, hand-over from Explorer / Finder, the command line, Save as); restoring the previous tabs and jumping from a search result do not.
@@ -269,6 +269,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.12.0]: https://github.com/codemee/feditor/releases/tag/v0.12.0
 [0.11.0]: https://github.com/codemee/feditor/releases/tag/v0.11.0
 [0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0
 [0.9.1]: https://github.com/codemee/feditor/releases/tag/v0.9.1

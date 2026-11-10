@@ -2,7 +2,7 @@
 
 # 更新紀錄
 
-## [未發布]
+## [0.12.0] - 2026-11-10
 
 ### 新增
 - **最近開啟的檔案**：記下最近開啟的 10 個檔案；工具列「開啟」旁多一個下拉箭頭，列出它們（檔名加淡色的資料夾），點一下就開，底下可以清除清單。開不了的檔案（被刪了、搬走了）自動從清單拿掉並說明。只算使用者自己開的檔案（開啟對話框、拖進視窗、檔案總管／Finder 轉交、命令列、另存新檔），還原上次的分頁、從搜尋結果跳過去不算。
@@ -269,6 +269,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.12.0]: https://github.com/codemee/feditor/releases/tag/v0.12.0
 [0.11.0]: https://github.com/codemee/feditor/releases/tag/v0.11.0
 [0.10.0]: https://github.com/codemee/feditor/releases/tag/v0.10.0
 [0.9.1]: https://github.com/codemee/feditor/releases/tag/v0.9.1
