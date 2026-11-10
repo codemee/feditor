@@ -2,6 +2,23 @@
 
 # Changelog
 
+## [0.13.0] - 2026-11-10
+
+### Added
+- **Command-line options**: the `feditor` command has a few more options.
+  - `file:line[:col]`: open the file and jump to that position, e.g. `feditor src/main.rs:120:5`; files that do not exist yet work too (they open as new files to be created). Nothing is split when the whole text is itself an existing file.
+  - `-w` / `--wait`: when a FEditor is already running, wait until the tabs of those files are closed before exiting (closing the window also ends the wait). This lets it serve as the editor for programs such as `git commit`: `GIT_EDITOR="feditor --wait"`.
+  - `-n` / `--new-window`: do not hand the files to an open window; open a new window instead.
+  - `-h` / `--help`, `-v` / `--version`, and `--` (everything after it is a file name).
+  - The terminal command (`~/.local/bin/feditor`) stays in the foreground for `--wait`, `--help` and `--version`, and still runs in the background otherwise.
+- **The title bar shows the version**: `name - FEditor 0.13.0`.
+
+### Fixed
+- **Shell rc files without an extension, such as `.zshrc`, `.bashrc` and `.profile`, were not highlighted as shell**: `zshrc`, `zshenv`, `zprofile`, `bashrc`, `bash_profile`, `bash_aliases`, `profile`, `kshrc` and so on (with or without the leading dot) are now recognized as shell.
+
+### Changed
+- The internal protocol a newly started program uses to hand files to a running FEditor has a new version; two versions running at once cannot hand files to each other (the newly started one opens its own window).
+
 ## [0.12.1] - 2026-11-10
 
 ### Added
