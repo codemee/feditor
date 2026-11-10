@@ -4,6 +4,7 @@
 // Windows 的 release 版是視窗程式：不要在背後多開一個主控台視窗（debug 版保留，方便看輸出）
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod cli;
 mod document;
 mod editor;
 mod find;
@@ -882,7 +883,13 @@ struct App {
     /// 這樣資料夾的「開啟檔案」交談窗出現時主視窗已經在了。
     startup_paths: Vec<PathBuf>,
     /// 別的 FEditor 啟動時轉交過來的路徑（從檔案總管、Finder 的右鍵選單開檔案時，已經開著就不另開新視窗）。
-    incoming: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
+    incoming: Option<std::sync::mpsc::Receiver<single_instance::Request>>,
+    /// 命令列 `檔案:行:欄` 指定的位置：檔案開好之後跳過去。
+    startup_goto: Vec<cli::Target>,
+    /// 轉交來的、要等檔案關閉才回覆的請求（還沒開檔的）。
+    pending_waits: Vec<(Vec<PathBuf>, std::sync::mpsc::Sender<()>)>,
+    /// 開好了、在等檔案都關閉的請求：全部關了就回覆對方（`feditor --wait`）。
+    waiters: Vec<(Vec<PathBuf>, std::sync::mpsc::Sender<()>)>,
     /// 加入／移除右鍵選單（測試時換成不碰系統的替身）。
     shell_menu_backend: fn(bool, &shell_integration::Labels) -> Result<(), String>,
     /// 在 `~/.local/bin` 加入／移除 `feditor` 指令（測試時換成不碰系統的替身）。
@@ -979,6 +986,9 @@ impl App {
             last_title: String::new(),
             startup_paths: Vec::new(),
             incoming: None,
+            startup_goto: Vec::new(),
+            pending_waits: Vec::new(),
+            waiters: Vec::new(),
             shell_menu_backend: apply_shell_menu,
             cli_backend: cli_command::apply,
             assoc_backend: file_assoc::apply,
@@ -3700,6 +3710,20 @@ impl App {
         }
     }
 
+    /// 開好的檔案跳到指定的行、欄（從 1 起算；超出範圍就停在最後）。
+    fn goto_position(&mut self, target: &cli::Target) {
+        let Some(line) = target.line else { return };
+        let Some((pane, i)) = self.find_open_path(&target.path) else { return };
+        self.focus_pane(pane);
+        self.switch_tab(i);
+        let buf = &mut self.doc.buffer;
+        let line = (line - 1).min(buf.line_count().saturating_sub(1));
+        let col = target.col.map_or(0, |c| c - 1).min(buf.line_len_chars(line));
+        let pos = buf.line_start(line) + col;
+        self.editor.set_caret(buf, pos, false);
+        self.editor.scroll_to_caret = true;
+    }
+
     /// 打開搜尋結果第 `i` 筆：開啟（或切到）那個檔案，選取符合的文字並捲到可見處。
     fn goto_hit(&mut self, i: usize) {
         let Some(hit) = self.folder.hits.get(i).cloned() else {
@@ -5274,7 +5298,12 @@ impl eframe::App for App {
         // 別的 FEditor 轉交來的路徑：加進待開清單，並把視窗叫到前面
         if let Some(rx) = &self.incoming {
             let mut any = false;
-            while let Ok(paths) = rx.try_recv() {
+            while let Ok(req) = rx.try_recv() {
+                let paths: Vec<PathBuf> = req.targets.iter().map(|t| t.path.clone()).collect();
+                self.startup_goto.extend(req.targets.into_iter().filter(|t| t.line.is_some()));
+                if let Some(done) = req.done {
+                    self.pending_waits.push((paths.clone(), done));
+                }
                 self.startup_paths.extend(paths);
                 any = true;
             }
@@ -5286,7 +5315,31 @@ impl eframe::App for App {
         // 有對話框在等回答時先不開（資料夾的選檔交談窗不能疊上去），等對話框關了再處理
         if !self.startup_paths.is_empty() && self.modal.is_none() {
             let paths = std::mem::take(&mut self.startup_paths);
+            let last = paths.last().cloned();
             self.open_dropped(paths);
+            for t in std::mem::take(&mut self.startup_goto) {
+                self.goto_position(&t);
+            }
+            // 跳位置會切換分頁：最後回到最後開的那個檔案
+            if let Some((pane, i)) = last.and_then(|p| self.find_open_path(&p)) {
+                self.focus_pane(pane);
+                self.switch_tab(i);
+            }
+            self.waiters.append(&mut self.pending_waits);
+        }
+        // 在等檔案關閉的 `feditor --wait`：那些檔案都不在分頁裡了（關掉、或根本沒開成）就回覆對方
+        if !self.waiters.is_empty() {
+            let waiters = std::mem::take(&mut self.waiters);
+            for (paths, done) in waiters {
+                if paths.iter().any(|p| self.find_open_path(p).is_some()) {
+                    self.waiters.push((paths, done));
+                } else {
+                    let _ = done.send(());
+                }
+            }
+            if !self.waiters.is_empty() {
+                ctx.request_repaint_after(Duration::from_millis(300));
+            }
         }
 
         // 組字內容已經被直接寫進編輯區：輸入法稍後送來的同內容 Commit 要丟掉（見 swallow_ime）
@@ -5577,9 +5630,10 @@ impl eframe::App for App {
         }
 
         let title = format!(
-            "{}{} - FEditor",
+            "{}{} - FEditor {}",
             self.doc.name(),
-            if self.doc.dirty { " ●" } else { "" }
+            if self.doc.dirty { " ●" } else { "" },
+            env!("CARGO_PKG_VERSION")
         );
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -8266,13 +8320,30 @@ fn main() -> eframe::Result {
         unsafe { std::env::set_var("WGPU_BACKEND", "dx12") };
     }
 
+    let args = match cli::parse(std::env::args_os().skip(1)) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("feditor: {e}\n\n{}", cli::USAGE);
+            std::process::exit(2);
+        }
+    };
+    if args.help {
+        print!("{}", cli::USAGE);
+        return Ok(());
+    }
+    if args.version {
+        println!("feditor {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     // macOS：Finder 的「打開方式」是送 Apple Event，要在事件迴圈開始之前就註冊好處理器
     #[cfg(target_os = "macos")]
     macos_open::install();
 
     // 用命令列的路徑啟動：已經有 FEditor 在執行就交給它開，這個行程直接結束（見 single_instance）
-    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    let listener = match single_instance::claim(&paths) {
+    let paths: Vec<PathBuf> = args.targets.iter().map(|t| t.path.clone()).collect();
+    let goto: Vec<cli::Target> = args.targets.iter().filter(|t| t.line.is_some()).cloned().collect();
+    let listener = match single_instance::claim(&args.targets, args.wait, args.new_window) {
         single_instance::Claim::Forwarded => return Ok(()),
         single_instance::Claim::Primary(listener) => Some(listener),
         single_instance::Claim::Standalone => None,
@@ -8304,6 +8375,7 @@ fn main() -> eframe::Result {
             let syntax_msgs = syntax::load_user_languages(syntax::syntax_dir().as_deref());
             let mut app = App::new(initial, settings);
             app.startup_paths = paths;
+            app.startup_goto = goto;
             if let Some(listener) = listener {
                 let ctx = cc.egui_ctx.clone();
                 app.incoming = Some(single_instance::serve(listener, move || ctx.request_repaint()));

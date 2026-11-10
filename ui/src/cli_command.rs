@@ -29,11 +29,18 @@ fn quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
-/// 指令腳本的內容：把所有參數交給 `exe`，放到背景執行。
+/// 指令腳本的內容：把所有參數交給 `exe`，放到背景執行；要等結果的（`--wait`、`--help`、`--version`）留在前景。
 pub fn script(exe: &Path) -> String {
     format!(
-        "#!/bin/sh\n{MARKER}\nnohup {} \"$@\" >/dev/null 2>&1 &\n",
-        quote(&exe.to_string_lossy())
+        "#!/bin/sh\n{MARKER}\n\
+         for a in \"$@\"; do\n\
+         \x20 case \"$a\" in\n\
+         \x20   --) break ;;\n\
+         \x20   -w|--wait|-h|--help|-v|--version) exec {exe} \"$@\" ;;\n\
+         \x20 esac\n\
+         done\n\
+         nohup {exe} \"$@\" >/dev/null 2>&1 &\n",
+        exe = quote(&exe.to_string_lossy())
     )
 }
 
@@ -90,6 +97,7 @@ mod tests {
         assert_eq!(s.lines().next(), Some("#!/bin/sh"));
         assert_eq!(s.lines().nth(1), Some(MARKER));
         assert!(s.contains("nohup '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\" >/dev/null 2>&1 &"), "{s}");
+        assert!(s.contains("-w|--wait|-h|--help|-v|--version) exec '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\""), "{s}");
         let odd = script(Path::new("/tmp/it's here/feditor"));
         assert!(odd.contains(r"'/tmp/it'\''s here/feditor'"), "{odd}");
     }

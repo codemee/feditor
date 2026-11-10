@@ -7,24 +7,34 @@
 //!
 //! 通訊協定（一行一筆文字）：
 //! ```text
-//! 用戶端 → FEDITOR1 <使用者名稱>
-//! 用戶端 → <絕對路徑>（有幾個就幾行）
+//! 用戶端 → FEDITOR2 <使用者名稱>
+//! 用戶端 → wait（要等檔案關閉才結束時才有這一行）
+//! 用戶端 → open<TAB><行><TAB><欄><TAB><絕對路徑>（有幾個就幾行；行、欄是 0 表示沒指定）
 //! 用戶端 → （空行，結束）
 //! 伺服器 → OK
+//! 伺服器 → DONE（只有 wait 才有：那些檔案都關閉之後）
 //! ```
 //! 第一行必須是這個固定的開頭加上同一個使用者名稱：網頁或別的程式亂送的資料（例如 HTTP 請求）
 //! 開頭對不上就直接丟掉；同一台機器上別的使用者的 FEditor 也不會互相收到路徑。
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use crate::cli::Target;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
 /// 監聽的埠。被別的軟體佔走時，FEditor 會當成「連不上」，照常自己啟動（只是不會互相轉交）。
 pub const PORT: u16 = 49731;
 
-const MAGIC: &str = "FEDITOR1";
+const MAGIC: &str = "FEDITOR2";
+
+/// 轉交來的一批要開的檔案。
+pub struct Request {
+    pub targets: Vec<Target>,
+    /// 對方在等：這些檔案都關閉之後，對 `done` 送一個訊號（或直接丟掉它，表示不用等了）。
+    pub done: Option<mpsc::Sender<()>>,
+}
 
 /// 啟動時的角色。
 pub enum Claim {
@@ -44,21 +54,24 @@ fn address(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
-/// 決定這個行程的角色。`paths` 是命令列給的路徑：沒有路徑的啟動（例如從開始功能表）一律開新視窗，
-/// 不會去驚動別的視窗；有路徑時，已經有 FEditor 在跑就轉交給它。
-pub fn claim(paths: &[PathBuf]) -> Claim {
-    claim_at(PORT, paths)
+/// 決定這個行程的角色。沒有檔案的啟動（例如從開始功能表）一律開新視窗，不會去驚動別的視窗；
+/// 有檔案時，已經有 FEditor 在跑就轉交給它（`wait` 時等到那些檔案關閉才回來）；`new_window` 則不轉交。
+pub fn claim(targets: &[Target], wait: bool, new_window: bool) -> Claim {
+    claim_at(PORT, targets, wait, new_window)
 }
 
-pub fn claim_at(port: u16, paths: &[PathBuf]) -> Claim {
+pub fn claim_at(port: u16, targets: &[Target], wait: bool, new_window: bool) -> Claim {
     let addr = address(port);
+    if new_window {
+        return TcpListener::bind(addr).map_or(Claim::Standalone, Claim::Primary);
+    }
     // 同時啟動好幾個（在檔案總管選了很多個檔案）時，第一個綁到的是主角，其餘的稍等它開始接收再轉交
     for attempt in 0..10 {
         match TcpListener::bind(addr) {
             Ok(listener) => return Claim::Primary(listener),
-            Err(_) if paths.is_empty() => return Claim::Standalone,
+            Err(_) if targets.is_empty() => return Claim::Standalone,
             Err(_) => {
-                if forward(addr, paths) {
+                if forward(addr, targets, wait) {
                     return Claim::Forwarded;
                 }
                 if attempt < 9 {
@@ -70,8 +83,8 @@ pub fn claim_at(port: u16, paths: &[PathBuf]) -> Claim {
     Claim::Standalone
 }
 
-/// 把路徑交給 `addr` 上的 FEditor。對方確認收到才回傳 `true`。
-fn forward(addr: SocketAddr, paths: &[PathBuf]) -> bool {
+/// 把檔案交給 `addr` 上的 FEditor。對方確認收到才回傳 `true`；`wait` 時還會等到對方說那些檔案關閉了。
+fn forward(addr: SocketAddr, targets: &[Target], wait: bool) -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
         return false;
     };
@@ -79,20 +92,32 @@ fn forward(addr: SocketAddr, paths: &[PathBuf]) -> bool {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     allow_foreground();
     let mut message = format!("{MAGIC} {}\n", user_name());
-    for path in paths {
+    if wait {
+        message.push_str("wait\n");
+    }
+    for target in targets {
         // 相對路徑要用「這個行程」的目前資料夾換成絕對路徑，對方的目前資料夾不一樣
-        let absolute = std::path::absolute(path).unwrap_or_else(|_| path.clone());
+        let absolute = std::path::absolute(&target.path).unwrap_or_else(|_| target.path.clone());
         if let Some(text) = absolute.to_str().filter(|t| !t.contains(['\r', '\n'])) {
-            message.push_str(text);
-            message.push('\n');
+            message.push_str(&format!("open\t{}\t{}\t{text}\n", target.line.unwrap_or(0), target.col.unwrap_or(0)));
         }
     }
     message.push('\n');
     if stream.write_all(message.as_bytes()).is_err() {
         return false;
     }
+    let mut reader = BufReader::new(stream);
     let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).is_ok() && reply.trim() == "OK"
+    if reader.read_line(&mut reply).is_err() || reply.trim() != "OK" {
+        return false;
+    }
+    if wait {
+        // 檔案關閉要多久不一定：不設逾時。對方結束（連線斷了）也就不用等了
+        let _ = reader.get_ref().set_read_timeout(None);
+        let mut done = String::new();
+        let _ = reader.read_line(&mut done);
+    }
+    true
 }
 
 /// Windows 不讓背景行程把視窗拉到最前面；剛被使用者操作（右鍵選單）啟動的這個行程可以授權對方。
@@ -105,7 +130,7 @@ fn allow_foreground() {
 }
 
 /// 開始接收別人轉交的路徑：背景執行緒處理連線，每收到一批就呼叫 `notify`（用來喚醒畫面）並把路徑送進回傳的通道。
-pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -> mpsc::Receiver<Vec<PathBuf>> {
+pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -> mpsc::Receiver<Request> {
     let (tx, rx) = mpsc::channel();
     let notify = std::sync::Arc::new(notify);
     std::thread::spawn(move || {
@@ -113,11 +138,19 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
             // 每個連線各用一個執行緒：有人連上來卻不說話，不會卡住後面正常的請求
             let (tx, notify) = (tx.clone(), notify.clone());
             std::thread::spawn(move || {
-                if let Some(paths) = read_request(stream)
-                    && !paths.is_empty()
-                    && tx.send(paths).is_ok()
-                {
-                    notify();
+                let Some((targets, wait, mut stream)) = read_request(stream) else { return };
+                if targets.is_empty() {
+                    return;
+                }
+                let (done_tx, done_rx) = mpsc::channel();
+                let done = wait.then_some(done_tx);
+                if tx.send(Request { targets, done }).is_err() {
+                    return;
+                }
+                notify();
+                // 等的話就停在這裡，直到畫面那邊說檔案都關了（recv 失敗是畫面結束了，不用再等）
+                if wait && done_rx.recv().is_ok() {
+                    let _ = stream.write_all(b"DONE\n");
                 }
             });
         }
@@ -125,8 +158,8 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
     rx
 }
 
-/// 讀一個連線的請求；格式不對就 `None`。正確的話回 `OK`。
-fn read_request(stream: TcpStream) -> Option<Vec<PathBuf>> {
+/// 讀一個連線的請求；格式不對就 `None`。正確的話回 `OK`，並把連線交還（`wait` 時之後還要回 `DONE`）。
+fn read_request(stream: TcpStream) -> Option<(Vec<Target>, bool, TcpStream)> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let mut first = String::new();
@@ -135,7 +168,8 @@ fn read_request(stream: TcpStream) -> Option<Vec<PathBuf>> {
     if first.trim_end() != format!("{MAGIC} {}", user_name()) {
         return None;
     }
-    let mut paths = Vec::new();
+    let mut targets = Vec::new();
+    let mut wait = false;
     for _ in 0..1000 {
         let mut line = String::new();
         if std::io::Read::take(&mut reader, 32768).read_line(&mut line).ok()? == 0 {
@@ -145,9 +179,16 @@ fn read_request(stream: TcpStream) -> Option<Vec<PathBuf>> {
         if line.is_empty() {
             let mut out = stream;
             out.write_all(b"OK\n").ok()?;
-            return Some(paths);
+            return Some((targets, wait, out));
         }
-        paths.push(Path::new(line).to_path_buf());
+        if line == "wait" {
+            wait = true;
+        } else if let Some(rest) = line.strip_prefix("open\t") {
+            let mut f = rest.splitn(3, '\t');
+            let (l, c, path) = (f.next()?, f.next()?, f.next()?);
+            let num = |t: &str| t.parse::<usize>().ok().filter(|&n| n > 0);
+            targets.push(Target { path: PathBuf::from(path), line: num(l), col: num(c) });
+        }
     }
     None
 }
@@ -164,20 +205,22 @@ mod tests {
     #[test]
     fn the_first_instance_is_primary_and_later_ones_forward_their_paths() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[]) else { panic!("第一個應該是主角") };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!("第一個應該是主角") };
         let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = woken.clone();
         let rx = serve(listener, move || {
             counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         });
         // 沒有路徑的啟動（開始功能表）：不轉交，自己開新視窗
-        assert!(matches!(claim_at(port, &[]), Claim::Standalone));
+        assert!(matches!(claim_at(port, &[], false, false), Claim::Standalone));
         // 有路徑：轉交給主角，自己結束
         let file = std::env::temp_dir().join("feditor single instance 測試.txt");
         let folder = std::env::temp_dir();
-        assert!(matches!(claim_at(port, &[file.clone(), folder.clone()]), Claim::Forwarded));
+        let targets = [Target::plain(file.clone()), Target { path: folder.clone(), line: Some(12), col: Some(3) }];
+        assert!(matches!(claim_at(port, &targets, false, false), Claim::Forwarded));
         let got = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert_eq!(got, vec![file, folder], "路徑原樣送到（含空白與中文）");
+        assert_eq!(got.targets, targets.to_vec(), "路徑原樣送到（含空白與中文）與行、欄");
+        assert!(got.done.is_none());
         // 路徑先進通道、之後才喚醒畫面（畫面醒來一定拿得到路徑），所以收到路徑時喚醒可能還沒執行：稍等一下
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while woken.load(std::sync::atomic::Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
@@ -189,17 +232,17 @@ mod tests {
     #[test]
     fn relative_paths_become_absolute_for_the_receiver() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[]) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
         let rx = serve(listener, || {});
-        assert!(forward(address(port), &[PathBuf::from("relative.txt")]));
-        let got = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert!(got[0].is_absolute() && got[0].ends_with("relative.txt"), "{got:?}");
+        assert!(forward(address(port), &[Target::plain("relative.txt")], false));
+        let got = rx.recv_timeout(Duration::from_secs(3)).unwrap().targets;
+        assert!(got[0].path.is_absolute() && got[0].path.ends_with("relative.txt"), "{got:?}");
     }
 
     #[test]
     fn strangers_and_other_users_are_ignored() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[]) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
         let rx = serve(listener, || {});
         let send = |text: &str| {
             let mut s = TcpStream::connect(address(port)).unwrap();
@@ -211,11 +254,11 @@ mod tests {
         };
         // 網頁送來的 HTTP 請求、別的使用者、沒有結束空行：都不回 OK，也不開任何檔案
         assert_eq!(send("POST / HTTP/1.1\r\nHost: localhost\r\n\r\n/etc/passwd\n\n"), "");
-        assert_eq!(send(&format!("{MAGIC} someone-else\n/tmp/x\n\n")), "");
-        assert_eq!(send(&format!("{MAGIC} {}\n/tmp/x\n", user_name())), "");
+        assert_eq!(send(&format!("{MAGIC} someone-else\nopen\t0\t0\t/tmp/x\n\n")), "");
+        assert_eq!(send(&format!("{MAGIC} {}\nopen\t0\t0\t/tmp/x\n", user_name())), "");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "不該收到任何路徑");
         // 之後正常的請求還是收得到
-        assert!(forward(address(port), &[PathBuf::from("/tmp/ok.txt")]));
+        assert!(forward(address(port), &[Target::plain("/tmp/ok.txt")], false));
         assert!(rx.recv_timeout(Duration::from_secs(3)).is_ok());
     }
 
@@ -229,6 +272,38 @@ mod tests {
                 drop(s);
             }
         });
-        assert!(matches!(claim_at(port, &[PathBuf::from("x.txt")]), Claim::Standalone));
+        assert!(matches!(claim_at(port, &[Target::plain("x.txt")], false, false), Claim::Standalone));
+    }
+
+    #[test]
+    fn a_waiting_client_returns_only_after_the_receiver_says_done() {
+        let port = free_port();
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let rx = serve(listener, || {});
+        let client = std::thread::spawn(move || forward(address(port), &[Target::plain("/tmp/w.txt")], true));
+        let req = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!client.is_finished(), "檔案還沒關，不該回來");
+        req.done.unwrap().send(()).unwrap();
+        assert!(client.join().unwrap());
+    }
+
+    #[test]
+    fn a_waiting_client_gives_up_waiting_when_the_receiver_goes_away() {
+        let port = free_port();
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let rx = serve(listener, || {});
+        let client = std::thread::spawn(move || forward(address(port), &[Target::plain("/tmp/w.txt")], true));
+        drop(rx.recv_timeout(Duration::from_secs(3)).unwrap()); // 丟掉 done：不用等了
+        assert!(client.join().unwrap());
+    }
+
+    #[test]
+    fn new_window_never_forwards() {
+        let port = free_port();
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let rx = serve(listener, || {});
+        assert!(matches!(claim_at(port, &[Target::plain("/tmp/n.txt")], false, true), Claim::Standalone));
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
     }
 }
