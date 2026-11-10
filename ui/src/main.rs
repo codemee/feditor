@@ -5290,7 +5290,13 @@ impl eframe::App for App {
         {
             let paths = macos_open::take();
             if !paths.is_empty() {
-                self.startup_paths.extend(paths);
+                // 命令列的 `檔案:行:欄` 也會被 macOS 當成「要開啟的檔案」再送一次：一樣拆開
+                for t in paths.iter().map(|p| cli::parse_target(p)) {
+                    self.startup_paths.push(t.path.clone());
+                    if t.line.is_some() {
+                        self.startup_goto.push(t);
+                    }
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }

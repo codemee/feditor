@@ -74,7 +74,14 @@ fn parse_with(
     Ok(out)
 }
 
-/// 把 `檔案:行:欄` 拆開。整段本身就是存在的檔案（檔名真的有冒號）、或拆掉之後的檔案不存在時，都不拆。
+/// 單一個參數／路徑字串拆成檔案與位置（用實際的檔案系統判斷檔案存不存在）。
+/// macOS 會把命令列裡的路徑再用 Apple Event 送一次給程式，那條路也要走這裡。
+pub fn parse_target(path: &Path) -> Target {
+    split_position(path, &|p: &Path| p.exists())
+}
+
+/// 把 `檔案:行:欄` 拆開。整段本身就是存在的檔案（檔名真的有冒號）時不拆；
+/// 拆掉之後的檔案不存在也照拆（FEditor 不允許檔名有冒號，當成要建立的新檔案）。
 fn split_position(path: &Path, exists: &impl Fn(&Path) -> bool) -> Target {
     let whole = Target::plain(path);
     let Some(text) = path.to_str() else { return whole };
@@ -93,7 +100,8 @@ fn split_position(path: &Path, exists: &impl Fn(&Path) -> bool) -> Target {
             _ => break,
         }
     }
-    if numbers.is_empty() || !exists(Path::new(rest)) {
+    // 單一字母開頭的（Windows 的磁碟機代號，例如 `C:5`）不是檔名加位置
+    if numbers.is_empty() || rest.chars().count() < 2 {
         return whole;
     }
     numbers.reverse();
@@ -130,14 +138,17 @@ mod tests {
     }
 
     #[test]
-    fn line_and_column_suffixes_are_split_only_when_the_file_exists() {
+    fn line_and_column_suffixes_are_split_unless_the_whole_name_exists() {
         let ex = ["src/main.rs"];
         let t = &run(&["src/main.rs:120:5"], &ex).unwrap().targets[0];
         assert_eq!((t.path.as_path(), t.line, t.col), (Path::new("src/main.rs"), Some(120), Some(5)));
         let t = &run(&["src/main.rs:7"], &ex).unwrap().targets[0];
         assert_eq!((t.line, t.col), (Some(7), None));
-        // 拆掉之後的檔案不存在：整段當檔名（新檔案）
-        assert_eq!(run(&["new.txt:3"], &ex).unwrap().targets[0], Target::plain("new.txt:3"));
+        // 拆掉之後的檔案不存在：照拆，當成要建立的新檔案
+        let t = &run(&["new.txt:3"], &ex).unwrap().targets[0];
+        assert_eq!((t.path.as_path(), t.line), (Path::new("new.txt"), Some(3)));
+        // 磁碟機代號不是檔名
+        assert_eq!(run(&["C:5"], &ex).unwrap().targets[0], Target::plain("C:5"));
         // 檔名本身就有冒號而且存在：不拆
         assert_eq!(run(&["a:1"], &["a:1", "a"]).unwrap().targets[0], Target::plain("a:1"));
         // 行號 0 當作沒指定；非數字不拆
