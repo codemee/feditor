@@ -38,9 +38,22 @@ impl ShellIcons {
 fn load(ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
     use crate::terminal;
     let effective = if command.trim().is_empty() { terminal::system_default_shell().program } else { command.to_owned() };
-    let path = terminal::program_path(&effective)?;
+    let path = resolve_shim(&terminal::program_path(&effective)?);
     let image = exe_icon(&path)?;
     Some(ctx.load_texture(format!("shell-icon:{command}"), image, egui::TextureOptions::LINEAR))
+}
+
+/// Scoop 的 shim（`shims\pwsh.exe`）是個通用的小執行檔，圖示是一個藍色的視窗，不是 shell 本身的；
+/// 旁邊同名的 `.shim` 文字檔寫著真正的程式（`path = "C:\...\pwsh.exe"`），圖示要用那個。不是 shim 就原樣回傳。
+#[cfg(any(windows, test))]
+fn resolve_shim(exe: &std::path::Path) -> std::path::PathBuf {
+    let target = std::fs::read_to_string(exe.with_extension("shim")).ok().and_then(|text| {
+        text.lines().find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "path").then(|| std::path::PathBuf::from(value.trim().trim_matches('"')))
+        })
+    });
+    target.filter(|t| t.is_file()).unwrap_or_else(|| exe.to_path_buf())
 }
 
 #[cfg(not(windows))]
@@ -188,6 +201,21 @@ mod tests {
         assert!(image.pixels.iter().any(|p| p.a() > 0 && (p.r() != p.g() || p.g() != p.b() || p.r() > 0)), "要有看得見的顏色");
         // 不存在的檔案：沒有圖示，也不會 panic
         assert!(super::exe_icon(&system.join("no-such-program.exe")).is_none());
+    }
+
+    #[test]
+    fn a_scoop_shim_points_at_the_real_program_for_its_icon() {
+        let dir = std::env::temp_dir().join(format!("feditor-shim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (shim, real) = (dir.join("tool.exe"), dir.join("real.exe"));
+        std::fs::write(&shim, "x").unwrap();
+        std::fs::write(&real, "x").unwrap();
+        assert_eq!(super::resolve_shim(&shim), shim, "沒有 .shim 檔：原樣");
+        std::fs::write(dir.join("tool.shim"), format!("path = \"{}\"\r\nargs = \r\n", real.display())).unwrap();
+        assert_eq!(super::resolve_shim(&shim), real);
+        std::fs::write(dir.join("tool.shim"), "path = \"Z:\\no\\such.exe\"").unwrap();
+        assert_eq!(super::resolve_shim(&shim), shim, "目標不存在：原樣");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -682,6 +682,12 @@ impl App {
     }
 }
 
+/// 捲出畫面的歷史裡有沒有任何看得到的字（由舊往新找，找到就停，所以大量輸出時很快）。
+fn history_has_text(grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>) -> bool {
+    let history = grid.history_size() as i32;
+    (-history..0).any(|line| (0..grid.columns()).any(|col| !grid[Line(line)][Column(col)].c.is_whitespace() && grid[Line(line)][Column(col)].c != '\0'))
+}
+
 /// 畫終端機的畫面（分頁列下面那一塊）；第一次畫的時候才開 shell。
 pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::Rect, opts: &TerminalOptions) {
     let ctx = ui.ctx().clone();
@@ -898,6 +904,38 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }
+            }
+        }
+
+        // 捲軸：用 egui 的 ScrollArea 畫（和編輯區同一套樣式：平常不顯示，滑鼠靠近才浮現、移到上面會加寬），
+        // 內容是「歷史加畫面」那麼高的空白，位置和終端機的捲動位置互相同步。滑鼠滾輪、拖曳內容仍由上面處理，
+        // 這個 ScrollArea 只負責那條捲軸。有歷史輸出、而且不是 vim 這類全螢幕程式才有
+        let (history, current_offset, has_history_text) = {
+            let g = term.term.lock();
+            (g.grid().history_size(), g.grid().display_offset(), history_has_text(g.grid()))
+        };
+        // 歷史裡要真的有字才出現：shell 剛開的時候常會先捲出幾列空白，那不算「有更多輸出可以看」
+        if history > 0 && has_history_text && !mode.contains(TermMode::ALT_SCREEN) {
+            // 往下捲的距離 = 離最舊的輸出有幾列
+            let want_y = (history - current_offset) as f32 * ch;
+            let total_h = (history + size.lines) as f32 * ch;
+            let out = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("terminal_scroll", pane.uid))
+                        .auto_shrink([false, false])
+                        .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, drag: egui::scroll_area::DragScroll::Never, mouse_wheel: false })
+                        .vertical_scroll_offset(want_y)
+                        .show(ui, |ui| {
+                            ui.allocate_exact_size(egui::vec2(content.width(), total_h), egui::Sense::hover());
+                        })
+                })
+                .inner;
+            // 使用者拖了捲軸：換算回終端機要往上捲幾列
+            let wanted = history as i32 - (out.state.clamped_offset().y / ch).round() as i32;
+            let delta = wanted.clamp(0, history as i32) - current_offset as i32;
+            if delta != 0 {
+                term.term.lock().scroll_display(Scroll::Delta(delta));
             }
         }
 
@@ -1391,6 +1429,83 @@ mod tests {
         assert!(!pane.sync_focus(true));
         assert!(!pane.has_attention() && !pane.tab_title().ends_with('●'));
         assert!(pane.app_thinks_focused);
+    }
+
+    /// 真的開 PowerShell，從 egui 的按鍵事件一路送進去：終端機有焦點時按 Esc，要送 ESC 給 shell，
+    /// 而且焦點不能被 egui 拿去（PSReadLine 的 Esc 是清掉整行輸入）。
+    #[test]
+    fn escape_reaches_a_real_shell_and_keeps_the_terminal_focused() {
+        if !cfg!(windows) || !crate::terminal::exists_in_path("pwsh.exe") {
+            return;
+        }
+        let mut app = crate::App::new(None, crate::settings::Settings::default());
+        let shell = "pwsh -NoLogo -NoProfile";
+        let pane = TerminalPane::new(None, 1, shell.to_owned());
+        let id = widget_id(pane.uid);
+        app.doc.terminal = Some(Box::new(pane));
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::App, events: Vec<egui::Event>| {
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.events = events;
+            let mut output = ctx.run_ui(raw, |ui| {
+                app.terminal_input(ctx_of(ui));
+                let body = ui.max_rect();
+                let opts = TerminalOptions::from_settings(&crate::settings::Settings::default());
+                if let Some(t) = app.doc.terminal.as_mut() {
+                    draw_body(ui, t, body, &opts);
+                }
+            });
+            output.textures_delta.clear();
+        };
+        fn ctx_of(ui: &egui::Ui) -> &egui::Context {
+            ui.ctx()
+        }
+        let screen = |app: &crate::App| -> String {
+            let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
+            let g = term.term.lock();
+            let grid = g.grid();
+            (0..grid.screen_lines() as i32)
+                .map(|l| (0..grid.columns()).map(|c| grid[Line(l)][Column(c)].c).collect::<String>().trim_end().to_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let wait = |app: &mut crate::App, what: &str, events: &dyn Fn() -> Vec<egui::Event>, done: &dyn Fn(&crate::App) -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut first = true;
+            while std::time::Instant::now() < deadline && !done(app) {
+                frame(app, if std::mem::take(&mut first) { events() } else { vec![] });
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(done(app), "{what}\n{}", screen(app));
+        };
+        let key = |k: egui::Key| {
+            vec![egui::Event::Key { key: k, physical_key: Some(k), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }]
+        };
+        frame(&mut app, vec![]);
+        ctx.memory_mut(|m| m.request_focus(id));
+        wait(&mut app, "第一個提示字元", &Vec::new, &|a| screen(a).contains("PS "));
+        wait(&mut app, "打進去的字", &|| vec![egui::Event::Text("abcxyz".into())], &|a| screen(a).contains("abcxyz"));
+        wait(&mut app, "按 Esc 之後整行被清掉", &|| key(egui::Key::Escape), &|a| !screen(a).contains("abcxyz"));
+        assert!(ctx.memory(|m| m.has_focus(id)), "按了 Esc，終端機還要有焦點");
+        // 像 Claude Code 那樣的 raw 模式程式（Node）：收到的位元組要是單獨一個 ESC
+        if crate::terminal::exists_in_path("node.exe") {
+            let script = "node -e \"process.stdin.setRawMode(true);console.log('RAWREADY');process.stdin.on('data',d=>console.log('GOT:'+JSON.stringify(d.toString())))\"\r\n";
+            wait(&mut app, "Node 準備好", &|| vec![egui::Event::Text(script.trim_end().into()), egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }], &|a| screen(a).contains("RAWREADY\n"));
+            wait(&mut app, "Node 收到一般字元", &|| vec![egui::Event::Text("q".into())], &|a| screen(a).contains("GOT:\"q\""));
+            wait(&mut app, "Node 收到 ESC", &|| key(egui::Key::Escape), &|a| screen(a).contains("u001b"));
+            assert!(screen(&app).contains(r#"GOT:"\u001b""#), "{}", screen(&app));
+        }
+    }
+
+    #[test]
+    fn blank_scrolled_off_lines_do_not_count_as_history_worth_a_scrollbar() {
+        let blank = term_with(10, 3, "\r\n\r\n\r\n\r\n\r\n");
+        assert!(blank.grid().history_size() > 0);
+        assert!(!history_has_text(blank.grid()));
+        let text = term_with(10, 3, "a\r\nb\r\nc\r\nd\r\ne");
+        assert!(history_has_text(text.grid()));
+        assert!(!history_has_text(term_with(10, 3, "a").grid()), "沒有歷史");
     }
 
     #[test]

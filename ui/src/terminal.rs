@@ -479,7 +479,7 @@ pub fn program_path(command: &str) -> Option<PathBuf> {
     program_path_in(command, std::env::var_os("PATH").as_deref(), &|p| p.is_file())
 }
 
-fn exists_in_path(exe: &str) -> bool {
+pub(crate) fn exists_in_path(exe: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(exe).is_file()))
 }
 

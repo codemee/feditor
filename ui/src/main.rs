@@ -12,6 +12,7 @@ mod fonts;
 mod icons;
 mod language;
 mod macro_lib;
+mod ime_case;
 mod macros;
 mod modal;
 mod pane_ops;
@@ -5354,6 +5355,12 @@ impl eframe::App for App {
         // Tab 的設定（欄寬、是否用空白取代）：先照作用中那份文件的檔案類型設好，後面的輸入、游標欄位換算都用它；
         // 畫每個編輯區的時候會再依各自的文件調整，畫完還原
         self.apply_tab_settings();
+        // 輸入法快速打字時偶爾把小寫字母變成大寫（沒按 Shift、Caps Lock 也沒開）：在任何人處理之前改回來
+        // （有人用 Caps Lock 切換輸入法的中英文，所以要連輸入法送來的字母一起看，見 ime_case）
+        if ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_) | egui::Event::Ime(_)))) {
+            let caps = ime_case::caps_lock_on();
+            ctx.input_mut(|i| ime_case::fix(&mut i.events, caps));
+        }
         // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
         self.number_untitled_docs();
         self.terminal_input(&ctx);

@@ -2,6 +2,14 @@
 
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **The terminal has a scroll bar**: when output has scrolled off the screen, a scroll bar appears at the right edge (same style as the editor's: hidden until the pointer comes near), so you can drag back through the output and see how much there is. It is not shown for blank-only history or while a full-screen program such as vim runs.
+
+### Fixed
+- **Fast English typing suddenly produced capital letters when Caps Lock is used to switch the IME between Chinese and English**: in the IME's English mode Caps Lock is on, and while typing fast some letters bypassed the IME and were turned into capitals by the system (Windows Terminal and VSCode are unaffected because all their keys go through the IME). Now, when the IME has just sent English letters, a capital typed without Shift is turned back into lowercase; people who really use Caps Lock for capitals are not affected.
+- **Shells installed with Scoop showed a generic blue-window icon on the terminal tab**: the icon of the program the shim points to is used instead.
 ## [0.12.0] - 2026-11-10
 
 ### Added
