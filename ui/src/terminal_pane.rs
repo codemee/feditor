@@ -69,6 +69,10 @@ pub struct TerminalPane {
     want_focus: bool,
     /// 滑鼠滾輪累積的捲動量（行）。
     scroll_acc: f32,
+    /// 正在拖曳捲軸（按下去的時候滑鼠在捲軸那一條上，放開才結束）。
+    scrollbar_drag: bool,
+    /// 游標閃爍的起點（egui 的時間，秒）：按鍵送出去的那一刻重設，游標先亮著。
+    cursor_epoch: f64,
     /// 輸入法正在組的字（還沒確定，不送給 shell；畫在游標的位置）。
     preedit: Option<crate::editor::model::Preedit>,
     /// 程式要求滑鼠回報時，目前按著哪個鍵（0 左、1 中、2 右），以及最後回報的格子（避免同一格重複回報移動）。
@@ -232,6 +236,8 @@ impl TerminalPane {
             shell,
             want_focus: true,
             scroll_acc: 0.0,
+            scrollbar_drag: false,
+            cursor_epoch: 0.0,
             preedit: None,
             mouse_button: None,
             last_mouse_cell: None,
@@ -672,6 +678,7 @@ impl App {
         if !out.is_empty() {
             term.term.lock().scroll_display(Scroll::Bottom);
             term.write(out);
+            pane.cursor_epoch = ctx.input(|i| i.time);
         }
         if let Some(p) = preedit {
             pane.preedit = p;
@@ -681,6 +688,9 @@ impl App {
         }
     }
 }
+
+/// 游標亮著、或熄著，各持續多久（秒）。
+const CURSOR_BLINK_SECS: f64 = 0.53;
 
 /// 捲出畫面的歷史裡有沒有任何看得到的字（由舊往新找，找到就停，所以大量輸出時很快）。
 fn history_has_text(grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>) -> bool {
@@ -749,8 +759,14 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         };
         if let Some(pos) = resp.interact_pointer_pos().filter(|_| !report) {
             if resp.drag_started_by(egui::PointerButton::Primary) {
-                let (p, side) = point_at(pos);
-                term.term.lock().selection = Some(Selection::new(SelectionType::Simple, p, side));
+                // egui 要等滑鼠移動超過一小段距離才算「開始拖曳」，那時的位置已經離按下去的地方有幾個像素，
+                // 起點要用按下去的位置，不然最前面那個字（滑鼠指著的）會選不到
+                let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+                let (p, side) = point_at(origin);
+                let mut selection = Selection::new(SelectionType::Simple, p, side);
+                let (now, now_side) = point_at(pos);
+                selection.update(now, now_side);
+                term.term.lock().selection = Some(selection);
             } else if resp.dragged_by(egui::PointerButton::Primary) {
                 let (p, side) = point_at(pos);
                 if let Some(sel) = term.term.lock().selection.as_mut() {
@@ -931,11 +947,23 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                         })
                 })
                 .inner;
-            // 使用者拖了捲軸：換算回終端機要往上捲幾列
-            let wanted = history as i32 - (out.state.clamped_offset().y / ch).round() as i32;
-            let delta = wanted.clamp(0, history as i32) - current_offset as i32;
-            if delta != 0 {
-                term.term.lock().scroll_display(Scroll::Delta(delta));
+            // 使用者拖了捲軸：換算回終端機要往上捲幾列。
+            // 只在真的拖曳捲軸時才照 ScrollArea 的位置走：輸出不斷增加時，ScrollArea 的範圍落後一個畫面，
+            // 位置會被夾在舊的範圍裡，如果每一幀都照它換算，畫面就會被往上拉、停不在最底下
+            let (pressed, down, pos) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.pointer.interact_pos()));
+            let bar = egui::Rect::from_min_max(egui::pos2(content.max.x - 14.0, content.min.y), content.max);
+            if pressed && pos.is_some_and(|p| bar.contains(p)) {
+                pane.scrollbar_drag = true;
+            }
+            if !down {
+                pane.scrollbar_drag = false;
+            }
+            if pane.scrollbar_drag {
+                let wanted = history as i32 - (out.state.clamped_offset().y / ch).round() as i32;
+                let delta = wanted.clamp(0, history as i32) - current_offset as i32;
+                if delta != 0 {
+                    term.term.lock().scroll_display(Scroll::Delta(delta));
+                }
             }
         }
 
@@ -1030,7 +1058,17 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         if rc.mode.contains(TermMode::SHOW_CURSOR) && cur_row >= 0 && cur_row < size.lines as i32 {
             let r = cell_rect(cur.point.column.0, cur_row, 1.0);
             let color = ui.visuals().text_color();
+            // 有焦點時游標閃爍（和一般終端機一樣）；打字、送出按鍵的那一刻起先保持亮著，才看得到游標在哪
+            let blink_on = {
+                let elapsed = (ctx.input(|i| i.time) - pane.cursor_epoch).max(0.0);
+                ((elapsed / CURSOR_BLINK_SECS) as u64) % 2 == 0
+            };
             if focused {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(CURSOR_BLINK_SECS));
+            }
+            if focused && !blink_on {
+                // 熄滅的半個週期：什麼都不畫
+            } else if focused {
                 match cur.shape {
                     alacritty_terminal::vte::ansi::CursorShape::Beam => {
                         {
@@ -1496,6 +1534,132 @@ mod tests {
             wait(&mut app, "Node 收到 ESC", &|| key(egui::Key::Escape), &|a| screen(a).contains("u001b"));
             assert!(screen(&app).contains(r#"GOT:"\u001b""#), "{}", screen(&app));
         }
+    }
+
+    /// 用滑鼠從某個字拖曳選取：選取要從按下去的那個字開始，不能因為 egui 要等滑鼠移動一小段才算拖曳而少掉最前面的字。
+    #[test]
+    fn dragging_from_a_character_selects_that_character_too() {
+        if !cfg!(windows) || !crate::terminal::exists_in_path("pwsh.exe") {
+            return;
+        }
+        let mut app = crate::App::new(None, crate::settings::Settings::default());
+        let pane = TerminalPane::new(None, 1, "pwsh -NoLogo -NoProfile".to_owned());
+        let id = widget_id(pane.uid);
+        app.doc.terminal = Some(Box::new(pane));
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0));
+        let opts = TerminalOptions::from_settings(&crate::settings::Settings::default());
+        let mut time = 0.0;
+        let mut frame = |app: &mut crate::App, events: Vec<egui::Event>| {
+            time += 0.016;
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(screen);
+            raw.events = events;
+            raw.time = Some(time);
+            raw.focused = true;
+            let mut output = ctx.run_ui(raw, |ui| {
+                app.terminal_input(ui.ctx());
+                let body = ui.max_rect();
+                if let Some(t) = app.doc.terminal.as_mut() {
+                    draw_body(ui, t, body, &opts);
+                }
+            });
+            output.textures_delta.clear();
+        };
+        let rows = |app: &crate::App| -> Vec<String> {
+            let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
+            let g = term.term.lock();
+            (0..g.grid().screen_lines() as i32).map(|l| (0..g.grid().columns()).map(|c| g.grid()[Line(l)][Column(c)].c).collect::<String>().trim_end().to_owned()).collect()
+        };
+        frame(&mut app, vec![]);
+        ctx.memory_mut(|m| m.request_focus(id));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while std::time::Instant::now() < deadline && !rows(&app).iter().any(|r| r.contains("PS ")) {
+            frame(&mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        frame(&mut app, vec![egui::Event::Text("'ABCDEFGHIJ'".into()), enter]);
+        let mut row = None;
+        while std::time::Instant::now() < deadline && row.is_none() {
+            frame(&mut app, vec![]);
+            row = rows(&app).iter().position(|r| r == "ABCDEFGHIJ");
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        let row = row.expect("輸出沒有出現") as f32;
+        // 和 draw_body 一樣的格子大小與位置
+        let content = screen.shrink(6.0);
+        let font = egui::FontId::monospace(opts.font_size);
+        let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
+        let at = |col: f32| egui::pos2(content.min.x + col * cw, content.min.y + (row + 0.5) * ch);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let start = at(3.25); // D 的左半邊
+        frame(&mut app, vec![egui::Event::PointerMoved(start)]);
+        frame(&mut app, vec![button(start, true)]);
+        // 一段一段往右拖，每一步一個畫面（真的用滑鼠的樣子）
+        for step in 1..=20 {
+            let x = 3.25 + (6.75 - 3.25) * step as f32 / 20.0;
+            frame(&mut app, vec![egui::Event::PointerMoved(at(x))]);
+        }
+        frame(&mut app, vec![button(at(6.75), false)]); // 停在 G 的右半邊
+        let selected = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().selection_to_string();
+        assert_eq!(selected.as_deref(), Some("DEFG"), "從按下去的 D 到滑鼠停的 G，一個字都不能少");
+    }
+
+    /// 大量輸出（比畫面長很多）時，畫面要一直跟著最底下，不能被捲軸拉到中間。
+    #[test]
+    fn a_flood_of_output_keeps_the_view_at_the_bottom() {
+        if !cfg!(windows) || !crate::terminal::exists_in_path("pwsh.exe") {
+            return;
+        }
+        let mut app = crate::App::new(None, crate::settings::Settings::default());
+        let pane = TerminalPane::new(None, 1, "pwsh -NoLogo -NoProfile".to_owned());
+        let id = widget_id(pane.uid);
+        app.doc.terminal = Some(Box::new(pane));
+        let ctx = egui::Context::default();
+        let frame = |app: &mut crate::App, events: Vec<egui::Event>| {
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.events = events;
+            let mut output = ctx.run_ui(raw, |ui| {
+                app.terminal_input(ui.ctx());
+                let body = ui.max_rect();
+                let opts = TerminalOptions::from_settings(&crate::settings::Settings::default());
+                if let Some(t) = app.doc.terminal.as_mut() {
+                    draw_body(ui, t, body, &opts);
+                }
+            });
+            output.textures_delta.clear();
+        };
+        let state = |app: &crate::App| {
+            let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
+            let g = term.term.lock();
+            let text: String = (0..g.grid().screen_lines() as i32).map(|l| (0..g.grid().columns()).map(|c| g.grid()[Line(l)][Column(c)].c).collect::<String>()).collect();
+            (g.grid().display_offset(), g.grid().history_size(), text)
+        };
+        frame(&mut app, vec![]);
+        ctx.memory_mut(|m| m.request_focus(id));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while std::time::Instant::now() < deadline && !state(&app).2.contains("PS ") {
+            frame(&mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let text = egui::Event::Text("1..400 | ForEach-Object { \"line $_\" }".into());
+        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        frame(&mut app, vec![text, enter]);
+        let mut finished = false;
+        while std::time::Instant::now() < deadline && !finished {
+            frame(&mut app, vec![]);
+            let (offset, _, screen) = state(&app);
+            assert_eq!(offset, 0, "輸出途中畫面不能離開最底下");
+            finished = screen.contains("line 400");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(finished, "輸出沒有跑完");
+        frame(&mut app, vec![]);
+        let (offset, history, _) = state(&app);
+        assert!(history > 300, "要真的有大量歷史：{history}");
+        assert_eq!(offset, 0);
     }
 
     #[test]

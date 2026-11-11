@@ -67,10 +67,12 @@ fn mtime_of(path: &Path) -> Option<std::time::SystemTime> {
 }
 
 fn fingerprint(buf: &Buffer) -> (usize, u64) {
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    // 要把位元組一段一段餵進去，不能用 `chunk.hash()`：str 的 hash 會在每一段後面加結尾標記，
+    // 結果就和 rope 怎麼切段有關——同樣的文字，剛載入的 rope 和編輯、復原之後的 rope 切法不同，指紋就不一樣了
     for chunk in buf.rope().chunks() {
-        chunk.hash(&mut h);
+        h.write(chunk.as_bytes());
     }
     (buf.len_bytes(), h.finish())
 }
@@ -588,6 +590,58 @@ mod tests {
         doc.mark_synced();
         assert!(!doc.sync());
         assert!(!doc.dirty);
+    }
+
+    /// 比一個 rope 區塊還長的檔案：編輯再復原之後，rope 的切法和剛載入時不同，內容一樣就不該算有修改。
+    #[test]
+    fn a_long_file_is_clean_again_after_edit_and_undo_whatever_way_its_rope_is_split() {
+        let text: String = (0..4000).map(|i| format!("line {i} of a long file with some words in it\n")).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(&dir, "long.txt", text.as_bytes());
+        let (mut doc, _) = Document::open(&p).unwrap();
+        for at in [0, 5000, doc.buffer.len_chars() / 2, doc.buffer.len_chars()] {
+            doc.buffer.insert(at, "x");
+            assert!(doc.sync() && doc.dirty);
+            doc.buffer.undo();
+            doc.sync();
+            assert!(!doc.dirty, "在 {at} 打字再復原：內容回到載入時的樣子");
+        }
+        // 刪掉一大段再復原
+        doc.buffer.remove(100..9000);
+        doc.sync();
+        assert!(doc.dirty);
+        doc.buffer.undo();
+        doc.sync();
+        assert!(!doc.dirty);
+    }
+
+    #[test]
+    fn undoing_back_to_the_loaded_text_clears_dirty_for_every_kind_of_file() {
+        let big5: Vec<u8> = encoding_rs::BIG5.encode("中文測試\n第二行\n").0.into_owned();
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            ("crlf", b"one\r\ntwo\r\nthree\r\n".to_vec()),
+            ("bom", b"\xEF\xBB\xBFhello\nworld\n".to_vec()),
+            ("bom crlf", b"\xEF\xBB\xBFhello\r\nworld\r\n".to_vec()),
+            ("chinese utf8", "中文測試\n第二行\n".as_bytes().to_vec()),
+            ("big5", big5),
+            ("no trailing newline", b"abc".to_vec()),
+            ("mixed endings", b"a\r\nb\nc\r\n".to_vec()),
+            ("lone cr", b"a\rb\rc".to_vec()),
+            ("empty", Vec::new()),
+            ("utf16", [&[0xFF, 0xFE][..], &"hi\r\nthere\r\n".encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>()[..]].concat()),
+        ];
+        for (name, bytes) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let p = write(&dir, "f.txt", &bytes);
+            let (mut doc, _) = Document::open(&p).unwrap();
+            assert!(!doc.dirty, "{name}: 剛開啟");
+            assert!(!doc.sync() || !doc.dirty, "{name}: 開啟後第一次同步不該標成未儲存");
+            doc.buffer.insert(0, "x");
+            assert!(doc.sync() && doc.dirty, "{name}: 改了就是未儲存");
+            doc.buffer.undo();
+            doc.sync();
+            assert!(!doc.dirty, "{name}: 復原回載入時的內容");
+        }
     }
 
     #[test]

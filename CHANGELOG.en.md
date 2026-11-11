@@ -2,6 +2,19 @@
 
 # Changelog
 
+## [0.13.1] - 2026-11-11
+
+### Changed
+- **Word wrap now follows the file type**: the word wrap button in the settings panel's Display row now changes only the file type of the current document (Markdown can wrap while Python does not, each remembered separately); the File type page has a new Word wrap row to choose default, on or off for each type. Plain text files have their own setting too. The settings file gains `word_wrap.<language>`; types without their own line use the global default (the new "Word wrap: on by default" checkbox on the Editor page, which is the old `word_wrap`), so existing settings files keep working.
+
+### Added
+- **The terminal cursor blinks**: about every half second while the terminal has focus; it stays lit at the moment you type or send a key.
+
+### Fixed
+- **A flood of terminal output left the view away from the bottom** (a problem since the scroll bar of 0.12.1): while output kept growing, the scroll bar position lagged one screen behind and pulled the view up every frame. The scroll bar's position is now followed only while you actually drag it.
+- **Selecting text in the terminal with the mouse often missed the first character under the pointer**: egui only starts a drag after the pointer has moved a little, but the selection started from that later position; it now starts where the button was pressed.
+- **After typing in an opened longer file and pressing Ctrl+Z, the unsaved mark stayed**: the fingerprint compared against the loaded content depended on how the text happened to be split in memory, so identical content was judged different. It no longer depends on that. (New untitled documents were unaffected because their content is empty.)
+
 ## [0.13.0] - 2026-11-10
 
 ### Added
@@ -294,6 +307,8 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.1]: https://github.com/codemee/feditor/releases/tag/v0.13.1
+[0.13.0]: https://github.com/codemee/feditor/releases/tag/v0.13.0
 [0.12.1]: https://github.com/codemee/feditor/releases/tag/v0.12.1
 [0.12.0]: https://github.com/codemee/feditor/releases/tag/v0.12.0
 [0.11.0]: https://github.com/codemee/feditor/releases/tag/v0.11.0

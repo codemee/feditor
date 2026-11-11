@@ -167,6 +167,8 @@ pub struct Settings {
     pub tab_width: u8,
     /// 依檔案類型（語法上色的語言名稱，例如 `Rust`、`Python`）個別設定的 Tab 欄數。
     pub tab_widths: std::collections::BTreeMap<String, u8>,
+    /// 依檔案類型（語言名稱，純文字是 [`PLAIN_TEXT_KEY`]）個別設定「自動換行」開或關；沒有的用 `view.word_wrap`（預設值）。
+    pub wrap_langs: std::collections::BTreeMap<String, bool>,
     /// 依檔案類型指定括號內斷行的風格（排列格式用）。鍵是語言名稱；沒有的用語言本身的預設。
     pub wrap_styles: std::collections::BTreeMap<String, crate::syntax::WrapStyle>,
     /// 手動選的執行環境：鍵是專案資料夾（[`crate::runtime_env::project_root`]），值是直譯器（[`crate::runtime_env::Candidate::key`]）。
@@ -212,6 +214,9 @@ pub struct Settings {
     pub language: feditor_core::i18n::LangChoice,
 }
 
+/// 設定檔裡代表「純文字（沒有語言）」的檔案類型名稱（不翻譯，設定檔要在各種介面語言下通用）。
+pub const PLAIN_TEXT_KEY: &str = "Plain text";
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -221,6 +226,7 @@ impl Default for Settings {
             preview_font_size: DEFAULT_PREVIEW_FONT_SIZE,
             tab_width: DEFAULT_TAB_COLUMNS,
             tab_widths: Default::default(),
+            wrap_langs: Default::default(),
             wrap_styles: Default::default(),
             runtime_choices: Default::default(),
             run_args: Default::default(),
@@ -257,6 +263,20 @@ impl Settings {
     /// 這個檔案類型（語法上色的語言名稱；純文字等沒有語言的是 `None`）的 Tab 欄數：有個別設定就用它，否則用預設的。
     pub fn tab_width_for(&self, language: Option<&str>) -> usize {
         language.and_then(|name| self.tab_widths.get(name)).copied().unwrap_or(self.tab_width) as usize
+    }
+
+    /// 這個檔案類型（`None` 是純文字或認不出來的）要不要自動換行：有個別設定就用它，否則用預設值 `view.word_wrap`。
+    pub fn word_wrap_for(&self, language: Option<&str>) -> bool {
+        self.wrap_langs.get(language.unwrap_or(PLAIN_TEXT_KEY)).copied().unwrap_or(self.view.word_wrap)
+    }
+
+    /// 設定這個檔案類型的自動換行；`None` 移除個別設定（改用預設值）。
+    pub fn set_word_wrap_for(&mut self, language: Option<&str>, on: Option<bool>) {
+        let key = language.unwrap_or(PLAIN_TEXT_KEY).to_owned();
+        match on {
+            Some(on) => self.wrap_langs.insert(key, on),
+            None => self.wrap_langs.remove(&key),
+        };
     }
 
     /// 使用者替這個檔案類型指定的括號內斷行風格；沒指定回傳 `None`（用語言本身的）。
@@ -341,6 +361,13 @@ impl Settings {
                     let value = value.trim_matches('"').trim();
                     if !project.is_empty() && !value.is_empty() {
                         settings.runtime_choices.insert(project.to_owned(), value.to_owned());
+                    }
+                }
+                // word_wrap.語言名稱 = on|off：這個檔案類型自己的「自動換行」
+                key if key.starts_with("word_wrap.") => {
+                    let name = key["word_wrap.".len()..].trim();
+                    if let (false, Some(on)) = (name.is_empty(), parse_bool(value)) {
+                        settings.wrap_langs.insert(name.to_owned(), on);
                     }
                 }
                 // wrap_style.語言名稱 = align|hang：這個檔案類型括號內斷行的風格
@@ -502,6 +529,11 @@ impl Settings {
         for (file, args) in &self.run_args {
             if !file.is_empty() && !file.contains(['\r', '\n', '=']) && !args.contains(['\r', '\n']) && !args.trim().is_empty() {
                 text.push_str(&format!("run_args.{file} = {}\n", args.trim()));
+            }
+        }
+        for (name, on) in &self.wrap_langs {
+            if !name.is_empty() && !name.contains(['\r', '\n', '=']) {
+                text.push_str(&format!("word_wrap.{name} = {on}\n"));
             }
         }
         for (name, style) in &self.wrap_styles {
@@ -723,6 +755,30 @@ mod tests {
         let mut s = Settings::default();
         s.shell_menu = true;
         assert!(Settings::parse(&s.to_text()).shell_menu);
+    }
+
+    #[test]
+    fn word_wrap_follows_the_file_type_and_falls_back_to_the_default() {
+        // 舊的設定檔只有一個全域的 word_wrap：它成為所有類型的預設值
+        let old = Settings::parse("word_wrap = true\n");
+        assert!(old.word_wrap_for(Some("Rust")) && old.word_wrap_for(None));
+        let s = Settings::parse("word_wrap = false\nword_wrap.Markdown = on\nword_wrap.Plain text = true\nword_wrap.Rust = off\nword_wrap. = on\nword_wrap.Go = maybe\n");
+        assert!(s.word_wrap_for(Some("Markdown")));
+        assert!(s.word_wrap_for(None), "純文字有自己的設定");
+        assert!(!s.word_wrap_for(Some("Rust")));
+        assert!(!s.word_wrap_for(Some("Go")), "讀不懂的值忽略，用預設");
+        assert_eq!(s.wrap_langs.len(), 3, "空名稱與讀不懂的都不收");
+        // 寫出再讀回來
+        let mut custom = Settings::default();
+        custom.set_word_wrap_for(Some("Python"), Some(true));
+        custom.set_word_wrap_for(None, Some(true));
+        custom.set_word_wrap_for(Some("bad=name"), Some(true));
+        let back = Settings::parse(&custom.to_text());
+        assert!(back.word_wrap_for(Some("Python")) && back.word_wrap_for(None));
+        assert!(!back.wrap_langs.contains_key("bad=name"), "含等號的名稱不寫進設定檔");
+        // 移除個別設定：回到預設
+        custom.set_word_wrap_for(Some("Python"), None);
+        assert!(!custom.word_wrap_for(Some("Python")));
     }
 
     #[test]

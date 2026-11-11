@@ -967,7 +967,7 @@ impl App {
 }
 
 /// 畫一個窗格的編輯畫面。回傳使用者這一幀有沒有改了文字。
-fn show_pane_editor(
+pub(crate) fn show_pane_editor(
     ui: &mut egui::Ui,
     pane: PaneId,
     doc: &mut Document,
@@ -987,6 +987,9 @@ fn show_pane_editor(
     // 縮排規則看檔案類型，與「語法上色」開關無關
     editor.language = resolved;
     editor.wrap_style = resolved.and_then(|l| settings.wrap_style_for(l.name));
+    // 自動換行跟著檔案類型（沒有個別設定的類型用預設值）
+    let mut options = options;
+    options.word_wrap = settings.word_wrap_for(resolved.map(|l| l.name));
     let language = if options.syntax { resolved } else { None };
     EditorView {
         id: editor_id(pane),

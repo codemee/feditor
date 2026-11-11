@@ -687,6 +687,8 @@ enum Action {
     SetRunArgs(String, String),
     /// 某個檔案類型自己的 Tab 欄數；`None` 是拿掉個別設定、回到預設的。
     SetLanguageTabWidth(String, Option<u8>),
+    /// 這個檔案類型（`None` 是純文字）的自動換行：`Some` 開或關，`None` 移除個別設定。
+    SetLanguageWordWrap(Option<String>, Option<bool>),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
     SetLanguageWrapStyle(String, Option<syntax::WrapStyle>),
     SetTerminalFontSize(f32),
@@ -2878,6 +2880,10 @@ impl App {
                 }
                 self.mark_settings_dirty();
             }
+            Action::SetLanguageWordWrap(name, on) => {
+                self.settings.set_word_wrap_for(name.as_deref(), on);
+                self.mark_settings_dirty();
+            }
             Action::SetLanguageWrapStyle(name, style) => {
                 match style {
                     Some(s) => {
@@ -4086,6 +4092,17 @@ impl App {
                     action = Some(Action::SetAutoIndent(on));
                 }
             });
+            // 自動換行的全域預設值：沒有個別設定的檔案類型都跟著它
+            form_row(ui, t("自動換行"), |ui| {
+                let v = self.settings.view;
+                let mut on = v.word_wrap;
+                let response = ui
+                    .checkbox(&mut on, t("預設開啟"))
+                    .on_hover_text(t("沒有個別設定的檔案類型是否自動換行；個別類型可在「檔案類型」頁覆寫，工具列的自動換行鈕也只改目前的類型"));
+                if response.changed() {
+                    action = Some(Action::SetView(settings::ViewOptions { word_wrap: on, ..v }));
+                }
+            });
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -4103,15 +4120,23 @@ impl App {
                 if icons::toggle(ui, Icon::Syntax, t("語法上色（依副檔名）"), v.syntax).clicked() {
                     next.syntax = !v.syntax;
                 }
+                // 自動換行跟著目前這份文件的檔案類型：按下去只改這個類型（其他類型不受影響）
+                let wrap_lang = if self.doc.terminal.is_some() {
+                    None
+                } else {
+                    syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).map(|l| l.name)
+                };
+                let kind = wrap_lang.unwrap_or(t("純文字"));
                 let too_big = self.doc.buffer.line_count() > editor::wrap::MAX_LINES;
                 let tip = if too_big {
                     tf!("自動換行（超過 {} 行的檔案不支援）", editor::wrap::MAX_LINES)
                 } else {
-                    t("自動換行").to_owned()
+                    tf!("自動換行（只套用在「{}」檔案）", kind)
                 };
-                let on = v.word_wrap && !too_big;
+                let wrap_now = self.settings.word_wrap_for(wrap_lang);
+                let on = wrap_now && !too_big;
                 if icons::toggle(ui, Icon::WordWrap, &tip, on).clicked() && !too_big {
-                    next.word_wrap = !v.word_wrap;
+                    action = Some(Action::SetLanguageWordWrap(wrap_lang.map(str::to_owned), Some(!wrap_now)));
                 }
                 if next != v {
                     action = Some(Action::SetView(next));
@@ -4142,7 +4167,9 @@ impl App {
             .or_else(|| active_name.map(str::to_owned))
             .unwrap_or_else(|| langs[0].name.to_owned());
         let lang = langs.iter().copied().find(|l| l.name == chosen).unwrap_or(langs[0]);
-        let customized = |name: &str| self.settings.tab_widths.contains_key(name) || self.settings.wrap_styles.contains_key(name);
+        let customized = |name: &str| {
+            self.settings.tab_widths.contains_key(name) || self.settings.wrap_styles.contains_key(name) || self.settings.wrap_langs.contains_key(name)
+        };
         let wrap_label = |style: syntax::WrapStyle| match style {
             syntax::WrapStyle::Align => t("對齊第一個參數"),
             syntax::WrapStyle::Hang => t("換行後縮排"),
@@ -4186,6 +4213,31 @@ impl App {
                 } else {
                     ui.label(egui::RichText::new(t("（預設）")).color(ui.visuals().weak_text_color()));
                 }
+            });
+            // 自動換行：預設（跟著「顯示」的預設值，沒有個別設定時）、開、關；工具列上的自動換行鈕改的也是這個類型的設定
+            form_row(ui, t("自動換行"), |ui| {
+                let custom = self.settings.wrap_langs.get(lang.name).copied();
+                let on_off = |on: bool| if on { t("開") } else { t("關") };
+                let default_text = tf!("預設（{}）", on_off(self.settings.view.word_wrap));
+                let shown = custom.map_or_else(|| default_text.clone(), |on| on_off(on).to_owned());
+                egui::ComboBox::from_id_salt("settings_word_wrap")
+                    .icon(icons::combo_chevron)
+                    .width(220.0)
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        flat_list(ui, |ui| {
+                            if ui.selectable_label(custom.is_none(), &default_text).clicked() {
+                                action = Some(Action::SetLanguageWordWrap(Some(lang.name.to_owned()), None));
+                            }
+                            for on in [true, false] {
+                                if ui.selectable_label(custom == Some(on), on_off(on)).clicked() {
+                                    action = Some(Action::SetLanguageWordWrap(Some(lang.name.to_owned()), Some(on)));
+                                }
+                            }
+                        })
+                    })
+                    .response
+                    .on_hover_text(t("這個檔案類型要不要自動換行"));
             });
             // 縮排規則：語言本身的（自訂語言檔用 indent 指定），唯讀
             form_row(ui, t("縮排規則"), |ui| {
@@ -7207,6 +7259,167 @@ mod tests {
         app.pending_editor_focus = false;
         app.close_tab(app.tabs.active());
         assert!(app.pending_editor_focus, "關閉分頁");
+    }
+
+    /// 開一個現有的檔案、打字、Ctrl+Z：內容回到檔案的樣子，未儲存標記就要消失。
+    #[test]
+    fn undoing_typing_in_an_opened_file_clears_the_unsaved_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "hello\nworld\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&file);
+        assert!(!app.doc.dirty);
+        let ctx = egui::Context::default();
+        let pane = app.layout.focus;
+        let mut time = 0.0;
+        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+            time += 0.016;
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.events = events;
+            raw.time = Some(time);
+            raw.focused = true;
+            let mut output = ctx.run_ui(raw, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let App { doc, editor, settings, .. } = &mut *app;
+                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, false, settings);
+                });
+            });
+            output.textures_delta.clear();
+        };
+        ctx.memory_mut(|m| m.request_focus(editor_id(pane)));
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text("x".into())]);
+        assert!(app.doc.dirty, "打了字：未儲存");
+        let z = |pressed| egui::Event::Key { key: egui::Key::Z, physical_key: Some(egui::Key::Z), pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        frame(&mut app, vec![z(true)]);
+        assert_eq!(app.doc.text(), "hello\nworld\n", "復原回原本的內容");
+        assert!(!app.doc.dirty, "回到檔案的內容：不該再是未儲存");
+        // 用輸入法輸入（Caps Lock 切換的英文模式：一個字母一個「確認」事件）：連續打的字，一次 Ctrl+Z 也要整段復原
+        for c in ["a", "b", "c"] {
+            frame(&mut app, vec![egui::Event::Ime(egui::ImeEvent::Preedit { text: String::new(), active_range_chars: None }), egui::Event::Ime(egui::ImeEvent::Commit(c.into()))]);
+        }
+        assert_eq!(app.doc.text(), "abchello\nworld\n");
+        assert!(app.doc.dirty);
+        frame(&mut app, vec![z(true)]);
+        assert_eq!(app.doc.text(), "hello\nworld\n", "一次 Ctrl+Z 把剛打的 abc 整段復原");
+        assert!(!app.doc.dirty);
+        // 一個字一個畫面（真的打字的樣子）
+        for c in ["h", "i", " ", "t", "h", "e", "r", "e"] {
+            frame(&mut app, vec![egui::Event::Text(c.into())]);
+            frame(&mut app, vec![]);
+        }
+        assert!(app.doc.dirty);
+        frame(&mut app, vec![z(true)]);
+        assert_eq!(app.doc.text(), "hello\nworld\n", "一個字一個畫面打的字，一次 Ctrl+Z 也整段復原");
+        assert!(!app.doc.dirty);
+        let i = app.tabs.active();
+        assert!(!app.pane_label(pane, i).2, "分頁標籤也不再標未儲存");
+        assert!(!app.pane_tab_text(pane, i).contains('●'));
+    }
+
+    #[test]
+    fn undoing_typing_in_an_opened_file_clears_the_unsaved_mark_for_every_file_type() {
+        for name in ["a.py", "b.md", "c.rs", "d.js", "e.json", "f.html", "g.c", "h.txt", "i.yaml", "j.toml", "k.css", "l.sh", "m.ps1"] {
+            undo_clears_mark_for(name);
+        }
+    }
+
+    fn undo_clears_mark_for(name: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(name);
+        std::fs::write(&file, "hello\nworld\n").unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.open_path(&file);
+        assert!(!app.doc.dirty);
+        let ctx = egui::Context::default();
+        let pane = app.layout.focus;
+        let mut time = 0.0;
+        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+            time += 0.016;
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.events = events;
+            raw.time = Some(time);
+            raw.focused = true;
+            let mut output = ctx.run_ui(raw, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let App { doc, editor, settings, .. } = &mut *app;
+                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, false, settings);
+                });
+            });
+            output.textures_delta.clear();
+        };
+        ctx.memory_mut(|m| m.request_focus(editor_id(pane)));
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text("x".into())]);
+        assert!(app.doc.dirty, "打了字：未儲存");
+        let z = |pressed| egui::Event::Key { key: egui::Key::Z, physical_key: Some(egui::Key::Z), pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        frame(&mut app, vec![z(true)]);
+        assert_eq!(app.doc.text(), "hello\nworld\n", "復原回原本的內容");
+        assert!(!app.doc.dirty, "回到檔案的內容：不該再是未儲存");
+        // 用輸入法輸入（Caps Lock 切換的英文模式：一個字母一個「確認」事件）：連續打的字，一次 Ctrl+Z 也要整段復原
+        for c in ["a", "b", "c"] {
+            frame(&mut app, vec![egui::Event::Ime(egui::ImeEvent::Preedit { text: String::new(), active_range_chars: None }), egui::Event::Ime(egui::ImeEvent::Commit(c.into()))]);
+        }
+        assert_eq!(app.doc.text(), "abchello\nworld\n");
+        assert!(app.doc.dirty);
+        frame(&mut app, vec![z(true)]);
+        assert_eq!(app.doc.text(), "hello\nworld\n", "一次 Ctrl+Z 把剛打的 abc 整段復原");
+        assert!(!app.doc.dirty);
+        // 一個字一個畫面（真的打字的樣子）
+        for c in ["h", "i", " ", "t", "h", "e", "r", "e"] {
+            frame(&mut app, vec![egui::Event::Text(c.into())]);
+            frame(&mut app, vec![]);
+        }
+        assert!(app.doc.dirty);
+        frame(&mut app, vec![z(true)]);
+        assert_eq!(app.doc.text(), "hello\nworld\n", "一個字一個畫面打的字，一次 Ctrl+Z 也整段復原");
+        assert!(!app.doc.dirty);
+        let i = app.tabs.active();
+        assert!(!app.pane_label(pane, i).2, "分頁標籤也不再標未儲存");
+        assert!(!app.pane_tab_text(pane, i).contains('●'));
+    }
+
+
+    /// 自動換行跟著檔案類型：只有設定過的類型換行，其他類型照預設；編輯區真的依文件的類型決定。
+    #[test]
+    fn word_wrap_is_decided_per_file_type_in_the_editor_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let long: String = "word ".repeat(400);
+        let (md, py) = (dir.path().join("a.md"), dir.path().join("b.py"));
+        std::fs::write(&md, &long).unwrap();
+        std::fs::write(&py, &long).unwrap();
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.handle(Action::SetLanguageWordWrap(Some("Markdown".to_owned()), Some(true)), &ctx);
+        assert!(app.settings.word_wrap_for(Some("Markdown")));
+        assert!(!app.settings.word_wrap_for(Some("Python")), "別的類型不受影響");
+        assert!(!app.settings.view.word_wrap, "預設值沒有被動到");
+        let pane = app.layout.focus;
+        let rows_of = |app: &mut App, path: &std::path::Path| -> usize {
+            app.open_path(path);
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0)));
+            let mut output = ctx.run_ui(raw, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let App { doc, editor, settings, .. } = &mut *app;
+                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, false, settings);
+                });
+            });
+            output.textures_delta.clear();
+            // 畫面上排了幾列文字：換行時一行會佔很多列
+            output.shapes.iter().filter(|s| matches!(s.shape, egui::epaint::Shape::Text(_))).count()
+        };
+        let wrapped = rows_of(&mut app, &md);
+        let plain = rows_of(&mut app, &py);
+        assert!(wrapped > plain, "Markdown 換行排成多列（{wrapped}），Python 一行到底（{plain}）");
+        // 移除個別設定：回到預設（不換行）
+        app.handle(Action::SetLanguageWordWrap(Some("Markdown".to_owned()), None), &ctx);
+        assert!(!app.settings.word_wrap_for(Some("Markdown")));
     }
 
     #[test]
