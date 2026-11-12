@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.6] - 2026-11-12
+
+### 修正
+- **設定面板「快捷鍵」頁的「下一個分頁」「上一個分頁」少了 Ctrl**：實際的快捷鍵是 Ctrl+Tab 與 Ctrl+Shift+Tab，現在顯示正確。
+
 ## [0.13.5] - 2026-11-12
 
 ### 新增
@@ -348,6 +353,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.6]: https://github.com/codemee/feditor/releases/tag/v0.13.6
 [0.13.5]: https://github.com/codemee/feditor/releases/tag/v0.13.5
 [0.13.4]: https://github.com/codemee/feditor/releases/tag/v0.13.4
 [0.13.3]: https://github.com/codemee/feditor/releases/tag/v0.13.3

@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.6] - 2026-11-12
+
+### Fixed
+- **"Next tab" and "Previous tab" on the "Shortcuts" page of the settings panel were missing Ctrl**: the real shortcuts are Ctrl+Tab and Ctrl+Shift+Tab, and they are now shown correctly.
+
 ## [0.13.5] - 2026-11-12
 
 ### Added
@@ -348,6 +353,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.6]: https://github.com/codemee/feditor/releases/tag/v0.13.6
 [0.13.5]: https://github.com/codemee/feditor/releases/tag/v0.13.5
 [0.13.4]: https://github.com/codemee/feditor/releases/tag/v0.13.4
 [0.13.3]: https://github.com/codemee/feditor/releases/tag/v0.13.3

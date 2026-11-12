@@ -145,7 +145,8 @@ fn key_is_function(key: Key) -> bool {
 /// 快捷鍵轉成「Ctrl+Alt+U」的寫法。
 pub fn format_shortcut(s: &KeyboardShortcut) -> String {
     let mut out = String::new();
-    if s.modifiers.command {
+    // `command` 是「Ctrl（macOS 上是 Command）」；單獨要求實體 Ctrl 的（Ctrl+Tab 切換分頁）只設 `ctrl`，也要寫出 Ctrl
+    if s.modifiers.command || s.modifiers.ctrl {
         out.push_str("Ctrl+");
     }
     if s.modifiers.alt {

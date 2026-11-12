@@ -1205,7 +1205,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "feditor"
-version = "0.13.5"
+version = "0.13.6"
 dependencies = [
  "alacritty_terminal",
  "csv",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "feditor-core"
-version = "0.13.5"
+version = "0.13.6"
 dependencies = [
  "chardetng",
  "encoding_rs",
@@ -1250,14 +1250,14 @@ dependencies = [
 
 [[package]]
 name = "feditor-script"
-version = "0.13.5"
+version = "0.13.6"
 dependencies = [
  "feditor-core",
 ]
 
 [[package]]
 name = "feditor-script-js"
-version = "0.13.5"
+version = "0.13.6"
 dependencies = [
  "feditor-core",
  "feditor-script",

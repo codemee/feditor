@@ -126,6 +126,9 @@ mod tests {
         assert_eq!(keys_of("下一筆結果").as_deref(), Some("F3"));
         assert_eq!(keys_of("重新執行上一個巨集").as_deref(), Some("F5"));
         assert_eq!(keys_of("在編輯區與各終端機之間切換焦點").as_deref(), Some("Ctrl+`"));
+        // 切換分頁是實體的 Ctrl+Tab（只設 ctrl、不設 command），不能少了 Ctrl
+        assert_eq!(keys_of("下一個分頁").as_deref(), Some("Ctrl+Tab"));
+        assert_eq!(keys_of("上一個分頁").as_deref(), Some("Ctrl+Shift+Tab"));
     }
 
     #[test]

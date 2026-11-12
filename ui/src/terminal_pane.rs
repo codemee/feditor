@@ -1562,10 +1562,14 @@ mod tests {
         let id = widget_id(pane.uid);
         app.doc.terminal = Some(Box::new(pane));
         let ctx = egui::Context::default();
+        let clock = std::cell::Cell::new(0.0);
         let frame = |app: &mut crate::App, events: Vec<egui::Event>| {
+            clock.set(clock.get() + 0.016);
             let mut raw = egui::RawInput::default();
             raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
             raw.events = events;
+            raw.time = Some(clock.get());
+            raw.focused = true; // 真的使用時視窗有焦點
             let mut output = ctx.run_ui(raw, |ui| {
                 app.terminal_input(ctx_of(ui));
                 let body = ui.max_rect();
@@ -1602,10 +1606,16 @@ mod tests {
         };
         frame(&mut app, vec![]);
         ctx.memory_mut(|m| m.request_focus(id));
-        wait(&mut app, "第一個提示字元", &Vec::new, &|a| screen(a).contains("PS "));
+        wait(&mut app, "第一個提示字元", &Vec::new, &|a| screen(a).contains("PS ") || screen(a).contains("➜"));
         wait(&mut app, "打進去的字", &|| vec![egui::Event::Text("abcxyz".into())], &|a| screen(a).contains("abcxyz"));
         wait(&mut app, "按 Esc 之後整行被清掉", &|| key(egui::Key::Escape), &|a| !screen(a).contains("abcxyz"));
         assert!(ctx.memory(|m| m.has_focus(id)), "按了 Esc，終端機還要有焦點");
+        // 按完 Esc 之後 Backspace 還要有用（曾經出現過 Esc 之後 Backspace 沒反應、要按方向鍵才恢復）
+        wait(&mut app, "Esc 之後打的字", &|| vec![egui::Event::Text("hello".into())], &|a| screen(a).contains("hello"));
+        wait(&mut app, "Esc 之後 Backspace 有用", &|| key(egui::Key::Backspace), &|a| screen(a).contains("hell") && !screen(a).contains("hello"));
+        assert!(ctx.memory(|m| m.has_focus(id)), "Backspace 之後終端機還要有焦點");
+        // 再按 Esc 把剩下的字清掉，後面要在乾淨的命令列上執行 Node
+        wait(&mut app, "再按 Esc 清掉殘留的字", &|| key(egui::Key::Escape), &|a| !screen(a).contains("hell"));
         // 像 Claude Code 那樣的 raw 模式程式（Node）：收到的位元組要是單獨一個 ESC
         if crate::terminal::exists_in_path("node.exe") {
             let script = "node -e \"process.stdin.setRawMode(true);console.log('RAWREADY');process.stdin.on('data',d=>console.log('GOT:'+JSON.stringify(d.toString())))\"\r\n";
