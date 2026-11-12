@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.3] - 2026-11-12
+
+### 變更
+- **「開啟檔案」與「另存新檔」的交談窗預設停在目前分頁的資料夾**：一般檔案用它所在的資料夾，終端機分頁用目前的工作資料夾；還沒存檔或資料夾已不存在時由系統決定。以前會停在程式自己的資料夾或上次的位置。
+
 ## [0.13.2] - 2026-11-12
 
 ### 變更
@@ -321,6 +326,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.3]: https://github.com/codemee/feditor/releases/tag/v0.13.3
 [0.13.2]: https://github.com/codemee/feditor/releases/tag/v0.13.2
 [0.13.1]: https://github.com/codemee/feditor/releases/tag/v0.13.1
 [0.13.0]: https://github.com/codemee/feditor/releases/tag/v0.13.0

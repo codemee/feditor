@@ -2245,8 +2245,23 @@ impl App {
         self.tab_changed();
     }
 
+    /// 檔案交談窗預設要開的資料夾：目前檔案所在的資料夾；終端機分頁用它目前的工作資料夾。
+    /// 還沒存檔的文件、或資料夾已經不存在時回傳 `None`，由系統決定。
+    fn dialog_dir(&self) -> Option<PathBuf> {
+        let dir = match (&self.doc.terminal, &self.doc.path) {
+            (Some(term), _) => term.cwd()?,
+            (None, Some(path)) => path.parent()?.to_path_buf(),
+            (None, None) => return None,
+        };
+        dir.is_dir().then_some(dir)
+    }
+
     fn open(&mut self) {
-        if let Some(paths) = rfd::FileDialog::new().set_title(t("開啟檔案")).pick_files() {
+        let mut dialog = rfd::FileDialog::new().set_title(t("開啟檔案"));
+        if let Some(dir) = self.dialog_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(paths) = dialog.pick_files() {
             for path in paths {
                 self.open_path_recent(&path);
             }
@@ -2408,11 +2423,11 @@ impl App {
     }
 
     fn save_as(&mut self) -> bool {
-        let Some(path) = rfd::FileDialog::new()
-            .set_title(t("另存新檔"))
-            .set_file_name(self.doc.name())
-            .save_file()
-        else {
+        let mut dialog = rfd::FileDialog::new().set_title(t("另存新檔")).set_file_name(self.doc.name());
+        if let Some(dir) = self.dialog_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else {
             return false;
         };
         match self.doc.save_as(path.clone()) {
@@ -7587,6 +7602,19 @@ mod tests {
         app.open_dropped(vec![a.clone()]);
         assert_eq!(app.tabs.len(), 2);
         assert_eq!(app.doc.text(), "aaa");
+    }
+
+    #[test]
+    fn file_dialogs_start_in_the_folder_of_the_current_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        std::fs::write(&a, "aaa").unwrap();
+        let mut app = App::new(None, Settings::default());
+        assert_eq!(app.dialog_dir(), None, "還沒存檔的文件沒有資料夾，交給系統決定");
+        app.open_path(&a);
+        assert_eq!(app.dialog_dir().as_deref(), Some(dir.path()));
+        std::fs::remove_dir_all(dir.path()).unwrap();
+        assert_eq!(app.dialog_dir(), None, "資料夾不見了就不指定");
     }
 
     #[test]
