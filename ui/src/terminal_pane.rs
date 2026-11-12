@@ -606,6 +606,8 @@ impl App {
                 let mine = match e {
                     // 開關終端機的快捷鍵留給全域處理
                     egui::Event::Key { key, modifiers, .. } if *key == TOGGLE_TERMINAL.logical_key && modifiers.command => false,
+                    // Ctrl+Tab、Ctrl+Shift+Tab 是切換分頁，也留給全域處理（終端機沒有對應的字元，送進去只會變成一般的 Tab）
+                    egui::Event::Key { key: egui::Key::Tab, modifiers, .. } if modifiers.ctrl || modifiers.command => false,
                     egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) | egui::Event::Ime(_) => true,
                     _ => false,
                 };
@@ -1624,6 +1626,57 @@ mod tests {
             wait(&mut app, "Node 收到 ESC", &|| key(egui::Key::Escape), &|a| screen(a).contains("u001b"));
             assert!(screen(&app).contains(r#"GOT:"\u001b""#), "{}", screen(&app));
         }
+    }
+
+    /// Ctrl+Tab、Ctrl+Shift+Tab 在終端機裡也要能切換分頁：按鍵事件不能被終端機收走（收走會變成送給 shell 的一般 Tab）。
+    #[test]
+    fn ctrl_tab_is_left_for_switching_tabs_while_a_terminal_has_the_focus() {
+        if !cfg!(windows) || !crate::terminal::exists_in_path("pwsh.exe") {
+            return;
+        }
+        let mut app = crate::App::new(None, crate::settings::Settings::default());
+        let pane = TerminalPane::new(None, 1, "pwsh -NoLogo -NoProfile".to_owned());
+        let id = widget_id(pane.uid);
+        app.doc.terminal = Some(Box::new(pane));
+        let ctx = egui::Context::default();
+        let opts = TerminalOptions::from_settings(&crate::settings::Settings::default());
+        // 這一幀裡，終端機處理完輸入之後，還留在輸入裡的按鍵事件數
+        let left_over = |app: &mut crate::App, events: Vec<egui::Event>| -> (usize, usize) {
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.events = events;
+            raw.focused = true;
+            let mut left = (0, 0);
+            let mut output = ctx.run_ui(raw, |ui| {
+                app.terminal_input(ui.ctx());
+                left = ui.input(|i| {
+                    let tabs = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::Tab, .. })).count();
+                    let others = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::A, .. })).count();
+                    (tabs, others)
+                });
+                let body = ui.max_rect();
+                if let Some(t) = app.doc.terminal.as_mut() {
+                    draw_body(ui, t, body, &opts);
+                }
+            });
+            output.textures_delta.clear();
+            left
+        };
+        left_over(&mut app, vec![]);
+        ctx.memory_mut(|m| m.request_focus(id));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while std::time::Instant::now() < deadline && app.doc.terminal.as_ref().and_then(|t| t.term.as_ref()).is_none() {
+            left_over(&mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let key = |key: egui::Key, modifiers: egui::Modifiers| egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers };
+        let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
+        let ctrl_shift = egui::Modifiers { shift: true, ..ctrl };
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, ctrl)]).0, 1, "Ctrl+Tab 要留給切換分頁");
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, ctrl_shift)]).0, 1, "Ctrl+Shift+Tab 要留給切換分頁");
+        // 一般的 Tab（shell 的自動完成）和別的按鍵照舊交給終端機
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, egui::Modifiers::NONE)]).0, 0, "單按 Tab 還是給 shell");
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::A, egui::Modifiers::NONE)]).1, 0, "一般按鍵還是給 shell");
     }
 
     /// 用滑鼠從某個字拖曳選取：選取要從按下去的那個字開始，不能因為 egui 要等滑鼠移動一小段才算拖曳而少掉最前面的字。

@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.7] - 2026-11-12
+
+### Fixed
+- **Ctrl+Tab and Ctrl+Shift+Tab did not switch tabs while the caret was in a terminal**: the terminal took the key and sent it to the shell as a plain Tab. These two combinations are now left for switching tabs; a plain Tab (the shell's completion) and all other keys are unchanged.
+
 ## [0.13.6] - 2026-11-12
 
 ### Fixed
@@ -353,6 +358,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.7]: https://github.com/codemee/feditor/releases/tag/v0.13.7
 [0.13.6]: https://github.com/codemee/feditor/releases/tag/v0.13.6
 [0.13.5]: https://github.com/codemee/feditor/releases/tag/v0.13.5
 [0.13.4]: https://github.com/codemee/feditor/releases/tag/v0.13.4
