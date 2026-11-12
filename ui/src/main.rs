@@ -44,6 +44,7 @@ mod tabs;
 mod terminal;
 mod terminal_pane;
 mod terminal_text;
+mod scroll_sync;
 mod shell_icons;
 mod watcher;
 #[cfg(windows)]
@@ -339,8 +340,17 @@ const SETTINGS_TABS: [&str; 7] = ["介面", "編輯區", "檔案類型", "預覽
 /// 「快捷鍵」頁在 [`SETTINGS_TABS`] 裡的索引。
 const SHORTCUTS_TAB: usize = 6;
 
+/// 巨集說明文件在 GitHub 上的網址（介面是英文就開英文版）。
+fn macro_docs_url(english: bool) -> String {
+    let file = if english { "macros.en.md" } else { "macros.md" };
+    format!("https://github.com/codemee/feditor/blob/main/docs/{file}")
+}
+
 /// 設定面板每一頁至少這麼寬（內容更寬的頁面會把全部的頁面一起撐寬）。
 const SETTINGS_PAGE_MIN_WIDTH: f32 = 420.0;
+
+/// 「快捷鍵」頁的清單最高這麼高，再長就出現捲軸。
+const SHORTCUTS_MAX_HEIGHT: f32 = 380.0;
 
 /// 設定面板的一個群組：兩欄的表單。所有群組的標籤欄一樣寬，控制項才會左緣對齊。
 fn settings_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
@@ -682,6 +692,8 @@ enum Action {
     SetMacroLangs(usize, Vec<String>),
     /// 打開設定面板的「快捷鍵」頁（看內建與巨集的快捷鍵）。
     ShowShortcuts,
+    /// 在瀏覽器開啟巨集的說明文件。
+    OpenMacroDocs,
     /// 在終端機執行目前的檔案（用偵測到的執行環境）。
     RunFile,
     /// 設定這個檔案（完整路徑）執行時的命令列參數；空白就是沒有參數。
@@ -691,6 +703,8 @@ enum Action {
     /// 這個檔案類型（`None` 是純文字）的自動換行：`Some` 開或關，`None` 移除個別設定。
     SetLanguageWordWrap(Option<String>, Option<bool>),
     SetOutputPane(bool),
+    /// 預覽與編輯區同步捲動開或關。
+    SetPreviewSync(bool),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
     SetLanguageWrapStyle(String, Option<syntax::WrapStyle>),
     SetTerminalFontSize(f32),
@@ -2575,12 +2589,19 @@ impl App {
                 self.settings_open = true;
                 self.settings_tab_request.set(Some(SHORTCUTS_TAB));
             }
+            Action::OpenMacroDocs => ctx.open_url(egui::OpenUrl::new_tab(macro_docs_url(feditor_core::i18n::is_english()))),
             Action::ClearLog => self.log.clear(),
             Action::ToggleOutput => self.toggle_output(),
             Action::SetOutputPane(on) => {
                 if self.settings.output_pane != on {
                     self.settings.output_pane = on;
                     self.output_peek = false;
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetPreviewSync(on) => {
+                if self.settings.preview_sync_scroll != on {
+                    self.settings.preview_sync_scroll = on;
                     self.mark_settings_dirty();
                 }
             }
@@ -3693,6 +3714,9 @@ impl App {
             if ui.button(t("查看快捷鍵")).on_hover_text(t("列出內建的快捷鍵，以及已經設給巨集的快捷鍵")).clicked() {
                 action = Some(Action::ShowShortcuts);
             }
+            if ui.button(t("巨集說明文件")).on_hover_text(t("在瀏覽器開啟巨集的說明文件：巨集庫、錄製、快捷鍵與 JavaScript API")).clicked() {
+                action = Some(Action::OpenMacroDocs);
+            }
         });
         action
     }
@@ -3869,7 +3893,7 @@ impl App {
             tab = requested.min(SETTINGS_TABS.len() - 1);
         }
         ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
+            let list = ui.vertical(|ui| {
                 ui.set_min_width(76.0);
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, name) in SETTINGS_TABS.iter().enumerate() {
@@ -3879,7 +3903,10 @@ impl App {
                     }
                 }
             });
-            ui.separator();
+            // 標籤與內容之間的分隔線：不用 `ui.separator()`，它會撐滿「可用的高度」，而面板上次有多高
+            // 可用高度就有多高，於是看過高的頁次之後，面板再也縮不回來。這裡先留位置，內容排完再依實際高度畫線。
+            let (gap, _) = ui.allocate_exact_size(egui::vec2(ui.spacing().item_spacing.x * 2.0, 0.0), egui::Sense::hover());
+            let top = list.response.rect.top();
             // 各頁的內容寬度不一樣：記下看過最寬的那一頁，之後每一頁都至少那麼寬，切換標籤時面板寬度才一致
             let width_id = ui.make_persistent_id("settings_page_width");
             let min_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(0.0).max(SETTINGS_PAGE_MIN_WIDTH);
@@ -3888,6 +3915,9 @@ impl App {
                 ui.set_min_height(300.0);
                 action = self.settings_page(ui, tab);
             });
+            let bottom = page.response.rect.bottom().max(list.response.rect.bottom());
+            let x = gap.center().x;
+            ui.painter().vline(x, top..=bottom, ui.visuals().widgets.noninteractive.bg_stroke);
             let width = page.response.rect.width();
             if width > min_width + 0.5 {
                 ui.data_mut(|d| d.insert_temp(width_id, width));
@@ -4338,6 +4368,15 @@ impl App {
                     action = Some(Action::SetPreviewFontSize(size));
                 }
             });
+            form_row(ui, t("同步捲動"), |ui| {
+                let mut on = self.settings.preview_sync_scroll;
+                let response = ui
+                    .checkbox(&mut on, t("預覽與編輯區一起捲"))
+                    .on_hover_text(t("捲動其中一邊，另一邊跟著捲到對應的段落；目前支援 Markdown 檔案的預覽"));
+                if response.changed() {
+                    action = Some(Action::SetPreviewSync(on));
+                }
+            });
         });
         }
         if tab == 4 {
@@ -4438,7 +4477,12 @@ impl App {
         // ── 快捷鍵：內建的與巨集的，只是看，要改巨集的在巨集面板 ──
         group_title(ui, t("快捷鍵"));
         let weak = |ui: &egui::Ui, text: &str| egui::RichText::new(text.to_owned()).color(ui.visuals().weak_text_color());
+        // 項目很多：超過一定高度就出現捲軸，面板不會比畫面還高；群組之間畫分隔線
+        egui::ScrollArea::vertical().id_salt("shortcuts_scroll").max_height(SHORTCUTS_MAX_HEIGHT).min_scrolled_height(SHORTCUTS_MAX_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
         for (i, group) in shortcuts::builtin_groups().iter().enumerate() {
+            if i > 0 {
+                group_gap(ui);
+            }
             ui.label(egui::RichText::new(group.title.as_str()).strong());
             settings_grid(ui, &format!("shortcuts_{i}"), |ui| {
                 for row in &group.rows {
@@ -4447,8 +4491,8 @@ impl App {
                     ui.end_row();
                 }
             });
-            ui.add_space(6.0);
         }
+        group_gap(ui);
         ui.label(egui::RichText::new(t("巨集的快捷鍵")).strong());
         let rows = shortcuts::macro_rows(&self.macros, self.doc_lang());
         if rows.is_empty() {
@@ -4475,6 +4519,7 @@ impl App {
             ui.add_space(6.0);
             ui.label(weak(ui, t("在 macOS 上，這裡的 Ctrl 指的是 Command 鍵。")));
         }
+        });
         }
         action
     }
@@ -6512,21 +6557,48 @@ mod tests {
         app.toggle_preview();
         let pv = app.preview_id().unwrap();
         let r = wait_for_preview(&mut app, pv, |_| true);
-        assert!(matches!(&r, preview::Rendered::Markdown(b) if matches!(&b[0], preview::Block::Heading(1, _))), "{r:?}");
+        assert!(matches!(&r, preview::Rendered::Markdown(b, _) if matches!(&b[0], preview::Block::Heading(1, _))), "{r:?}");
         // 改了文字：停一下之後預覽跟著更新
         let at = app.doc.buffer.len_chars();
         app.doc.buffer.insert(at, "\n\n## 新增的小標題");
         app.doc.sync();
         let r = wait_for_preview(&mut app, pv, |r| {
-            matches!(r, preview::Rendered::Markdown(b) if b.iter().any(|x| matches!(x, preview::Block::Heading(2, _))))
+            matches!(r, preview::Rendered::Markdown(b, _) if b.iter().any(|x| matches!(x, preview::Block::Heading(2, _))))
         });
-        assert!(matches!(r, preview::Rendered::Markdown(_)));
+        assert!(matches!(r, preview::Rendered::Markdown(..)));
         // 換到沒有預覽的分頁：預覽窗格說沒有預覽；換回來又有
         let ctx = egui::Context::default();
         app.open_path(&dir.path().join("c.txt"));
         assert_eq!(app.update_preview(pv, &ctx), preview_pane::Status::NoRenderer);
         app.open_path(&dir.path().join("a.md"));
         assert!(matches!(app.update_preview(pv, &ctx), preview_pane::Status::Ready(_) | preview_pane::Status::Working));
+    }
+
+    /// 檔案被別的程式改了（例如終端機裡的 Claude Code）：編輯器自動重新載入，預覽也要跟著更新。
+    /// 重新載入會換掉整個緩衝區，修訂編號從頭算；沒改過的文件修訂編號本來就是 0，預覽不能只看它。
+    #[test]
+    fn the_preview_follows_a_file_changed_by_another_program() {
+        let (mut app, dir) = app_for_preview();
+        let a = dir.path().join("a.md");
+        app.open_path(&a);
+        app.toggle_preview();
+        let pv = app.preview_id().unwrap();
+        let heading = |r: &preview::Rendered| match r {
+            preview::Rendered::Markdown(bl, ..) => match bl.first() {
+                Some(preview::Block::Heading(1, s)) => s[0].text.clone(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        };
+        wait_for_preview(&mut app, pv, |r| heading(r) == "甲標題");
+        assert_eq!(app.doc.buffer.revision(), 0, "沒改過的文件，修訂編號是 0");
+        std::fs::write(&a, "# 外部改的標題\n").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&a).unwrap().set_modified(later).unwrap();
+        app.check_external_changes();
+        assert_eq!(app.doc.text(), "# 外部改的標題\n", "編輯器自動重新載入");
+        let r = wait_for_preview(&mut app, pv, |r| heading(r) == "外部改的標題");
+        assert_eq!(heading(&r), "外部改的標題");
     }
 
     #[test]
@@ -6570,7 +6642,7 @@ mod tests {
         assert_eq!(app.layout.root.leaves(), vec![a, b, pv]);
         let ctx = egui::Context::default();
         let heading = |r: &preview::Rendered| match r {
-            preview::Rendered::Markdown(bl) => match bl.first() {
+            preview::Rendered::Markdown(bl, _) => match bl.first() {
                 Some(preview::Block::Heading(1, s)) => s[0].text.clone(),
                 _ => String::new(),
             },
@@ -7926,6 +7998,52 @@ mod tests {
         assert_eq!(app.log.len(), before, "已經是空的：不重複說");
     }
 
+    /// 設定面板在某一頁的高度：連畫幾個畫面（讓需要多畫一次才穩定的版面穩定下來）後，面板外框的高度。
+    fn settings_panel_height(app: &App, ctx: &egui::Context, tab: usize) -> f32 {
+        let mut height = 0.0;
+        app.settings_tab_request.set(Some(tab));
+        for _ in 0..4 {
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 1000.0)));
+            let mut output = ctx.run_ui(raw, |ui| {
+                let shown = egui::Area::new(egui::Id::unique("settings_area"))
+                    .fixed_pos(egui::pos2(100.0, 50.0))
+                    .show(ui.ctx(), |ui| egui::Frame::popup(ui.style()).show(ui, |ui| app.settings_panel(ui)));
+                height = shown.response.rect.height();
+            });
+            output.textures_delta.clear();
+        }
+        height
+    }
+
+    #[test]
+    fn the_settings_panel_is_as_tall_as_the_page_shown() {
+        let app = App::new(None, Settings::default());
+        let tabs = SETTINGS_TABS.len();
+        // 每一頁單獨量一次（全新的畫面環境）
+        let alone: Vec<f32> = (0..tabs).map(|tab| settings_panel_height(&app, &egui::Context::default(), tab)).collect();
+        assert!(alone.iter().all(|h| *h < 520.0), "每一頁都不該高到超出一般的畫面（快捷鍵頁靠捲軸）：{alone:?}");
+        // 同一個環境依序看過每一頁，先看最高的，再回頭看矮的
+        let ctx = egui::Context::default();
+        let tallest = (0..tabs).max_by(|&a, &b| alone[a].total_cmp(&alone[b])).unwrap();
+        settings_panel_height(&app, &ctx, tallest);
+        for tab in 0..tabs {
+            let after = settings_panel_height(&app, &ctx, tab);
+            assert!((after - alone[tab]).abs() < 0.5, "第 {tab} 頁單獨看是 {}，看過最高的一頁之後變成 {after}", alone[tab]);
+        }
+    }
+
+    #[test]
+    fn the_macro_docs_button_opens_the_page_in_the_interface_language() {
+        assert_eq!(macro_docs_url(false), "https://github.com/codemee/feditor/blob/main/docs/macros.md");
+        assert_eq!(macro_docs_url(true), "https://github.com/codemee/feditor/blob/main/docs/macros.en.md");
+        let mut app = App::new(None, Settings::default());
+        let ctx = egui::Context::default();
+        app.handle(Action::OpenMacroDocs, &ctx);
+        let opened = ctx.output(|o| o.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(u) if u.url.ends_with("docs/macros.md") || u.url.ends_with("docs/macros.en.md"))));
+        assert!(opened, "要送出開啟網址的指令");
+    }
+
     #[test]
     fn show_shortcuts_opens_the_settings_panel_on_the_shortcuts_page() {
         let mut app = App::new(None, Settings::default());
@@ -7969,10 +8087,15 @@ mod tests {
         for s in &shapes {
             texts(&s.shape, &mut found);
         }
-        for expected in ["Ctrl+S", "Ctrl+Shift+S", "F5", "Ctrl+Alt+U", "Alt+P", "通用巨集", "只給 Python [Python]"] {
+        // 清單超過一定高度就用捲軸：畫面上看得到的是最上面一段（內建的），巨集在最下面，要捲過去才會畫出來
+        for expected in ["Ctrl+S", "Ctrl+Shift+S", "Ctrl+N"] {
             assert!(found.iter().any(|t| t == expected), "快捷鍵頁沒有「{expected}」：{found:?}");
         }
-        assert!(!found.iter().any(|t| t.contains("沒設快捷鍵")), "沒有快捷鍵的巨集不列");
+        let rows = shortcuts::macro_rows(&app.macros, app.doc_lang());
+        let listed: Vec<(&str, &str)> = rows.iter().map(|(name, _, keys, _)| (name.as_str(), keys.as_str())).collect();
+        assert!(listed.contains(&("通用巨集", "Ctrl+Alt+U")), "{listed:?}");
+        assert!(rows.iter().any(|(name, langs, keys, _)| name == "只給 Python" && langs == &["Python"] && keys == "Alt+P"), "{listed:?}");
+        assert!(!rows.iter().any(|(name, ..)| name.contains("沒設快捷鍵")), "沒有快捷鍵的巨集不列");
     }
 
     #[test]

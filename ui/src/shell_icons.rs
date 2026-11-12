@@ -38,7 +38,7 @@ impl ShellIcons {
 fn load(ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
     use crate::terminal;
     let effective = if command.trim().is_empty() { terminal::system_default_shell().program } else { command.to_owned() };
-    let path = resolve_shim(&terminal::program_path(&effective)?);
+    let path = icon_source(&resolve_shim(&terminal::program_path(&effective)?));
     let image = exe_icon(&path)?;
     Some(ctx.load_texture(format!("shell-icon:{command}"), image, egui::TextureOptions::LINEAR))
 }
@@ -54,6 +54,23 @@ fn resolve_shim(exe: &std::path::Path) -> std::path::PathBuf {
         })
     });
     target.filter(|t| t.is_file()).unwrap_or_else(|| exe.to_path_buf())
+}
+
+/// Git 裡的 `bin\bash.exe`、`usr\bin\bash.exe` 本身沒有圖示（檔案總管裡是個通用圖示），
+/// Git 的標誌在 Git 根資料夾的 `git-bash.exe`；往上找得到就用它，找不到原樣回傳。
+#[cfg(any(windows, test))]
+fn icon_source(exe: &std::path::Path) -> std::path::PathBuf {
+    let is_bash = exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("bash.exe"));
+    if is_bash {
+        // bin\bash.exe 往上一層、usr\bin\bash.exe 往上兩層就是 Git 的根資料夾
+        for root in exe.ancestors().skip(1).take(3) {
+            let launcher = root.join("git-bash.exe");
+            if launcher.is_file() {
+                return launcher;
+            }
+        }
+    }
+    exe.to_path_buf()
 }
 
 #[cfg(not(windows))]
@@ -216,6 +233,24 @@ mod tests {
         std::fs::write(dir.join("tool.shim"), "path = \"Z:\\no\\such.exe\"").unwrap();
         assert_eq!(super::resolve_shim(&shim), shim, "目標不存在：原樣");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn git_bash_takes_its_icon_from_the_git_launcher() {
+        let git = std::env::temp_dir().join(format!("feditor-giticon-{}", std::process::id()));
+        for sub in ["bin", "usr\\bin"] {
+            std::fs::create_dir_all(git.join(sub)).unwrap();
+        }
+        let (bin, usr) = (git.join("bin").join("bash.exe"), git.join("usr").join("bin").join("bash.exe"));
+        std::fs::write(&bin, "x").unwrap();
+        std::fs::write(&usr, "x").unwrap();
+        assert_eq!(super::icon_source(&bin), bin, "沒有 git-bash.exe：原樣");
+        std::fs::write(git.join("git-bash.exe"), "x").unwrap();
+        assert_eq!(super::icon_source(&bin), git.join("git-bash.exe"));
+        assert_eq!(super::icon_source(&usr), git.join("git-bash.exe"));
+        let pwsh = git.join("bin").join("pwsh.exe");
+        assert_eq!(super::icon_source(&pwsh), pwsh, "別的程式不受影響");
+        let _ = std::fs::remove_dir_all(git);
     }
 
     #[test]

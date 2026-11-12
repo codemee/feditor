@@ -620,3 +620,119 @@ fn circular_arrow(
     let b = tip_base - normal * (head * 0.9);
     painter.add(Shape::convex_polygon(vec![tip, a, b], color, Stroke::NONE));
 }
+
+/// 把文件（docs）裡要用的圖示用實際的繪製程式畫出來，輸出成 SVG（`docs/images/icons/`）。
+/// 文件裡的圖示因此和程式裡看到的一模一樣，改了圖示之後重新產生即可：
+/// `cargo test -p feditor --bin feditor export_icons_for_docs -- --ignored`
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui;
+
+    /// 文件裡用到的圖示與檔名。
+    const DOC_ICONS: &[(&str, Icon)] = &[
+        ("run", Icon::Run),
+        ("rerun", Icon::Rerun),
+        ("record", Icon::Record),
+        ("stop", Icon::Stop),
+        ("keyboard", Icon::Keyboard),
+        ("edit", Icon::Edit),
+        ("rename", Icon::Rename),
+        ("trash", Icon::Clear),
+        ("dropdown", Icon::ChevronDown),
+    ];
+
+    /// 圖示畫在 32×32 的格子裡（程式裡是 14 到 18 像素，這裡放大一倍好讓線條在高解析度螢幕上也清楚）。
+    const SIZE: f32 = 32.0;
+    /// 在淺色與深色的文件底下都看得清楚的灰色。
+    const INK: Color32 = Color32::from_rgb(0x6e, 0x77, 0x81);
+
+    fn hex(c: Color32) -> String {
+        format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+    }
+
+    fn opacity(c: Color32) -> f32 {
+        c.a() as f32 / 255.0
+    }
+
+    fn svg_of(shape: &Shape, out: &mut String) {
+        let stroke_attrs = |s: &Stroke| {
+            if s.is_empty() {
+                "stroke=\"none\"".to_owned()
+            } else {
+                format!("stroke=\"{}\" stroke-opacity=\"{:.2}\" stroke-width=\"{:.2}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"", hex(s.color), opacity(s.color), s.width)
+            }
+        };
+        let fill_attrs = |c: Color32| {
+            if c == Color32::TRANSPARENT {
+                "fill=\"none\"".to_owned()
+            } else {
+                format!("fill=\"{}\" fill-opacity=\"{:.2}\"", hex(c), opacity(c))
+            }
+        };
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| svg_of(s, out)),
+            Shape::Path(path) => {
+                let points: Vec<String> = path.points.iter().map(|p| format!("{:.2},{:.2}", p.x, p.y)).collect();
+                let stroke = match &path.stroke.color {
+                    egui::epaint::ColorMode::Solid(c) => Stroke::new(path.stroke.width, *c),
+                    _ => Stroke::NONE,
+                };
+                let tag = if path.closed { "polygon" } else { "polyline" };
+                out.push_str(&format!("<{tag} points=\"{}\" {} {}/>\n", points.join(" "), fill_attrs(path.fill), stroke_attrs(&stroke)));
+            }
+            Shape::Circle(c) => {
+                out.push_str(&format!("<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"{:.2}\" {} {}/>\n", c.center.x, c.center.y, c.radius, fill_attrs(c.fill), stroke_attrs(&c.stroke)));
+            }
+            Shape::Rect(r) => {
+                let rect = match r.stroke_kind {
+                    StrokeKind::Inside => r.rect.shrink(r.stroke.width / 2.0),
+                    StrokeKind::Outside => r.rect.expand(r.stroke.width / 2.0),
+                    StrokeKind::Middle => r.rect,
+                };
+                out.push_str(&format!(
+                    "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"{:.2}\" {} {}/>\n",
+                    rect.min.x, rect.min.y, rect.width(), rect.height(), r.corner_radius.nw as f32, fill_attrs(r.fill), stroke_attrs(&r.stroke)
+                ));
+            }
+            Shape::LineSegment { points, stroke } => {
+                out.push_str(&format!("<line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" {}/>\n", points[0].x, points[0].y, points[1].x, points[1].y, stroke_attrs(stroke)));
+            }
+            other => panic!("圖示用到了還不會轉成 SVG 的形狀：{other:?}"),
+        }
+    }
+
+    /// 用真正的繪製程式畫出一個圖示，轉成 SVG 文字。
+    fn render(icon: Icon) -> String {
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(SIZE * 2.0, SIZE * 2.0)));
+        let mut output = ctx.run_ui(raw, |ui| {
+            paint(ui, icon, Rect::from_min_size(Pos2::ZERO, Vec2::splat(SIZE)), INK);
+        });
+        output.textures_delta.clear();
+        let mut body = String::new();
+        for clipped in &output.shapes {
+            svg_of(&clipped.shape, &mut body);
+        }
+        format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{SIZE}\" height=\"{SIZE}\" viewBox=\"0 0 {SIZE} {SIZE}\">\n{body}</svg>\n")
+    }
+
+    #[test]
+    fn every_doc_icon_renders_to_a_non_empty_svg() {
+        for (name, icon) in DOC_ICONS {
+            let svg = render(*icon);
+            assert!(svg.contains("<polyline") || svg.contains("<polygon") || svg.contains("<circle") || svg.contains("<rect"), "{name} 沒有畫出任何東西");
+        }
+    }
+
+    #[test]
+    #[ignore = "產生文件用的圖示檔，要更新時才手動執行"]
+    fn export_icons_for_docs() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/images/icons");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, icon) in DOC_ICONS {
+            std::fs::write(dir.join(format!("{name}.svg")), render(*icon)).unwrap();
+        }
+    }
+}

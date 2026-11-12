@@ -69,6 +69,8 @@ pub struct TerminalPane {
     want_focus: bool,
     /// 滑鼠滾輪累積的捲動量（行）。
     scroll_acc: f32,
+    /// 拖曳選取時滑鼠在畫面外，自動捲動還沒湊滿一行的零頭。
+    drag_scroll_acc: f32,
     /// 正在拖曳捲軸（按下去的時候滑鼠在捲軸那一條上，放開才結束）。
     scrollbar_drag: bool,
     /// 游標閃爍的起點（egui 的時間，秒）：按鍵送出去的那一刻重設，游標先亮著。
@@ -236,6 +238,7 @@ impl TerminalPane {
             shell,
             want_focus: true,
             scroll_acc: 0.0,
+            drag_scroll_acc: 0.0,
             scrollbar_drag: false,
             cursor_epoch: 0.0,
             preedit: None,
@@ -285,17 +288,18 @@ impl TerminalPane {
         &self.shell
     }
 
-    /// 分頁上的名稱：使用者取的名字；沒有就是「終端機 2」，後面接資訊：裡面的程式（Claude Code 這類）設了標題就接標題
-    /// （「終端機 2 · ✳ Claude Code」），否則 shell 有回報目前資料夾的話接資料夾名稱（「終端機 2 · feditor」）。
+    /// 分頁上的名稱：使用者取的名字；沒有就看有什麼明確的資訊可用：裡面的程式（Claude Code 這類）設了標題就用標題
+    /// （「✳ Claude Code」），否則 shell 有回報目前資料夾就用資料夾名稱（「feditor」）；
+    /// 兩者都沒有才用預設的「終端機 2」。
     pub fn title(&self) -> String {
         if let Some(name) = &self.custom_name {
             return name.clone();
         }
-        let info = self.term.as_ref().and_then(Terminal::program_title).or_else(|| self.cwd().map(|dir| folder_label(&dir)));
-        match info {
-            Some(info) => format!("{} · {}", self.default_title(), info),
-            None => self.default_title(),
-        }
+        self.term
+            .as_ref()
+            .and_then(Terminal::program_title)
+            .or_else(|| self.cwd().map(|dir| folder_label(&dir)))
+            .unwrap_or_else(|| self.default_title())
     }
 
     /// 分頁上的名稱。沒有焦點時收到通知的標記不放在文字裡（● 會和檔案的「未儲存」混淆），
@@ -748,6 +752,27 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         let mode = term.mode();
         // 程式要求滑鼠回報（vim、htop 這類）時，滑鼠事件送給程式；按住 Shift 則照一般終端機的做法，仍然可以選取文字
         let report = mode.intersects(TermMode::MOUSE_MODE) && !ctx.input(|i| i.modifiers.shift);
+        // 拖曳選取時，滑鼠移到畫面上緣之上或下緣之下：自動往那個方向捲動（離邊緣越遠捲越快），選取區跟著延伸。
+        // 滑鼠不動也要持續捲，所以要一直要求重畫；一放開滑鼠就停
+        if !report && resp.dragged_by(egui::PointerButton::Primary) && !mode.contains(TermMode::ALT_SCREEN) {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                let beyond = if pos.y < content.min.y { content.min.y - pos.y } else if pos.y > content.max.y { content.max.y - pos.y } else { 0.0 };
+                if beyond != 0.0 {
+                    let rows_per_second = (8.0 + beyond.abs() / ch * 8.0).min(60.0);
+                    pane.drag_scroll_acc += rows_per_second * ctx.input(|i| i.stable_dt).min(0.1) * beyond.signum();
+                    let lines = pane.drag_scroll_acc.trunc() as i32;
+                    if lines != 0 {
+                        pane.drag_scroll_acc -= lines as f32;
+                        term.term.lock().scroll_display(Scroll::Delta(lines));
+                    }
+                    ctx.request_repaint();
+                } else {
+                    pane.drag_scroll_acc = 0.0;
+                }
+            }
+        } else {
+            pane.drag_scroll_acc = 0.0;
+        }
         let display_offset = term.term.lock().grid().display_offset() as i32;
         let point_at = |pos: egui::Pos2| -> (Point, Side) {
             let x = (pos.x - content.min.x) / cw;
@@ -1659,6 +1684,90 @@ mod tests {
         frame(&mut app, vec![button(at(6.75), false)]); // 停在 G 的右半邊
         let selected = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().selection_to_string();
         assert_eq!(selected.as_deref(), Some("DEFG"), "從按下去的 D 到滑鼠停的 G，一個字都不能少");
+    }
+
+    /// 拖曳選取時滑鼠移到畫面外：要自動往那個方向捲動，選取區跟著延伸；放開滑鼠就不再捲。
+    #[test]
+    fn dragging_a_selection_past_the_edge_scrolls_the_view() {
+        if !cfg!(windows) || !crate::terminal::exists_in_path("pwsh.exe") {
+            return;
+        }
+        let mut app = crate::App::new(None, crate::settings::Settings::default());
+        let pane = TerminalPane::new(None, 1, "pwsh -NoLogo -NoProfile".to_owned());
+        let id = widget_id(pane.uid);
+        app.doc.terminal = Some(Box::new(pane));
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0));
+        let opts = TerminalOptions::from_settings(&crate::settings::Settings::default());
+        let mut time = 0.0;
+        let mut frame = |app: &mut crate::App, events: Vec<egui::Event>| {
+            time += 0.016;
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(screen);
+            raw.events = events;
+            raw.time = Some(time);
+            raw.focused = true;
+            let mut output = ctx.run_ui(raw, |ui| {
+                app.terminal_input(ui.ctx());
+                let body = ui.max_rect();
+                if let Some(t) = app.doc.terminal.as_mut() {
+                    draw_body(ui, t, body, &opts);
+                }
+            });
+            output.textures_delta.clear();
+        };
+        let offset = |app: &crate::App| app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().grid().display_offset();
+        let history = |app: &crate::App| app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().grid().history_size();
+        frame(&mut app, vec![]);
+        ctx.memory_mut(|m| m.request_focus(id));
+        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        // 等 shell 起來（和別的測試一樣用畫面上出現提示字元判斷），再送一個印很多行的命令
+        let prompt_shown = |app: &crate::App| {
+            let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
+            let g = term.term.lock();
+            (0..g.grid().screen_lines() as i32).any(|l| (0..g.grid().columns()).map(|c| g.grid()[Line(l)][Column(c)].c).collect::<String>().contains("PS "))
+        };
+        while std::time::Instant::now() < deadline && !prompt_shown(&app) {
+            frame(&mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        frame(&mut app, vec![egui::Event::Text("1..200".into()), enter]);
+        // 等輸出印完（歷史夠長，才捲得動）；機器忙的時候印得慢
+        while std::time::Instant::now() < deadline && history(&app) < 170 {
+            frame(&mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        assert!(history(&app) >= 170, "要先有捲出畫面的歷史，現在只有 {}", history(&app));
+        // 輸出印完了才開始量：捲到歷史裡時，新輸出會讓畫面位置跟著變
+        for _ in 0..20 {
+            frame(&mut app, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        assert_eq!(offset(&app), 0, "一開始在最底下");
+        let content = screen.shrink(6.0);
+        let inside = egui::pos2(content.center().x, content.max.y - 20.0);
+        let above = egui::pos2(content.center().x, content.min.y - 40.0);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        frame(&mut app, vec![egui::Event::PointerMoved(inside)]);
+        frame(&mut app, vec![button(inside, true)]);
+        for step in 1..=5 {
+            let y = inside.y + (above.y - inside.y) * step as f32 / 5.0;
+            frame(&mut app, vec![egui::Event::PointerMoved(egui::pos2(inside.x, y))]);
+        }
+        let before = offset(&app);
+        // 滑鼠停在畫面外不動：畫面應該持續往上捲
+        for _ in 0..30 {
+            frame(&mut app, vec![]);
+        }
+        let after = offset(&app);
+        assert!(after > before && after > 3, "滑鼠在畫面上緣之外，要自動往歷史捲：{before} → {after}");
+        frame(&mut app, vec![button(above, false)]);
+        let stopped = offset(&app);
+        for _ in 0..10 {
+            frame(&mut app, vec![]);
+        }
+        assert_eq!(offset(&app), stopped, "放開滑鼠就不再捲");
     }
 
     /// 大量輸出（比畫面長很多）時，畫面要一直跟著最底下，不能被捲軸拉到中間。

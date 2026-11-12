@@ -14,18 +14,38 @@ const TREE_LIMIT: usize = 300;
 /// 圖片檔太大就不顯示。
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
+/// 預覽與編輯區同步捲動用的資料：預覽每一幀把自己的捲動狀態填進來，也從這裡接收「請捲到某處」的要求。
+#[derive(Default, Clone, Debug)]
+pub struct ScrollSync {
+    /// 要求這一幀把預覽捲到這個位置（像素，從內容頂端算起）；畫面讀走之後清掉。
+    pub set_offset: Option<f32>,
+    /// 預覽目前的捲動位置（像素）。只有可以同步的預覽（原文的 Markdown）才會更新。
+    pub offset: f32,
+    /// 預覽可視區的高度（像素）。
+    pub viewport_h: f32,
+    /// 最上層每個區塊頂端的位置（像素，從內容頂端算起），最後一個是整份內容的高度；空的表示這個預覽沒辦法同步。
+    pub tops: Vec<f32>,
+}
+
 /// 畫出預覽內容。`base_dir` 是來源檔案所在的資料夾（Markdown 的圖片相對路徑以它為準），
 /// `salt` 讓同時開著的多個預覽窗格互不干擾。
-pub fn show(ui: &mut egui::Ui, rendered: &Rendered, base_dir: Option<&Path>, salt: u32) {
+pub fn show(ui: &mut egui::Ui, rendered: &Rendered, base_dir: Option<&Path>, salt: u32, sync: &mut ScrollSync) {
     match rendered {
-        Rendered::Markdown(blocks) => {
-            egui::ScrollArea::vertical()
-                .id_salt(("preview_md", salt))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.add_space(4.0);
-                    markdown(ui, blocks, base_dir, 0);
-                });
+        Rendered::Markdown(blocks, _) => {
+            let mut area = egui::ScrollArea::vertical().id_salt(("preview_md", salt)).auto_shrink([false, false]);
+            if let Some(y) = sync.set_offset.take() {
+                area = area.vertical_scroll_offset(y);
+            }
+            let mut tops = Vec::new();
+            let out = area.show(ui, |ui| {
+                let origin = ui.cursor().top();
+                ui.add_space(4.0);
+                markdown(ui, blocks, base_dir, 0, Some((&mut tops, origin)));
+                tops.push(ui.cursor().top() - origin); // 最後一個：整份內容的高度
+            });
+            sync.offset = out.state.offset().y;
+            sync.viewport_h = out.inner_rect.height();
+            sync.tops = tops;
         }
         Rendered::Table { header, rows, truncated } => table(ui, header, rows, *truncated, salt),
         Rendered::Tree(value) => {
@@ -53,9 +73,13 @@ pub fn show(ui: &mut egui::Ui, rendered: &Rendered, base_dir: Option<&Path>, sal
 
 // ── Markdown ────────────────────────────────────────────────
 
-fn markdown(ui: &mut egui::Ui, blocks: &[Block], base_dir: Option<&Path>, depth: usize) {
+fn markdown(ui: &mut egui::Ui, blocks: &[Block], base_dir: Option<&Path>, depth: usize, mut tops: Option<(&mut Vec<f32>, f32)>) {
     let body = egui::TextStyle::Body.resolve(ui.style()).size;
     for (i, block) in blocks.iter().enumerate() {
+        // 最上層：記下每個區塊頂端的位置（相對內容頂端），同步捲動要用
+        if let Some((tops, origin)) = tops.as_mut() {
+            tops.push(ui.cursor().top() - *origin);
+        }
         match block {
             Block::Heading(level, spans) => {
                 let scale = [1.9, 1.6, 1.35, 1.2, 1.05, 1.0][usize::from(level.clamp(&1, &6) - 1)];
@@ -88,7 +112,7 @@ fn markdown(ui: &mut egui::Ui, blocks: &[Block], base_dir: Option<&Path>, depth:
                 let bar = ui.visuals().widgets.noninteractive.bg_stroke.color;
                 let r = ui.horizontal(|ui| {
                     ui.add_space(12.0);
-                    ui.vertical(|ui| markdown(ui, inner, base_dir, depth + 1));
+                    ui.vertical(|ui| markdown(ui, inner, base_dir, depth + 1, None));
                 });
                 let rect = r.response.rect;
                 ui.painter().rect_filled(
@@ -106,7 +130,7 @@ fn markdown(ui: &mut egui::Ui, blocks: &[Block], base_dir: Option<&Path>, depth:
                         };
                         ui.add_space(8.0 + 8.0 * depth.min(3) as f32);
                         ui.label(marker);
-                        ui.vertical(|ui| markdown(ui, item, base_dir, depth + 1));
+                        ui.vertical(|ui| markdown(ui, item, base_dir, depth + 1, None));
                     });
                     ui.add_space(2.0);
                 }

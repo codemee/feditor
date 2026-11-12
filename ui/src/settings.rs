@@ -207,6 +207,8 @@ pub struct Settings {
     /// 要不要有輸出面板（連收合的那一條標題列也不顯示）。關掉之後輸出照樣記錄，只是看不到，
     /// 錯誤與巨集輸出也不會再自動展開面板。
     pub output_pane: bool,
+    /// 預覽與編輯區同步捲動：捲其中一邊，另一邊跟著捲到對應的段落（目前支援 Markdown 原文的預覽）。
+    pub preview_sync_scroll: bool,
     /// 淺色主題用的配色名稱；空字串表示該主題的預設配色。
     pub light_scheme: String,
     /// 深色主題用的配色名稱；空字串表示該主題的預設配色。
@@ -250,6 +252,7 @@ impl Default for Settings {
             view: ViewOptions::default(),
             show_output: false,
             output_pane: true,
+            preview_sync_scroll: true,
             light_scheme: String::new(),
             dark_scheme: String::new(),
             wide_cols: 1,
@@ -483,6 +486,11 @@ impl Settings {
                         settings.output_pane = on;
                     }
                 }
+                "preview_sync_scroll" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.preview_sync_scroll = on;
+                    }
+                }
                 key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap" | "syntax" | "ruler") => {
                     let Some(on) = parse_bool(value) else { continue };
                     match key {
@@ -563,6 +571,7 @@ impl Settings {
         text.push_str(&format!("ruler = {}\nruler_column = {}\n", v.ruler, v.ruler_column));
         text.push_str(&format!("show_output = {}\n", self.show_output));
         text.push_str(&format!("output_pane = {}\n", self.output_pane));
+        text.push_str(&format!("preview_sync_scroll = {}\n", self.preview_sync_scroll));
         text.push_str(&format!("wide_cols = {}\n", self.wide_cols));
         text.push_str(&format!("language = {}\n", self.language.key()));
         // 名稱是單行文字；有換行的話會破壞設定檔，所以換成空白（正常情況不會有）
@@ -1109,6 +1118,16 @@ mod tests {
         assert_eq!(Settings::parse(&st.to_text()), st);
         assert!(Settings::parse("show_output = on\n").show_output);
         assert!(!Settings::parse("show_output = maybe\n").show_output, "不認得的值忽略");
+    }
+
+    #[test]
+    fn synced_scrolling_of_the_preview_is_on_by_default_and_can_be_turned_off() {
+        assert!(Settings::default().preview_sync_scroll);
+        let mut st = Settings::default();
+        st.preview_sync_scroll = false;
+        assert!(!Settings::parse(&st.to_text()).preview_sync_scroll);
+        assert!(Settings::parse("preview_sync_scroll = maybe\n").preview_sync_scroll, "不認得的值忽略，維持預設");
+        assert!(Settings::parse("").preview_sync_scroll, "舊的設定檔沒有這行，照常同步");
     }
 
     #[test]

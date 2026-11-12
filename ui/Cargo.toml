@@ -10,9 +10,9 @@ csv = "1.4.0"
 eframe = "0.37.0"
 egui_extras = { version = "0.37", features = ["svg", "image"] }
 encoding_rs = "0.8.44"
-feditor-core = { version = "0.13.4", path = "../core" }
-feditor-script = { version = "0.13.4", path = "../script" }
-feditor-script-js = { version = "0.13.4", path = "../script-js" }
+feditor-core = { version = "0.13.5", path = "../core" }
+feditor-script = { version = "0.13.5", path = "../script" }
+feditor-script-js = { version = "0.13.5", path = "../script-js" }
 fontique = "0.11.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 notify = "8"

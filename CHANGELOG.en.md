@@ -2,6 +2,23 @@
 
 # Changelog
 
+## [0.13.5] - 2026-11-12
+
+### Added
+- **The preview and the editor scroll together**: scroll one side and the other follows to the matching passage (both ways; when either side reaches the bottom the other does too; it lines up with word wrap on as well). For now this covers the preview of Markdown files. "Synced scrolling" on the "Preview" page of the settings turns it off; settings key `preview_sync_scroll`, default `true`.
+- **The macro panel has a "Macro docs" button** (to the right of "Show shortcuts"): it opens the macro documentation in the browser, the English version when the interface is in English.
+- **Dragging a selection past the top or bottom edge of a terminal scrolls it automatically**: the farther from the edge the faster, it keeps going while the mouse is still, stops on release, and the selection follows.
+
+### Changed
+- **The macro documentation is rewritten as a user manual**: chapters in the order you use them (record your first macro, run, the panel, shortcuts, limiting to file types, managing files, writing your own, API reference, limits, troubleshooting), with tables and steps, and the buttons and icons it mentions are shown as the real icons.
+- **A terminal tab no longer carries the default "Terminal N"**: a title set by the program is shown alone ("✳ Claude Code"), a folder reported by the shell is shown alone; "Terminal N" appears only when neither is known.
+- **The "Shortcuts" page of the settings panel gets a scroll bar when the list is long**, and the groups are separated by lines.
+
+### Fixed
+- **The preview did not follow a file changed by another program**: after the editor reloaded it the buffer's revision number started over and the preview thought nothing had changed. Every load now has its own number and the preview redraws at once.
+- **The settings panel stayed as tall as the tallest page seen**, leaving a large blank area under shorter pages; it now sizes itself to each page.
+- **Git Bash in the terminal had no logo**: Git's `bash.exe` has no icon of its own, so the icon of `git-bash.exe` in the Git folder is used.
+
 ## [0.13.4] - 2026-11-12
 
 ### Fixed
@@ -331,6 +348,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.5]: https://github.com/codemee/feditor/releases/tag/v0.13.5
 [0.13.4]: https://github.com/codemee/feditor/releases/tag/v0.13.4
 [0.13.3]: https://github.com/codemee/feditor/releases/tag/v0.13.3
 [0.13.2]: https://github.com/codemee/feditor/releases/tag/v0.13.2

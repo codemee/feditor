@@ -109,6 +109,12 @@ pub struct EditorState {
     pub interrupt_ime: bool,
     /// 畫面一次看得到幾行（Page Up／Page Down 要移動的行數）。由畫面每一幀更新。
     pub view_rows: usize,
+    /// 畫面最上面看到的是第幾行（從 0 算，帶小數：0.5 是第 0 行捲過一半）。由畫面每一幀更新，預覽同步捲動時讀它。
+    pub top_line: f32,
+    /// 下一個畫面要把這一行（帶小數，同 `top_line`）捲到最上面；畫面讀走之後清掉。預覽同步捲動時設它。
+    pub scroll_line_request: Option<f32>,
+    /// 編輯區已經捲到最底了（看得到文件的最後一列）。由畫面每一幀更新。
+    pub at_bottom: bool,
     /// 目前看過的最長一行的顯示欄數。用來決定橫向捲動的範圍；只會增加，載入新檔案時歸零。
     pub max_cols: usize,
     /// 上次畫的時候的 Tab 欄寬：變了就要重算 `max_cols`（它只會往大長）。

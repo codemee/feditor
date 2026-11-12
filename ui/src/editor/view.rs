@@ -541,6 +541,16 @@ impl EditorView<'_> {
         } else {
             egui::ScrollArea::both()
         };
+        // 預覽要求捲到某一行（帶小數）：換算成像素位置
+        let scroll = match state.scroll_line_request.take() {
+            Some(target) => {
+                let line = (target.floor().max(0.0) as usize).min(rows.lines.saturating_sub(1));
+                let (first, end) = (rows.first_row(line) as f32, rows.end_row(line) as f32);
+                let row = first + (target - line as f32).clamp(0.0, 1.0) * (end - first);
+                scroll.vertical_scroll_offset(row * row_h)
+            }
+            None => scroll,
+        };
         let inner = scroll
             .id_salt(id.with("scroll"))
             .auto_shrink([false, false])
@@ -556,6 +566,12 @@ impl EditorView<'_> {
                 let first = (viewport.min.y / row_h).floor().max(0.0) as usize;
                 let last = ((viewport.max.y / row_h).ceil() as usize + 1).min(rows_total);
                 state.view_rows = ((visible.height() / row_h).floor() as usize).max(1);
+                state.at_bottom = viewport.max.y >= content_h - 2.0;
+                // 最上面看到第幾行（帶小數），給預覽同步捲動用
+                let top_row = (viewport.min.y / row_h).max(0.0);
+                let top_line = rows.locate((top_row.floor() as usize).min(rows_total.saturating_sub(1))).0;
+                let (first_row_of_line, end_row_of_line) = (rows.first_row(top_line) as f32, rows.end_row(top_line) as f32);
+                state.top_line = top_line as f32 + ((top_row - first_row_of_line) / (end_row_of_line - first_row_of_line).max(1.0)).clamp(0.0, 1.0);
 
                 let mut layouts: Vec<LineLayout> = Vec::new();
                 let mut row = first;

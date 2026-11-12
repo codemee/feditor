@@ -80,7 +80,8 @@ pub enum Block {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Rendered {
-    Markdown(Vec<Block>),
+    /// 區塊，加上最上層每個區塊在原文從第幾行開始（從 0 算）；外掛轉出來的 Markdown 不是原文，這個清單是空的。
+    Markdown(Vec<Block>, Vec<usize>),
     Table { header: Vec<String>, rows: Vec<Vec<String>>, truncated: bool },
     Tree(Value),
     Svg(String),
@@ -92,14 +93,22 @@ pub enum Rendered {
 
 /// 把 Markdown 解析成區塊模型。原始 HTML 一律略過（不渲染、不執行）。
 pub fn parse_markdown(text: &str) -> Vec<Block> {
+    parse_markdown_lines(text).0
+}
+
+/// 同 [`parse_markdown`]，另外回傳最上層每個區塊在原文裡從第幾行開始（從 0 算，和區塊一一對應）；
+/// 預覽和編輯區同步捲動時，靠它找出「畫面上這一段是原文的哪幾行」。
+pub fn parse_markdown_lines(text: &str) -> (Vec<Block>, Vec<usize>) {
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut b = MdBuilder::default();
     b.containers.push(Vec::new());
-    for event in Parser::new_ext(text, options) {
+    b.line_starts = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        b.offset = range.start;
         b.event(event);
     }
     b.flush_paragraph();
-    b.containers.pop().unwrap_or_default()
+    (b.containers.pop().unwrap_or_default(), b.starts)
 }
 
 #[derive(Default)]
@@ -122,6 +131,14 @@ struct MdBuilder {
     html_block: Option<String>,
     /// 正在讀的 `<picture>`：（淺色來源, 深色來源）。
     picture: Option<(Option<String>, Option<String>)>,
+    /// 正在處理的事件在原文裡的位元組位置。
+    offset: usize,
+    /// 原文每一行開頭的位元組位置。
+    line_starts: Vec<usize>,
+    /// 目前這個最上層區塊從原文的哪個位置開始（區塊結束、推進 `containers[0]` 時取走）。
+    pending: Option<usize>,
+    /// 最上層每個區塊的起始行，和 `containers[0]` 一一對應。
+    starts: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -133,6 +150,11 @@ struct TableState {
 
 impl MdBuilder {
     fn push_block(&mut self, block: Block) {
+        if self.containers.len() == 1 {
+            // 最上層的區塊：記下它從原文第幾行開始（一段原文拆成好幾個區塊時，後面的沿用同一個位置）
+            let at = self.pending.take().unwrap_or(self.offset);
+            self.starts.push(self.line_starts.partition_point(|&s| s <= at).saturating_sub(1));
+        }
         if let Some(c) = self.containers.last_mut() {
             c.push(block);
         }
@@ -169,7 +191,13 @@ impl MdBuilder {
 
     fn event(&mut self, event: Event<'_>) {
         match event {
-            Event::Start(tag) => self.start(tag),
+            Event::Start(tag) => {
+                let top_level = self.containers.len() == 1;
+                self.start(tag);
+                if top_level && self.pending.is_none() {
+                    self.pending = Some(self.offset);
+                }
+            }
             Event::End(end) => self.end(end),
             Event::Text(s) => {
                 if let Some((_, code)) = &mut self.code_block {
@@ -195,6 +223,7 @@ impl MdBuilder {
             }
             Event::Rule => {
                 self.flush_paragraph();
+                self.pending.get_or_insert(self.offset);
                 self.push_block(Block::Rule);
             }
             Event::TaskListMarker(done) => {
@@ -722,7 +751,7 @@ fn plugin_result(output: Output, json: &str) -> Rendered {
     match output {
         Output::Tree => Rendered::Tree(value),
         Output::Markdown => match value {
-            Value::String(s) => Rendered::Markdown(parse_markdown(&s)),
+            Value::String(s) => Rendered::Markdown(parse_markdown(&s), Vec::new()),
             _ => need_string("markdown"),
         },
         Output::Svg => match value {
@@ -847,7 +876,10 @@ pub fn render(renderer: &Renderer, text: &str, path: Option<&Path>) -> Rendered 
     }
     match renderer {
         Renderer::Builtin(kind) => match kind {
-            Kind::Markdown => Rendered::Markdown(parse_markdown(text)),
+            Kind::Markdown => {
+                let (blocks, lines) = parse_markdown_lines(text);
+                Rendered::Markdown(blocks, lines)
+            }
             Kind::Csv => parse_table(text, b','),
             Kind::Tsv => parse_table(text, b'\t'),
             Kind::Json => parse_json(text),
@@ -1030,6 +1062,19 @@ mod tests {
         assert_eq!((pixels("50%"), pixels("abc"), pixels("-3"), pixels("0"), pixels("99999")), (None, None, None, None, None));
     }
     #[test]
+    fn markdown_blocks_know_which_source_line_they_start_on() {
+        let md = "# 標題\n\n第一段\n第二行\n\n- 一\n- 二\n\n```rust\nfn main() {}\n```\n\n---\n\n| 甲 | 乙 |\n|---|---|\n| 1 | 2 |\n\n> 引用\n\n最後一段";
+        let (blocks, lines) = parse_markdown_lines(md);
+        assert_eq!(blocks.len(), lines.len(), "每個最上層區塊都有起始行：{blocks:?} {lines:?}");
+        assert_eq!(lines, vec![0, 2, 5, 8, 12, 14, 18, 20], "{blocks:?}");
+        assert!(parse_markdown_lines("").1.is_empty());
+        // 一段原文拆成好幾個區塊（原始 HTML）也要一一對應，不能少
+        let (blocks, lines) = parse_markdown_lines("前\n\n<p>\n<img src=\"a.png\">\n</p>\n\n後");
+        assert_eq!(blocks.len(), lines.len(), "{blocks:?} {lines:?}");
+        assert!(lines.windows(2).all(|w| w[0] <= w[1]), "起始行由小到大：{lines:?}");
+    }
+
+    #[test]
     fn markdown_handles_empty_and_odd_input() {
         assert!(parse_markdown("").is_empty());
         let _ = parse_markdown("*未結束的強調 [壞連結](\n\n```\n未結束的程式碼");
@@ -1101,7 +1146,7 @@ mod tests {
         assert_eq!(header, ["行", "長度"]);
         assert_eq!(rows, [["ab", "2"], ["cde", "3"]], "數字轉成字串");
         let md = Arc::new(parse_plugin("m.js", "// @extensions x\n// @output markdown\nfunction preview(t) { return '# ' + t; }").unwrap());
-        assert!(matches!(render(&Renderer::Plugin(md), "標題", None), Rendered::Markdown(b) if matches!(&b[0], Block::Heading(1, _))));
+        assert!(matches!(render(&Renderer::Plugin(md), "標題", None), Rendered::Markdown(b, _) if matches!(&b[0], Block::Heading(1, _))));
         let tree = Arc::new(parse_plugin("t.js", "// @extensions x\n// @output tree\nfunction preview(t) { return { n: t.length }; }").unwrap());
         assert!(matches!(render(&Renderer::Plugin(tree), "abc", None), Rendered::Tree(v) if v["n"] == 3));
         let svg = Arc::new(parse_plugin("s.js", "// @extensions x\n// @output svg\nfunction preview(t) { return '<svg/>'; }").unwrap());
@@ -1161,7 +1206,7 @@ mod tests {
         assert_eq!(v["ui"]["theme"], "dark");
         // 待辦 → Markdown
         let r = render(&by_file("todo-markdown.js"), "# 今天\nx 買牛奶\n寫程式\n", None);
-        let Rendered::Markdown(blocks) = r else { panic!("{r:?}") };
+        let Rendered::Markdown(blocks, _) = r else { panic!("{r:?}") };
         assert!(matches!(&blocks[0], Block::Heading(1, s) if plain(s) == "今天"));
         let Block::List { items, .. } = &blocks[1] else { panic!("{blocks:?}") };
         assert!(matches!(&items[0][0], Block::Paragraph(s) if plain(s) == "☑ 買牛奶"));

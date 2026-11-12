@@ -21,6 +21,8 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 struct Key {
     path: Option<PathBuf>,
     revision: u64,
+    /// 文件是第幾次載入的：檔案被別的程式改了、重新載入之後，緩衝區的修訂編號會從頭算，要靠它分辨。
+    load_id: u64,
     signature: String,
 }
 
@@ -41,11 +43,22 @@ pub struct PreviewPane {
     pending: Option<Pending>,
     /// 文字從什麼時候開始和畫面上的預覽不一致（用來延遲轉換）。
     dirty_since: Option<Instant>,
+    /// 預覽上一幀的捲動狀態（位置、各區塊的位置），同步捲動要用。
+    sync: crate::preview_ui::ScrollSync,
+    /// 同步捲動的進度：上一幀兩邊各在哪裡。
+    sync_state: crate::scroll_sync::SyncState,
 }
 
 impl PreviewPane {
     pub fn new(source: PaneId) -> Self {
-        Self { source, shown: None, pending: None, dirty_since: None }
+        Self {
+            source,
+            shown: None,
+            pending: None,
+            dirty_since: None,
+            sync: Default::default(),
+            sync_state: Default::default(),
+        }
     }
 
     /// 目前畫面上的預覽內容。
@@ -163,15 +176,16 @@ impl App {
             Some(p) => p.source = source,
             None => return Status::NoRenderer,
         }
-        let Some((path, revision, len)) =
-            self.source_doc(source).map(|d| (d.path.clone(), d.buffer.revision(), d.buffer.len_bytes()))
+        let Some((path, revision, load_id, len)) = self
+            .source_doc(source)
+            .map(|d| (d.path.clone(), d.buffer.revision(), d.load_id, d.buffer.len_bytes()))
         else {
             return Status::NoRenderer;
         };
         let Some(renderer) = preview::resolve(path.as_deref(), &self.preview_plugins) else {
             return Status::NoRenderer;
         };
-        let key = Key { path: path.clone(), revision, signature: renderer.signature() };
+        let key = Key { path: path.clone(), revision, load_id, signature: renderer.signature() };
 
         // 1. 背景轉換有結果了嗎
         let (start, wait) = {
@@ -182,6 +196,9 @@ impl App {
                     let key = p.key.clone();
                     state.shown = Some(Shown { key, rendered });
                     state.pending = None;
+                    // 內容換了，之前量到的各區塊位置作廢；下一幀重新對齊
+                    state.sync.tops.clear();
+                    state.sync_state.reset();
                 }
             }
             // 2. 畫面上（或轉換中）的預覽還是這個版本嗎
@@ -195,7 +212,7 @@ impl App {
                 let switched = state
                     .shown
                     .as_ref()
-                    .is_none_or(|s| s.key.path != key.path || s.key.signature != key.signature);
+                    .is_none_or(|s| s.key.path != key.path || s.key.signature != key.signature || s.key.load_id != key.load_id);
                 let since = *state.dirty_since.get_or_insert_with(Instant::now);
                 if switched || since.elapsed() >= DEBOUNCE {
                     (true, None)
@@ -305,8 +322,38 @@ impl App {
                     ui.label(egui::RichText::new(t("正在產生預覽…")).weak());
                 }
                 Status::Ready(_) => {
+                    // 同步捲動：決定這一幀要不要把預覽、或編輯區推到對應的位置
+                    let (editor_line, at_bottom, total_lines) = (self.editor.top_line, self.editor.at_bottom, self.doc.buffer.line_count());
+                    let sync_on = self.settings.preview_sync_scroll;
+                    let mut sync = crate::preview_ui::ScrollSync::default();
+                    let mut editor_request = None;
+                    if let Some(p) = self.previews.get_mut(&id) {
+                        let PreviewPane { shown, sync: last, sync_state, .. } = p;
+                        let lines: &[usize] = match shown.as_ref().map(|s| &s.rendered) {
+                            Some(preview::Rendered::Markdown(_, lines)) if sync_on => lines,
+                            _ => &[],
+                        };
+                        let plan = sync_state.step(&crate::scroll_sync::View {
+                            lines,
+                            tops: &last.tops,
+                            total_lines,
+                            editor_line,
+                            editor_at_bottom: at_bottom,
+                            preview_offset: last.offset,
+                            preview_viewport_h: last.viewport_h,
+                        });
+                        last.set_offset = plan.preview_offset;
+                        editor_request = plan.editor_line;
+                        sync = std::mem::take(last);
+                    }
+                    if editor_request.is_some() {
+                        self.editor.scroll_line_request = editor_request;
+                    }
                     if let Some(rendered) = self.previews.get(&id).and_then(PreviewPane::rendered) {
-                        crate::preview_ui::show(ui, rendered, base_dir.as_deref(), id);
+                        crate::preview_ui::show(ui, rendered, base_dir.as_deref(), id, &mut sync);
+                    }
+                    if let Some(p) = self.previews.get_mut(&id) {
+                        p.sync = sync;
                     }
                     // 點了指向本機檔案的連結：在編輯器開啟（其他連結已經交給瀏覽器了）
                     if let Some(url) = crate::preview_ui::take_clicked_link(ui.ctx()) {

@@ -37,7 +37,14 @@ pub struct Document {
     /// 還沒有檔案的文件的序號（「未命名 2」的 2），好分辨好幾個未命名的分頁；0 是還沒編號。
     /// 由 `App` 統一編：開著的未命名文件裡最小的空號，文件存成檔案之後空號就讓出來。
     pub untitled_number: usize,
+    /// 這份內容是第幾次從磁碟載入的（每次載入或重新載入都換一個新的編號，全程式唯一）。
+    /// 重新載入會換掉整個緩衝區，緩衝區的修訂編號跟著從頭算，光看修訂編號分不出「內容換了」，
+    /// 預覽靠這個編號知道要重新轉換。
+    pub load_id: u64,
 }
+
+/// 下一個載入編號。
+static NEXT_LOAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// 磁碟上的檔案和分頁內容的關係。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -301,6 +308,7 @@ impl Document {
                 lang: Default::default(),
                 terminal: None,
                 untitled_number: 0,
+                load_id: NEXT_LOAD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 buffer,
                 format: d.format,
                 dirty: false,
