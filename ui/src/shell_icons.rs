@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn git_bash_takes_its_icon_from_the_git_launcher() {
         let git = std::env::temp_dir().join(format!("feditor-giticon-{}", std::process::id()));
-        for sub in ["bin", "usr\\bin"] {
+        for sub in [std::path::PathBuf::from("bin"), std::path::PathBuf::from("usr").join("bin")] {
             std::fs::create_dir_all(git.join(sub)).unwrap();
         }
         let (bin, usr) = (git.join("bin").join("bash.exe"), git.join("usr").join("bin").join("bash.exe"));
