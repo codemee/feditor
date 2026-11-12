@@ -281,6 +281,11 @@ impl TabSet {
         self.doc_in(live, i).terminal.as_ref().map(|t| t.shell().to_owned())
     }
 
+    /// 第 `i` 個分頁是不是有還沒看的終端機通知（`live` 同 [`TabSet::doc_in`]）。
+    pub fn terminal_attention(&self, live: Option<&Document>, i: usize) -> bool {
+        self.doc_in(live, i).terminal.as_ref().is_some_and(|t| t.has_attention())
+    }
+
     /// 終端機分頁的編號（`live` 同 [`TabSet::doc_in`]）。
     pub fn terminal_tabs(&self, live: Option<&Document>) -> Vec<usize> {
         (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.is_some()).collect()

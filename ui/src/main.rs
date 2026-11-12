@@ -16,6 +16,7 @@ mod macro_lib;
 mod ime_case;
 mod macros;
 mod modal;
+mod pty_tap;
 mod pane_ops;
 mod search_dock;
 mod panes;
@@ -689,6 +690,7 @@ enum Action {
     SetLanguageTabWidth(String, Option<u8>),
     /// 這個檔案類型（`None` 是純文字）的自動換行：`Some` 開或關，`None` 移除個別設定。
     SetLanguageWordWrap(Option<String>, Option<bool>),
+    SetOutputPane(bool),
     /// 替某個檔案類型指定括號內斷行的風格；`None` 是移除個別設定（用語言本身的預設）。
     SetLanguageWrapStyle(String, Option<syntax::WrapStyle>),
     SetTerminalFontSize(f32),
@@ -1045,12 +1047,16 @@ impl App {
     }
 
     /// 輸出面板現在是不是展開的（使用者展開了，或是剛有錯誤／巨集輸出而暫時展開）。
+    /// 設定裡關掉輸出面板時永遠是收合的，連暫時展開也不會有。
     fn output_expanded(&self) -> bool {
-        self.settings.show_output || self.output_peek
+        self.settings.output_pane && (self.settings.show_output || self.output_peek)
     }
 
-    /// 展開／收合輸出面板。暫時展開中按下去就是收合，並一併清掉暫時展開。
+    /// 展開／收合輸出面板。暫時展開中按下去就是收合，並一併清掉暫時展開。輸出面板關掉時什麼都不做。
     fn toggle_output(&mut self) {
+        if !self.settings.output_pane {
+            return;
+        }
         let next = !self.output_expanded();
         self.output_peek = false;
         if self.settings.show_output != next {
@@ -2556,6 +2562,13 @@ impl App {
             }
             Action::ClearLog => self.log.clear(),
             Action::ToggleOutput => self.toggle_output(),
+            Action::SetOutputPane(on) => {
+                if self.settings.output_pane != on {
+                    self.settings.output_pane = on;
+                    self.output_peek = false;
+                    self.mark_settings_dirty();
+                }
+            }
             Action::Reload(enc) => self.reload(enc),
             // 作用中的分頁是終端機：尋找就是搜尋終端機的畫面
             Action::Find { .. } if self.doc.terminal.is_some() => {
@@ -4103,6 +4116,15 @@ impl App {
                     action = Some(Action::SetView(settings::ViewOptions { word_wrap: on, ..v }));
                 }
             });
+            form_row(ui, t("輸出窗格"), |ui| {
+                let mut on = self.settings.output_pane;
+                let response = ui
+                    .checkbox(&mut on, t("顯示"))
+                    .on_hover_text(t("視窗下方記錄巨集輸出與錯誤的窗格；關掉後連收合的標題列也不顯示，輸出照樣記錄"));
+                if response.changed() {
+                    action = Some(Action::SetOutputPane(on));
+                }
+            });
             // 顯示：開關按鈕，圖示加 tooltip
             form_row(ui, t("顯示"), |ui| {
                 tight_buttons(ui);
@@ -5628,7 +5650,9 @@ impl eframe::App for App {
                 action = Some(a);
             }
         });
-        if self.output_expanded() {
+        if !self.settings.output_pane {
+            // 設定裡關掉了輸出面板：連收合的標題列也不顯示
+        } else if self.output_expanded() {
             egui::Panel::bottom("output")
                 .frame(bottom_frame.clone())
                 .resizable(true)
@@ -7605,6 +7629,24 @@ mod tests {
         assert!(!app.output_expanded() && !app.settings.show_output, "再按一次收合，連暫時展開也一併清掉");
         app.push(LogKind::Output, "console.log");
         assert!(app.output_expanded(), "巨集輸出也會暫時展開");
+    }
+
+    #[test]
+    fn turning_the_output_pane_off_hides_it_for_good_but_keeps_recording() {
+        let ctx = egui::Context::default();
+        let mut app = App::new(None, Settings::default());
+        app.handle(Action::SetOutputPane(false), &ctx);
+        assert!(!app.settings.output_pane && app.settings_dirty_since.is_some());
+        app.push(LogKind::Error, "出錯了");
+        assert!(!app.output_expanded(), "錯誤也不會把面板彈開");
+        assert_eq!(app.log.len(), 1, "輸出照樣記錄");
+        app.toggle_output();
+        assert!(!app.output_expanded() && !app.settings.show_output, "快速鍵也展不開");
+        // 再打開：之前暫時展開的狀態不會冒出來，面板回到收合
+        app.handle(Action::SetOutputPane(true), &ctx);
+        assert!(!app.output_expanded());
+        app.toggle_output();
+        assert!(app.output_expanded());
     }
 
     #[test]

@@ -82,7 +82,7 @@ pub struct TerminalPane {
     search: Option<Search>,
     /// 程式（用 `ESC[?1004h` 要求焦點回報之後）以為這個終端機有沒有焦點；程式一開始都當作有。
     app_thinks_focused: bool,
-    /// 沒有焦點的時候收到了通知（鈴聲），使用者還沒回來看：分頁標籤顯示 ●。
+    /// 沒有焦點的時候收到了通知（鈴聲），使用者還沒回來看：分頁上顯示鈴鐺。
     attention: bool,
 }
 
@@ -250,7 +250,7 @@ impl TerminalPane {
     /// 每個畫面呼叫一次：把「這個終端機現在有沒有焦點」告訴程式，並處理鈴聲。
     /// - 程式用 `ESC[?1004h` 要求焦點回報時，焦點有變就送 `ESC[I`／`ESC[O`（Codex CLI 等程式只在沒有焦點時才發通知，
     ///   不告訴它的話，它以為你一直在看，永遠不會通知）；
-    /// - 沒有焦點時收到鈴聲（程式的通知）：分頁標籤顯示 ●，回到這個終端機就清掉。
+    /// - 沒有焦點時收到鈴聲（程式的通知）：分頁上顯示鈴鐺，回到這個終端機就清掉。
     ///
     /// 回傳這一幀有沒有收到鈴聲。
     pub fn sync_focus(&mut self, focused: bool) -> bool {
@@ -298,14 +298,13 @@ impl TerminalPane {
         }
     }
 
-    /// 分頁上的名稱，沒有焦點時收到通知的話後面加 ●。
+    /// 分頁上的名稱。沒有焦點時收到通知的標記不放在文字裡（● 會和檔案的「未儲存」混淆），
+    /// 由分頁自己畫鈴鐺圖示（見 [`TerminalPane::has_attention`]）。
     pub fn tab_title(&self) -> String {
-        let title = self.title();
-        if self.attention { format!("{title} ●") } else { title }
+        self.title()
     }
 
-    /// 測試用：有沒有還沒看的通知。
-    #[cfg(test)]
+    /// 有沒有還沒看的通知（沒有焦點時收到鈴聲或通知）：分頁上畫鈴鐺，回到這個終端機就清掉。
     pub fn has_attention(&self) -> bool {
         self.attention
     }
@@ -907,9 +906,37 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()).filter(|p| content.contains(*p)) {
                 let (p, _) = point_at(pos);
                 let (line, col) = (p.line.0, p.column.0);
+                // 程式用 OSC 8 標出來的連結（文字和網址可以不一樣）優先：整段同一個連結的格子加底線，
+                // 網址放在提示裡，點之前看得到真正會開哪裡
+                let osc8 = {
+                    let g = term.term.lock();
+                    let grid = g.grid();
+                    let inside = line >= -(grid.history_size() as i32) && line < grid.screen_lines() as i32 && col < grid.columns();
+                    let link = if inside { grid[Line(line)][Column(col)].hyperlink() } else { None };
+                    link.filter(|h| terminal_text::openable_link(h.uri())).map(|h| {
+                        let first = -display_offset;
+                        for row in first..first + size.lines as i32 {
+                            for c in 0..grid.columns() {
+                                if grid[Line(row)][Column(c)].hyperlink().as_ref() == Some(&h) {
+                                    link_cells.insert((row, c));
+                                }
+                            }
+                        }
+                        h.uri().to_owned()
+                    })
+                };
+                if let Some(uri) = osc8 {
+                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                    let resp = resp.clone().on_hover_text(uri.clone());
+                    if resp.clicked() {
+                        ctx.open_url(egui::OpenUrl::new_tab(uri));
+                    }
+                }
                 let glyphs = logical_containing(term.term.lock().grid(), line);
                 let hovered = glyphs.iter().position(|g| g.line == line && col >= g.col && col < g.col + g.width());
-                if let Some((start, end, url)) = hovered.and_then(|i| terminal_text::url_at(&glyphs, i)) {
+                if !link_cells.is_empty() {
+                    // 已經是 OSC 8 連結，不再找文字裡的網址
+                } else if let Some((start, end, url)) = hovered.and_then(|i| terminal_text::url_at(&glyphs, i)) {
                     for g in &glyphs[start..end] {
                         for k in 0..g.width() {
                             link_cells.insert((g.line, g.col + k));
@@ -971,6 +998,7 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         let painter = ui.painter_at(content);
         let palette = Palette::new(ui.visuals().text_color(), ui.visuals().extreme_bg_color, crate::theme::terminal_colors(&ctx, dark), opts.min_contrast);
         let accent = ui.visuals().selection.bg_fill;
+        term.set_theme_colors(palette.theme());
         let guard = term.term.lock();
         let rc = guard.renderable_content();
         let offset = rc.display_offset as i32;
@@ -1271,6 +1299,12 @@ impl Palette {
         self.ansi[i]
     }
 
+    /// 這份配色，給程式問顏色（OSC 4／10／11／12）時回答用。
+    fn theme(&self) -> terminal::ThemeColors {
+        let rgb = |c: Color32| alacritty_terminal::vte::ansi::Rgb { r: c.r(), g: c.g(), b: c.b() };
+        terminal::ThemeColors { fg: rgb(self.default_fg), bg: rgb(self.default_bg), cursor: rgb(self.default_fg), ansi: self.ansi.map(rgb) }
+    }
+
     /// 最低對比度保護：前景和它所在的底色對比不到 [`MIN_CONTRAST`] 時，把前景往能拉開差距的方向（底色亮就往黑、
     /// 底色暗就往白）一步步調整，直到夠為止；調不到（例如前景和底色一樣）就直接用黑或白。
     /// 對比夠的顏色原封不動，所以多數輸出不受影響。
@@ -1461,12 +1495,33 @@ mod tests {
         }
         assert!(rang, "沒有焦點時收到鈴聲");
         assert!(pane.has_attention(), "分頁標籤要標出來");
-        assert!(pane.tab_title().ends_with('●'));
+        assert!(!pane.tab_title().contains('●'), "● 是檔案的未儲存標記，通知改畫鈴鐺");
         assert!(!pane.app_thinks_focused, "程式要被告知失去焦點");
         // 回到這個終端機：清掉通知，告訴程式取得焦點
         assert!(!pane.sync_focus(true));
-        assert!(!pane.has_attention() && !pane.tab_title().ends_with('●'));
+        assert!(!pane.has_attention());
         assert!(pane.app_thinks_focused);
+    }
+
+    /// 真的開 PowerShell：程式送 OSC 9（通知）和 OSC 9;9（目前資料夾），這些 alacritty_terminal 不處理，
+    /// 要靠 pty_tap 從原始輸出撈出來。`-Command` 自己有指定時我們不加回報資料夾的啟動指令，所以資料夾只可能來自 OSC。
+    #[test]
+    fn osc_notifications_and_folder_reports_survive_a_real_conpty() {
+        if !cfg!(windows) || !crate::terminal::exists_in_path("pwsh.exe") {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let shell = "pwsh -NoLogo -NoProfile -NoExit -Command \"[Console]::Write([char]27 + ']9;9;C:/Windows' + [char]7 + [char]27 + ']9;build done' + [char]7)\"";
+        let term = Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell, &[]).expect("開不了 pwsh");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let (mut rang, mut cwd) = (false, None);
+        while std::time::Instant::now() < deadline && !(rang && cwd.is_some()) {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            rang |= term.take_bell();
+            cwd = term.cwd();
+        }
+        assert!(rang, "OSC 9 通知要當成鈴聲（ConPTY 有沒有把它放行？）");
+        assert_eq!(cwd.as_deref(), Some(std::path::Path::new("C:/Windows")), "OSC 9;9 回報的資料夾");
     }
 
     /// 真的開 PowerShell，從 egui 的按鍵事件一路送進去：終端機有焦點時按 Esc，要送 ESC 給 shell，
@@ -1707,6 +1762,21 @@ mod tests {
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         parser.advance(&mut term, output.as_bytes());
         term
+    }
+
+    #[test]
+    fn osc_8_links_reach_the_grid_and_only_web_and_mail_links_may_be_opened() {
+        let term = term_with(30, 2, "\x1b]8;;https://example.com/a\x07link\x1b]8;;\x07 plain");
+        let uri = |c: usize| term.grid()[Line(0)][Column(c)].hyperlink().map(|h| h.uri().to_owned());
+        assert_eq!(uri(0).as_deref(), Some("https://example.com/a"));
+        assert_eq!(uri(3).as_deref(), Some("https://example.com/a"));
+        assert_eq!(uri(5), None, "連結結束之後的字不屬於連結");
+        for ok in ["https://a.b", "HTTP://a.b", "mailto:x@y.z"] {
+            assert!(terminal_text::openable_link(ok), "{ok}");
+        }
+        for bad in ["file:///C:/Windows/notepad.exe", "ms-msdt:/id", "javascript:alert(1)", "ftp://a.b", "", "é"] {
+            assert!(!terminal_text::openable_link(bad), "{bad}");
+        }
     }
 
     #[test]

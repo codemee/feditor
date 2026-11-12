@@ -2,6 +2,20 @@
 
 # Changelog
 
+## [0.13.2] - 2026-11-12
+
+### Changed
+- **The unsaved mark on tabs is now a small red dot at the far right of the tab** (where the × is, which replaces it on hover) instead of a ● after the file name, and the tooltip says "Unsaved". The terminal's new-notification bell sits in the same spot. The window title and the tab list still use ●.
+
+### Added
+- **The output pane can be turned off in the settings** (Editor page, "Output pane: Show"): when off, even the collapsed title bar is hidden, errors and macro output no longer pop the panel open, and output is still recorded. Settings key `output_pane`, default `true`.
+- **The terminal supports OSC 8 hyperlinks**: hold Ctrl over a link a program marked and the whole link is underlined, the tooltip shows the real address, and a click opens it. Only `http`, `https` and `mailto` open; anything the system would execute, such as `file:`, does not.
+- **The terminal answers programs asking for its colors** (`?` in OSC 4 / 10 / 11 / 12): vim, bat, Claude Code and others use it to tell a dark theme from a light one; they now get the current colors.
+- **The terminal receives notifications and folder reports**: notifications sent with OSC 9, OSC 777;notify or OSC 99 show a bell icon on the tab when it has no focus, like the bell does (not a ●, which would be confused with the unsaved mark of a file); on Windows, OSC 7 and OSC 9;9 from shells such as Git Bash and Nushell update the current folder (only folders that exist on this computer are accepted).
+
+### Fixed
+- **Text selected with the mouse in Claude Code inside the terminal could not be copied**: Claude Code handles mouse selection itself and asks the terminal to write the clipboard with an OSC 52 sequence, which FEditor ignored. It now writes the system clipboard (write only; requests to read the clipboard are not answered).
+
 ## [0.13.1] - 2026-11-11
 
 ### Changed
@@ -307,6 +321,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.2]: https://github.com/codemee/feditor/releases/tag/v0.13.2
 [0.13.1]: https://github.com/codemee/feditor/releases/tag/v0.13.1
 [0.13.0]: https://github.com/codemee/feditor/releases/tag/v0.13.0
 [0.12.1]: https://github.com/codemee/feditor/releases/tag/v0.12.1

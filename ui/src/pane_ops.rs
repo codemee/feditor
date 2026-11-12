@@ -91,8 +91,14 @@ impl App {
 
     /// 窗格 id 的第 i 個分頁標籤要顯示的文字：檔名，加上未儲存的 ●，檔案被刪或被改時再加註。
     pub(crate) fn pane_tab_text(&self, id: PaneId, i: usize) -> String {
+        self.pane_tab_text_marked(id, i, true)
+    }
+
+    /// 同 [`App::pane_tab_text`]；`mark_dirty` 為 false 時不在文字後面加 ●（分頁標籤自己畫圖示，見 `tab_widget`）。
+    fn pane_tab_text_marked(&self, id: PaneId, i: usize, mark_dirty: bool) -> String {
         use crate::document::DiskState;
         let (name, _, dirty) = self.pane_label(id, i);
+        let dirty = dirty && mark_dirty;
         let state = if id == self.layout.focus {
             self.tabs.disk_state(Some(&self.doc), i)
         } else {
@@ -152,6 +158,12 @@ impl App {
     pub(crate) fn pane_tab_terminal_shell(&self, id: PaneId, i: usize) -> Option<String> {
         let live = (id == self.layout.focus).then_some(&self.doc);
         self.set_ref(id).and_then(|s| s.terminal_shell(live, i))
+    }
+
+    /// 窗格 `id` 的第 `i` 個分頁有沒有還沒看的終端機通知。
+    pub(crate) fn pane_tab_attention(&self, id: PaneId, i: usize) -> bool {
+        let live = (id == self.layout.focus).then_some(&self.doc);
+        self.set_ref(id).is_some_and(|s| s.terminal_attention(live, i))
     }
 
     /// 窗格 `id` 的第 `i` 個分頁是不是終端機。
@@ -602,16 +614,19 @@ impl App {
     ///（× 的位置一直保留，顯示與隱藏時分頁寬度不會跳動）。可以拖曳。
     fn tab_widget(&self, ui: &mut egui::Ui, pane: PaneId, i: usize) -> Option<Action> {
         let mut action = None;
-        let (_, full, _) = self.pane_label(pane, i);
+        let (_, full, dirty) = self.pane_label(pane, i);
         let is_terminal = self.pane_tab_is_terminal(pane, i);
         // 終端機分頁：名稱前面放它執行的 shell 的圖示，一眼分得出是哪種 shell
         let shell = self.pane_tab_terminal_shell(pane, i);
         let icon_w = if shell.is_some() { TAB_ICON + 4.0 } else { 0.0 };
-        let text = self.pane_tab_text(pane, i);
+        let text = self.pane_tab_text_marked(pane, i, false);
         let active_here = i == self.pane_active(pane);
         let font = egui::TextStyle::Button.resolve(ui.style());
         let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);
         let (pad, close_w) = (8.0, 14.0);
+        // 終端機在背景收到通知：標籤最右邊（× 的位置）放一個鈴鐺，滑鼠移上去才換成 ×；
+        // 不用 ●（檔案的未儲存標記），也不貼著文字，免得混淆
+        let attention = self.pane_tab_attention(pane, i);
         let size = egui::vec2(pad + icon_w + galley.size().x + 6.0 + close_w + 4.0, TAB_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let close = egui::Rect::from_center_size(
@@ -690,6 +705,14 @@ impl App {
             let tint = if active_here { egui::Color32::WHITE } else { egui::Color32::WHITE.gamma_multiply(0.7) };
             crate::shell_icons::paint_icon(ui, texture.as_ref(), icon_rect, tint, text_color);
         }
+        // 狀態記號放在 × 的位置：終端機有新通知是鈴鐺，檔案有未儲存的修改是一個小紅點（兩者不會同時出現）
+        if !over {
+            if attention {
+                icons::paint(ui, Icon::Bell, egui::Rect::from_center_size(close.center(), egui::vec2(close_w, close_w)), ui.visuals().warn_fg_color);
+            } else if dirty {
+                ui.painter().circle_filled(close.center(), 3.5, ui.visuals().error_fg_color);
+            }
+        }
         if over {
             if close_resp.hovered() {
                 ui.painter().rect_filled(close, egui::CornerRadius::same(3), ui.visuals().widgets.hovered.bg_fill);
@@ -715,7 +738,14 @@ impl App {
             close_resp.on_hover_text(t("關閉分頁"));
         } else if self.tab_drag.is_none() {
             if is_terminal {
-                response.on_hover_text(t("終端機：雙按重新命名，拖曳標籤可以移到別的窗格，按 × 結束這個 shell"));
+                let tip = t("終端機：雙按重新命名，拖曳標籤可以移到別的窗格，按 × 結束這個 shell");
+                if attention {
+                    response.on_hover_text(format!("{tip}\n{}", t("有新的通知，回到這個終端機就會清掉")));
+                } else {
+                    response.on_hover_text(tip);
+                }
+            } else if dirty {
+                response.on_hover_text(format!("{}\n{}", tf!("{full}\n雙按重新命名檔案", full = full), t("尚未儲存")));
             } else {
                 response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
             }

@@ -204,6 +204,9 @@ pub struct Settings {
     pub view: ViewOptions,
     /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
     pub show_output: bool,
+    /// 要不要有輸出面板（連收合的那一條標題列也不顯示）。關掉之後輸出照樣記錄，只是看不到，
+    /// 錯誤與巨集輸出也不會再自動展開面板。
+    pub output_pane: bool,
     /// 淺色主題用的配色名稱；空字串表示該主題的預設配色。
     pub light_scheme: String,
     /// 深色主題用的配色名稱；空字串表示該主題的預設配色。
@@ -246,6 +249,7 @@ impl Default for Settings {
             terminal_shell: String::new(),
             view: ViewOptions::default(),
             show_output: false,
+            output_pane: true,
             light_scheme: String::new(),
             dark_scheme: String::new(),
             wide_cols: 1,
@@ -474,6 +478,11 @@ impl Settings {
                         settings.show_output = on;
                     }
                 }
+                "output_pane" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.output_pane = on;
+                    }
+                }
                 key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap" | "syntax" | "ruler") => {
                     let Some(on) = parse_bool(value) else { continue };
                     match key {
@@ -553,6 +562,7 @@ impl Settings {
         ));
         text.push_str(&format!("ruler = {}\nruler_column = {}\n", v.ruler, v.ruler_column));
         text.push_str(&format!("show_output = {}\n", self.show_output));
+        text.push_str(&format!("output_pane = {}\n", self.output_pane));
         text.push_str(&format!("wide_cols = {}\n", self.wide_cols));
         text.push_str(&format!("language = {}\n", self.language.key()));
         // 名稱是單行文字；有換行的話會破壞設定檔，所以換成空白（正常情況不會有）
@@ -1099,5 +1109,16 @@ mod tests {
         assert_eq!(Settings::parse(&st.to_text()), st);
         assert!(Settings::parse("show_output = on\n").show_output);
         assert!(!Settings::parse("show_output = maybe\n").show_output, "不認得的值忽略");
+    }
+
+    #[test]
+    fn the_output_pane_is_there_by_default_and_can_be_turned_off() {
+        assert!(Settings::default().output_pane);
+        let mut st = Settings::default();
+        st.output_pane = false;
+        assert_eq!(Settings::parse(&st.to_text()), st);
+        assert!(!Settings::parse("output_pane = false\n").output_pane);
+        assert!(Settings::parse("output_pane = maybe\n").output_pane, "不認得的值忽略，維持預設");
+        assert!(Settings::parse("").output_pane, "舊的設定檔沒有這行，照常有輸出面板");
     }
 }

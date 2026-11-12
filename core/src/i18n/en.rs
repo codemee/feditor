@@ -312,7 +312,10 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("FEditor 文字檔案", "FEditor text file"),
     ("FEditor：輕量的跨平台文字編輯器", "FEditor: a lightweight cross-platform text editor"),
     ("無法更新檔案關聯：{}", "Could not update the file associations: {}"),
-    ("預設開啟", "Open by default"),
+    ("有新的通知，回到這個終端機就會清掉", "New notification; it clears when you return to this terminal"),
+    ("輸出窗格", "Output pane"),
+    ("視窗下方記錄巨集輸出與錯誤的窗格；關掉後連收合的標題列也不顯示，輸出照樣記錄", "The pane at the bottom that logs macro output and errors; when off, even the collapsed title bar is hidden, and output is still recorded"),
+    ("預設開啟","Open by default"),
     ("雙按檔案時用 FEditor 開啟", "Open files in FEditor when double-clicked"),
     (
         "雙按選到的類別的檔案時，直接用 FEditor 開啟（Windows 登記在「預設應用程式」、macOS 設定預設處理程式、Linux 寫 mimeapps.list）；取消勾選就還原",

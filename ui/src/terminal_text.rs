@@ -64,6 +64,13 @@ pub fn segments(glyphs: &[Glyph], start: usize, end: usize) -> Vec<Segment> {
 
 const SCHEMES: [&str; 4] = ["http://", "https://", "ftp://", "file://"];
 
+/// 程式用 OSC 8 標的連結能不能直接點開：只放行網頁和電子郵件。
+/// 連結的文字和網址是程式各自決定的，`file:` 或 `ms-msdt:` 這類會交給系統去執行東西，不開。
+pub fn openable_link(uri: &str) -> bool {
+    let lower = uri.get(..8).unwrap_or(uri).to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+}
+
 fn scheme_len(glyphs: &[Glyph]) -> Option<usize> {
     SCHEMES.iter().find_map(|s| {
         let n = s.chars().count();

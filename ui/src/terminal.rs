@@ -15,7 +15,10 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty;
+use alacritty_terminal::vte::ansi::Rgb;
 use eframe::egui;
+
+use crate::pty_tap::{report_to_path, Osc, Tapped};
 
 /// 終端機大小（格數）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +50,61 @@ struct Shared {
     program_title: parking_lot_free::Mutex<Option<String>>,
     /// 收到的鈴聲（BEL）次數，還沒被 [`Terminal::take_bell`] 取走的。Codex CLI 等程式用它當通知。
     bells: std::sync::atomic::AtomicUsize,
+    /// 目前畫面用的配色，程式用 OSC 4／10／11／12 問顏色時照它回答；窗格每一幀更新（見 [`Terminal::set_theme_colors`]）。
+    theme: parking_lot_free::Mutex<Option<ThemeColors>>,
+}
+
+impl Shared {
+    /// [`pty_tap`] 在輸出裡撈到的東西（在讀取輸出的背景執行緒上呼叫）。
+    fn on_osc(&self, osc: Osc, ctx: &egui::Context) {
+        match osc {
+            // 通知和鈴聲一樣處理：沒有焦點時分頁上顯示鈴鐺
+            Osc::Notify => {
+                self.bells.fetch_add(1, Ordering::Relaxed);
+            }
+            // Unix 上直接向作業系統問 shell 的資料夾，比 shell 自己說的準（ssh 到別台時它回報的是遠端的路徑），所以只在 Windows 用。
+            // Windows 上 PowerShell 與 cmd 走標題序列；這裡補上 Git Bash、Nushell 這類會送 OSC 7 或 OSC 9;9 的 shell
+            Osc::Cwd(raw) => {
+                if cfg!(windows) {
+                    let computer = std::env::var("COMPUTERNAME").ok();
+                    if let Some(dir) = report_to_path(&raw, computer.as_deref()).map(PathBuf::from).filter(|p| p.is_dir()) {
+                        *self.cwd.lock() = Some(dir);
+                    }
+                }
+            }
+        }
+        ctx.request_repaint();
+    }
+}
+
+/// 終端機目前的配色：預設前景、背景、游標，以及 ANSI 0–15。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemeColors {
+    pub fg: Rgb,
+    pub bg: Rgb,
+    pub cursor: Rgb,
+    pub ansi: [Rgb; 16],
+}
+
+impl ThemeColors {
+    /// 顏色編號對應的顏色：0–15 是 ANSI，16–255 是標準的色立方與灰階，256／257／258 是預設前景、背景、游標。
+    pub fn color(&self, index: usize) -> Rgb {
+        match index {
+            0..=15 => self.ansi[index],
+            16..=231 => {
+                let n = index - 16;
+                let level = |v: usize| [0u8, 95, 135, 175, 215, 255][v];
+                Rgb { r: level(n / 36), g: level(n / 6 % 6), b: level(n % 6) }
+            }
+            232..=255 => {
+                let v = (8 + 10 * (index - 232)) as u8;
+                Rgb { r: v, g: v, b: v }
+            }
+            257 => self.bg,
+            258 => self.cursor,
+            _ => self.fg,
+        }
+    }
 }
 
 /// 告訴程式終端機取得（`ESC [ I`）或失去（`ESC [ O`）焦點。程式用 `ESC [ ? 1004 h` 要求時才送。
@@ -174,6 +232,19 @@ impl EventListener for Listener {
             Event::ResetTitle => *self.shared.program_title.lock() = None,
             Event::Bell => {
                 self.shared.bells.fetch_add(1, Ordering::Relaxed);
+            }
+            // 程式用 OSC 52 要求寫入剪貼簿（Claude Code、tmux、vim 在程式自己處理滑鼠選取後都這樣複製）。
+            // 只接受寫入；讀取剪貼簿的要求（OSC 52 的 `?`）不回應，免得裡面的程式偷看使用者的剪貼簿。
+            Event::ClipboardStore(_, text) => {
+                self.ctx.copy_text(text);
+            }
+            // 程式問「前景／背景／游標／第 N 號顏色是什麼」（OSC 4／10／11／12 的 `?`）：vim、bat、Claude Code 等用它判斷深色或淺色。
+            // 還沒畫過第一幀、不知道配色時不回答
+            Event::ColorRequest(index, format) => {
+                let theme = *self.shared.theme.lock();
+                if let (Some(theme), Some(tx)) = (theme, self.shared.sender.lock().as_ref()) {
+                    let _ = tx.send(Msg::Input(format(theme.color(index)).into_bytes().into()));
+                }
             }
             _ => {}
         }
@@ -519,6 +590,10 @@ impl Terminal {
         let shared = Arc::new(Shared::default());
         let listener = Listener { ctx: ctx.clone(), shared: shared.clone() };
         let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, listener.clone())));
+        // 輸出先給 pty_tap 看一遍，撈出 OSC 7（目前資料夾）和通知（OSC 9／777／99），這些 alacritty_terminal 不處理
+        let tap_shared = shared.clone();
+        let tap_ctx = ctx.clone();
+        let pty = Tapped::new(Box::new(pty), move |osc| tap_shared.on_osc(osc, &tap_ctx));
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)?;
         let sender = event_loop.channel();
         *shared.sender.lock() = Some(sender.clone());
@@ -548,6 +623,11 @@ impl Terminal {
         let _ = self.sender.send(Msg::Input(bytes.into()));
     }
 
+
+    /// 告訴終端機目前畫面用的配色，之後程式問顏色時照這個回答。
+    pub fn set_theme_colors(&self, colors: ThemeColors) {
+        *self.shared.theme.lock() = Some(colors);
+    }
 
     /// 自從上次呼叫之後，有沒有收到鈴聲（BEL）；呼叫一次就清掉。
     pub fn take_bell(&self) -> bool {
@@ -790,6 +870,70 @@ mod tests {
         assert_eq!(ShellKind::PowerShell.cd_line(r"C:\a b"), r"Set-Location -LiteralPath 'C:\a b'");
         assert_eq!(ShellKind::Cmd.cd_line(r"D:\a b"), r#"cd /d "D:\a b""#);
     }
+
+    #[test]
+    fn a_program_can_put_text_on_the_clipboard_with_osc_52_but_not_read_it() {
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+        let ctx = egui::Context::default();
+        let size = GridSize { cols: 20, lines: 3 };
+        let listener = Listener { ctx: ctx.clone(), shared: Arc::new(Shared::default()) };
+        let mut term = Term::new(Config::default(), &size, listener);
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+        // "hello 你好" 的 base64；後面再問一次剪貼簿內容（`?`），不該有人回答
+        parser.advance(&mut term, b"\x1b]52;c;aGVsbG8g5L2g5aW9\x07\x1b]52;c;?\x07");
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        let copied: Vec<String> = output
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|c| if let egui::OutputCommand::CopyText(t) = c { Some(t.clone()) } else { None })
+            .collect();
+        assert_eq!(copied, vec!["hello 你好".to_owned()]);
+    }
+
+    #[test]
+    fn color_questions_are_answered_from_the_current_theme() {
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+        let theme = ThemeColors {
+            fg: Rgb { r: 1, g: 2, b: 3 },
+            bg: Rgb { r: 10, g: 20, b: 30 },
+            cursor: Rgb { r: 7, g: 8, b: 9 },
+            ansi: std::array::from_fn(|i| Rgb { r: i as u8, g: 0, b: 0 }),
+        };
+        // 色立方與灰階用標準值
+        assert_eq!(theme.color(16), Rgb { r: 0, g: 0, b: 0 });
+        assert_eq!(theme.color(196), Rgb { r: 255, g: 0, b: 0 });
+        assert_eq!(theme.color(255), Rgb { r: 238, g: 238, b: 238 });
+        assert_eq!(theme.color(5), Rgb { r: 5, g: 0, b: 0 });
+
+        #[derive(Clone)]
+        struct Asked(Arc<std::sync::Mutex<Vec<String>>>, ThemeColors);
+        impl EventListener for Asked {
+            fn send_event(&self, event: Event) {
+                if let Event::ColorRequest(index, format) = event {
+                    self.0.lock().unwrap().push(format(self.1.color(index)));
+                }
+            }
+        }
+        let asked = Asked(Arc::default(), theme);
+        let size = GridSize { cols: 20, lines: 3 };
+        let mut term = Term::new(Config::default(), &size, asked.clone());
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+        // 問背景色（OSC 11）、前景色（OSC 10）、游標色（OSC 12）、第 1 號顏色（OSC 4）
+        parser.advance(&mut term, b"\x1b]11;?\x07\x1b]10;?\x07\x1b]12;?\x07\x1b]4;1;?\x07");
+        let answers = asked.0.lock().unwrap().clone();
+        assert_eq!(
+            answers,
+            vec![
+                "\x1b]11;rgb:0a0a/1414/1e1e\x07".to_owned(),
+                "\x1b]10;rgb:0101/0202/0303\x07".to_owned(),
+                "\x1b]12;rgb:0707/0808/0909\x07".to_owned(),
+                "\x1b]4;1;rgb:0101/0000/0000\x07".to_owned(),
+            ]
+        );
+    }
+
     use egui::{Key, Modifiers};
 
     const NONE: Modifiers = Modifiers::NONE;

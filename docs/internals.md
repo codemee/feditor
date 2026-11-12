@@ -128,7 +128,7 @@ file = C:\專案\b.md<Tab>0
 
 ## 終端機的實作
 
-- 偽終端機（Windows 的 ConPTY、Unix 的 pty）、背景讀寫執行緒與跳脫序列的解析都交給 `alacritty_terminal`；我們只負責挑 shell、改變大小、把按鍵翻成位元組（`ui/src/terminal.rs`）以及用 egui 把格子畫出來（`ui/src/terminal_pane.rs`）。
+- 偽終端機（Windows 的 ConPTY、Unix 的 pty）、背景讀寫執行緒與跳脫序列的解析都交給 `alacritty_terminal`；我們只負責挑 shell、改變大小、把按鍵翻成位元組（`ui/src/terminal.rs`）以及用 egui 把格子畫出來（`ui/src/terminal_pane.rs`）。`alacritty_terminal` 不處理的 OSC 序列（OSC 7 與 OSC 9;9 的資料夾回報、OSC 9／777／99 的通知）由 `ui/src/pty_tap.rs` 處理：它把 PTY 包一層，讀出來的位元組先經過一個跨區塊的掃描器再原封不動交給 `alacritty_terminal`；OSC 52（寫入剪貼簿）、OSC 10／11／12／4 的顏色詢問、OSC 8 超連結則是 `alacritty_terminal` 送出事件或記在格子上，由 `ui/src/terminal.rs` 與 `terminal_pane.rs` 接手。
 - 終端機放在 `Document::terminal`：它跟著 `Document` 一起在分頁、窗格之間搬動，所以拖放、切割、關閉都直接沿用分頁的機制；作用中的分頁是終端機時，窗格畫的是終端機畫面，不是編輯區。分頁不在前景時 shell 仍在背景執行。
 - 鍵盤焦點用 egui 的焦點機制：終端機的畫面元件有焦點時，這一幀開頭把按鍵、文字、複製貼上與輸入法事件從輸入裡取走送給 shell，所以編輯區與全域快捷鍵不會收到（開關終端機的 Ctrl+ 例外）。
 - 網址與搜尋：畫面上折行的幾列（行尾有 `WRAPLINE`）算同一個「邏輯行」，所以網址和搜尋字串都可以跨越折行。按住 Ctrl 時才會去找滑鼠底下的網址（只掃那一個邏輯行）；搜尋則掃描整個終端機（含歷史），字串改了或每 0.4 秒重掃一次，因為輸出會一直變。這兩件事的純文字部分在 `ui/src/terminal_text.rs`（網址辨識：協定、尾巴的標點與沒配對的括號；不分大小寫的比對），畫面與捲動在 `ui/src/terminal_pane.rs`。
