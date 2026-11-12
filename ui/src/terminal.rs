@@ -614,7 +614,11 @@ impl Terminal {
             return;
         }
         self.size = size;
-        self.term.lock().resize(size);
+        let mut term = self.term.lock();
+        // 縮放後文字會重排（程式也會重畫），原來選的格子已經不是那段文字，留著會停在錯的地方，所以清掉
+        term.selection = None;
+        term.resize(size);
+        drop(term);
         let _ = self.sender.send(Msg::Resize(window_size(size, cell)));
     }
 
@@ -1283,8 +1287,17 @@ mod tests {
             });
         }
         assert!(found, "沒有在畫面上看到 echo 的輸出");
+        {
+            use alacritty_terminal::index::{Column, Line, Point, Side};
+            use alacritty_terminal::selection::{Selection, SelectionType};
+            let p = Point::new(Line(0), Column(0));
+            let mut sel = Selection::new(SelectionType::Simple, p, Side::Left);
+            sel.update(Point::new(Line(0), Column(5)), Side::Right);
+            t.term.lock().selection = Some(sel);
+        }
         t.resize(GridSize { cols: 100, lines: 30 }, (8, 16));
         assert_eq!(t.term.lock().columns(), 100);
+        assert!(t.term.lock().selection.is_none(), "縮放後選取區要清掉，不然會停在重排後的錯誤位置");
         t.write(if cfg!(windows) { &b"exit\r\n"[..] } else { &b"exit\n"[..] });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while !t.exited() && std::time::Instant::now() < deadline {

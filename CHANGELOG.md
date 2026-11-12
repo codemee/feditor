@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.4] - 2026-11-12
+
+### 修正
+- **縮小視窗或窗格寬度時，終端機裡選取的區域會跳到別的地方**：縮放後文字重排（Claude Code 之類的程式也會重畫），原來選的格子已不是那段文字。現在縮放時會取消選取，要複製請在縮放前先複製。
+
 ## [0.13.3] - 2026-11-12
 
 ### 變更
@@ -326,6 +331,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.4]: https://github.com/codemee/feditor/releases/tag/v0.13.4
 [0.13.3]: https://github.com/codemee/feditor/releases/tag/v0.13.3
 [0.13.2]: https://github.com/codemee/feditor/releases/tag/v0.13.2
 [0.13.1]: https://github.com/codemee/feditor/releases/tag/v0.13.1

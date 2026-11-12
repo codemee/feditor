@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.4] - 2026-11-12
+
+### Fixed
+- **A selection in the terminal jumped to the wrong place when the window or pane was made narrower**: after a resize the text reflows (and programs such as Claude Code redraw), so the selected cells no longer held that text. A resize now clears the selection; copy before resizing.
+
 ## [0.13.3] - 2026-11-12
 
 ### Changed
@@ -326,6 +331,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.4]: https://github.com/codemee/feditor/releases/tag/v0.13.4
 [0.13.3]: https://github.com/codemee/feditor/releases/tag/v0.13.3
 [0.13.2]: https://github.com/codemee/feditor/releases/tag/v0.13.2
 [0.13.1]: https://github.com/codemee/feditor/releases/tag/v0.13.1
