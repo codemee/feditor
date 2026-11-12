@@ -1,5 +1,5 @@
 # 推送 v* 標籤時，為三個平台建置 release 版並附加到 GitHub Release。
-# 尚未在 GitHub 上實際跑過；macOS 版沒有簽章與公證，第一次開啟要在系統設定裡允許。
+# macOS 版沒有簽章與公證，第一次開啟要在系統設定裡允許。
 name: Release
 
 on:
@@ -13,6 +13,8 @@ jobs:
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # 曾因 apt-get 卡住而空等好幾小時，設上限讓它快點失敗、可以直接重跑該平台
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

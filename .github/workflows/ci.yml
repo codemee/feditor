@@ -1,4 +1,4 @@
-# 跨平台建置與測試。尚未在 GitHub 上實際跑過；Linux 需要的系統套件可能要依環境調整。
+# 跨平台建置與測試。測試本身只要幾秒，時間幾乎都花在編譯。
 name: CI
 
 on:
@@ -8,17 +8,29 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # 測試用的建置不需要完整除錯資訊；省掉它能明顯縮短 Windows 的編譯與連結時間，快取也小很多
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+# 同一個分支又推了新的提交，就取消還在跑的舊執行
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # 曾因 apt-get 卡住而空等一小時以上，設上限讓它快點失敗、可以直接重跑
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # macOS 要和上一次推送比對差異
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Linux 系統套件（eframe、rfd、字型掃描）
@@ -30,8 +42,21 @@ jobs:
       - name: 測試
         run: cargo test --workspace
       # 發布前先確認 macOS 的 .app 打得出來（Info.plist、圖示、簽章），免得到打標籤才發現壞掉
-      - name: macOS：建置並打包 FEditor.app
+      # 這步要多花約 3 分鐘，只有動到打包相關檔案時才跑；Release 工作流程本來就會打包
+      - name: macOS：檢查是否動到打包相關檔案
         if: runner.os == 'macOS'
+        id: pkg
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"   # 找不到比對基準就保險起見照跑
+          elif git diff --name-only "$base" HEAD | grep -qE '^(packaging/|ui/build\.rs|ui/assets/|Cargo\.toml$)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: macOS：建置並打包 FEditor.app
+        if: runner.os == 'macOS' && steps.pkg.outputs.changed == 'true'
         run: |
           cargo build --release -p feditor
           bash packaging/macos/make-app.sh target/release/feditor 0.0.0-ci dist
