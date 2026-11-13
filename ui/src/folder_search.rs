@@ -35,6 +35,8 @@ pub struct Stamp {
     pub path: Option<PathBuf>,
     pub revision: u64,
     pub len: usize,
+    /// 只在選取範圍內搜尋時的範圍（字元）。
+    pub scope: Option<std::ops::Range<usize>>,
 }
 
 /// 同一個檔案的一段連續命中：`hits[start..start + count]`。
@@ -175,6 +177,7 @@ impl FolderSearch {
         text: String,
         query: &str,
         search: SearchOptions,
+        within: Option<std::ops::Range<usize>>,
     ) {
         self.clear();
         self.text_scope = true;
@@ -182,7 +185,7 @@ impl FolderSearch {
         let max = GrepOptions::default().max_hits;
         let query = query.to_owned();
         self.run(ctx, move |cancel, on_hit| {
-            grep::search_text(&path, &text, &query, search, max, cancel, on_hit)
+            grep::search_text(&path, &text, &query, search, max, within, cancel, on_hit)
         });
     }
 
@@ -320,7 +323,7 @@ impl FolderSearch {
         let first = self.hits.iter().position(|h| h.path == path);
         self.hits.retain(|h| h.path != path);
         let mut fresh = Vec::new();
-        let _ = grep::search_text(path, text, query, search, usize::MAX, &AtomicBool::new(false), |h| fresh.push(h));
+        let _ = grep::search_text(path, text, query, search, usize::MAX, None, &AtomicBool::new(false), |h| fresh.push(h));
         let at = first.unwrap_or(self.hits.len()).min(self.hits.len());
         self.hits.splice(at..at, fresh);
         if let Some(sel) = self.selected {
@@ -445,6 +448,7 @@ mod tests {
             "a\nfoo\nb foo".into(),
             "foo",
             SearchOptions::default(),
+            None,
         );
         wait_done(&mut fs);
         assert_eq!(fs.hits.iter().map(|h| h.line).collect::<Vec<_>>(), vec![1, 2]);

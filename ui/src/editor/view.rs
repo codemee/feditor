@@ -43,6 +43,8 @@ pub struct EditorView<'a> {
     pub state: &'a mut EditorState,
     /// 搜尋結果（字元範圍），畫成高亮。
     pub highlight: Option<Range<usize>>,
+    /// 「只在選取範圍內搜尋」的範圍（字元範圍），畫成淡淡的底色。
+    pub scope: Option<Range<usize>>,
     /// 這個畫面要把 `highlight` 捲到可見處。
     pub reveal: bool,
     pub options: ViewOptions,
@@ -424,6 +426,7 @@ impl EditorView<'_> {
             buffer,
             state,
             highlight,
+            scope,
             reveal,
             options,
             language,
@@ -796,6 +799,9 @@ impl EditorView<'_> {
                     };
                     // 搜尋命中的那一筆（包含已經被選取的）用圓角色框，其他選取維持方角
                     const HIT_RADIUS: f32 = 3.0;
+                    if let Some(s) = &scope {
+                        paint_span(s, ui.visuals().selection.bg_fill.gamma_multiply(0.18), 0.0);
+                    }
                     if let Some(h) = &highlight {
                         // 已經被選取的那一筆由選取色負責，不要疊兩層
                         if !(has_selection && state.sel.range() == *h) {
@@ -1245,6 +1251,7 @@ mod tests {
                             buffer: &mut *buffer,
                             state: &mut *state,
                             highlight: highlight.clone(),
+                            scope: None,
                             reveal,
                             options: self.options,
                             language: None,

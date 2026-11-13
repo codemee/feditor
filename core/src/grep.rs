@@ -148,7 +148,7 @@ pub fn search_dir(
         }
         summary.files_searched += 1;
         let text = fileio::decode(&bytes).text;
-        if !scan_text(&path, &text, &searcher, opts.max_hits, cancel, &mut summary, &mut on_hit) {
+        if !scan_text(&path, &text, &searcher, opts.max_hits, None, cancel, &mut summary, &mut on_hit) {
             break 'walk;
         }
     }
@@ -157,45 +157,64 @@ pub fn search_dir(
 
 /// 在已經在記憶體裡的文字（例如還沒存檔的文件）裡搜尋，結果的格式和 [`search_dir`] 一樣。
 /// `path` 只是填進結果裡的路徑（沒有檔案時可以給空路徑）。
+/// `within` 是位元組範圍：有的話只找落在這段範圍內的符合（行號與欄位仍然是對整份文字算）。
 pub fn search_text(
     path: &Path,
     text: &str,
     pattern: &str,
     search: SearchOptions,
     max_hits: usize,
+    within: Option<Range<usize>>,
     cancel: &AtomicBool,
     mut on_hit: impl FnMut(Hit),
 ) -> Result<Summary, SearchError> {
     let searcher = Searcher::new(pattern, search)?;
     let mut summary = Summary { files_searched: 1, ..Summary::default() };
-    scan_text(path, text, &searcher, max_hits, cancel, &mut summary, &mut on_hit);
+    scan_text(path, text, &searcher, max_hits, within, cancel, &mut summary, &mut on_hit);
     Ok(summary)
 }
 
-/// 逐行掃描一份文字，一行最多回報一筆。回傳 `false` 表示該整個停下來（到達上限或被取消）。
+/// 掃描一份文字，每一個符合回報一筆（記在它開始的那一行）。回傳 `false` 表示該整個停下來（到達上限或被取消）。
 fn scan_text(
     path: &Path,
     text: &str,
     searcher: &Searcher,
     max_hits: usize,
+    within: Option<Range<usize>>,
     cancel: &AtomicBool,
     summary: &mut Summary,
     on_hit: &mut impl FnMut(Hit),
 ) -> bool {
     let before = summary.hits;
-    for (line_no, line) in text.split('\n').enumerate() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let Some(m) = searcher.find_next(line, 0) else {
-            continue;
-        };
-        let start = line[..m.start].chars().count();
-        let end = start + line[m.start..m.end].chars().count();
-        let (text, text_offset) = excerpt(line, start);
+    // 有搜尋範圍：只看範圍結尾以前的文字（符合不會跨出去），從範圍開頭開始找；
+    // 行號與欄位還是對整份文字算
+    let (lo, text_end) = match within {
+        Some(r) => (r.start.min(text.len()), r.end.min(text.len()).max(r.start.min(text.len()))),
+        None => (0, text.len()),
+    };
+    let hay = &text[..text_end];
+    let line_end_from = |from: usize| text[from..].find('\n').map_or(text.len(), |i| from + i);
+    let line_start0 = text[..lo].rfind('\n').map_or(0, |i| i + 1);
+    let (mut line_no, mut line_start, mut pos) = (text[..line_start0].matches('\n').count(), line_start0, lo);
+    let mut line_end = line_end_from(line_start);
+    // 每一個符合都是一筆結果（同一行有幾個就列幾筆），筆數才和編輯區的計數一致
+    while let Some(m) = searcher.find_next(hay, pos) {
+        while m.start > line_end {
+            line_start = line_end + 1;
+            line_no += 1;
+            line_end = line_end_from(line_start);
+        }
+        let line =text[line_start..line_end].strip_suffix('\r').unwrap_or(&text[line_start..line_end]);
+        // 跨行的符合只標示第一行的部分
+        let end_byte = m.end.min(line_start + line.len()).max(m.start);
+        let start = text[line_start..m.start].chars().count();
+        let end = start + text[m.start..end_byte].chars().count();
+        let (text_shown, text_offset) = excerpt(line, start);
         on_hit(Hit {
             path: path.to_owned(),
             line: line_no,
             range: start..end,
-            text,
+            text: text_shown,
             text_offset,
         });
         summary.hits += 1;
@@ -209,6 +228,15 @@ fn scan_text(
             summary.files_with_hits += 1;
             return false;
         }
+        // 下一筆從這一筆的結尾找；空的符合要多跳過一個字元，否則會原地踏步
+        pos = if m.is_empty() {
+            match text[m.end..text_end].chars().next() {
+                Some(c) => m.end + c.len_utf8(),
+                None => break,
+            }
+        } else {
+            m.end
+        };
     }
     if summary.hits > before {
         summary.files_with_hits += 1;
@@ -293,13 +321,14 @@ mod tests {
     }
 
     #[test]
-    fn one_hit_per_line_and_crlf_is_handled() {
+    fn every_match_is_listed_and_crlf_is_handled() {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "a.txt", b"foo foo foo\r\nbar foo\r\n");
-        let (hits, _) = run(d.path(), "foo", &GrepOptions::default());
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].range, 0..3);
-        assert_eq!(hits[1].text, "bar foo", "行尾的 \\r 不會留在文字裡");
+        let (hits, s) = run(d.path(), "foo", &GrepOptions::default());
+        assert_eq!(hits.len(), 4, "同一行有幾個符合就列幾筆");
+        assert_eq!(s.hits, 4);
+        assert_eq!(hits.iter().map(|h| (h.line, h.range.start)).collect::<Vec<_>>(), vec![(0, 0), (0, 4), (0, 8), (1, 4)]);
+        assert_eq!(hits[3].text, "bar foo", "行尾的 \\r 不會留在文字裡");
     }
 
     #[test]
@@ -396,6 +425,19 @@ mod tests {
     }
 
     #[test]
+    fn a_pattern_with_newline_matches_across_lines() {
+        let d = tempfile::tempdir().unwrap();
+        write(d.path(), "a.txt", b"x]\r\ny\r\nz]\r\n");
+        let opts = GrepOptions {
+            search: SearchOptions { regex: true, ..SearchOptions::default() },
+            ..GrepOptions::default()
+        };
+        let (hits, _) = run(d.path(), r"\]\n", &opts);
+        let got: Vec<_> = hits.iter().map(|h| (h.line, h.range.clone(), h.text.as_str())).collect();
+        assert_eq!(got, vec![(0, 1..2, "x]"), (2, 1..2, "z]")]);
+    }
+
+    #[test]
     fn long_lines_are_excerpted_around_the_match() {
         let d = tempfile::tempdir().unwrap();
         let line = format!("{}needle{}", "a".repeat(500), "b".repeat(500));
@@ -428,13 +470,39 @@ mod tests {
             "foo",
             SearchOptions::default(),
             100,
+            None,
             &AtomicBool::new(false),
             |h| hits.push(h),
         )
         .unwrap();
         assert_eq!(hits.iter().map(|h| h.line).collect::<Vec<_>>(), vec![1, 2]);
         assert_eq!((s.hits, s.files_searched, s.files_with_hits), (2, 1, 1));
-        assert!(search_text(Path::new(""), "x", "(", SearchOptions { regex: true, ..Default::default() }, 1, &AtomicBool::new(false), |_| {}).is_err());
+        assert!(search_text(Path::new(""), "x", "(", SearchOptions { regex: true, ..Default::default() }, 1, None, &AtomicBool::new(false), |_| {}).is_err());
+    }
+
+    #[test]
+    fn a_search_range_limits_hits_but_keeps_line_numbers_and_columns() {
+        let text = "foo\nxx foo foo\nfoo\n";
+        // 範圍是第二行的第一個 foo 之後（"foo foo" 的後半）到第三行行首
+        let from = text.find("foo foo").unwrap() + 3;
+        let to = text.len() - 4; // 不含最後一行的 foo
+        let mut hits = Vec::new();
+        search_text(Path::new(""), text, "foo", SearchOptions::default(), 100, Some(from..to), &AtomicBool::new(false), |h| hits.push(h)).unwrap();
+        assert_eq!(hits.iter().map(|h| (h.line, h.range.clone())).collect::<Vec<_>>(), vec![(1, 7..10)]);
+    }
+
+    #[test]
+    fn every_match_is_a_hit_even_on_the_same_line() {
+        let opts = SearchOptions { regex: true, ..Default::default() };
+        let ranges = |text: &str, pat: &str| {
+            let mut hits = Vec::new();
+            search_text(Path::new(""), text, pat, opts, 100, None, &AtomicBool::new(false), |h| hits.push(h)).unwrap();
+            hits.iter().map(|h| (h.line, h.range.clone())).collect::<Vec<_>>()
+        };
+        assert_eq!(ranges("a1 b22\nc333", r"\d+"), vec![(0, 1..2), (0, 4..6), (1, 1..4)]);
+        // 空的符合也各算一筆，而且不會原地踏步
+        assert_eq!(ranges("a\nb", "^"), vec![(0, 0..0), (1, 0..0)]);
+        assert_eq!(ranges("ab", r"\d*"), vec![(0, 0..0), (0, 1..1), (0, 2..2)]);
     }
 
     #[test]

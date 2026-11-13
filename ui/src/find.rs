@@ -23,10 +23,35 @@ pub struct FindState {
     pub reveal: bool,
     /// 這次搜尋是否繞過了檔案的開頭或結尾。
     pub wrapped: bool,
+    /// 只在這段範圍（字元範圍）內搜尋與取代；`None` 是整份文件。
+    pub scope: Option<Range<usize>>,
     error: Option<String>,
 }
 
 impl FindState {
+    /// 搜尋範圍換算成位元組（超出文字的部分截掉）。
+    fn scope_bytes(&self, text: &str) -> Option<Range<usize>> {
+        self.scope.as_ref().map(|s| {
+            let a = char_to_byte(text, s.start);
+            a..char_to_byte(text, s.end).max(a)
+        })
+    }
+
+    /// 使用者在編輯區改了文字：搜尋範圍跟著動。`caret` 是改完之後的游標（字元），
+    /// `delta` 是文字長度（字元數）的變化。游標在範圍前面整段平移，在範圍裡面就只動結尾。
+    pub fn shift_scope(&mut self, caret: usize, delta: isize) {
+        let Some(s) = self.scope.as_mut() else { return };
+        if delta == 0 {
+            return;
+        }
+        let shift = |v: usize| (v as isize + delta).max(0) as usize;
+        if caret <= s.start {
+            *s = shift(s.start)..shift(s.end);
+        } else if caret as isize - delta <= s.end as isize {
+            s.end = shift(s.end).max(s.start);
+        }
+    }
+
     pub fn searcher(&self) -> Result<Searcher, SearchError> {
         Searcher::new(&self.query, self.opts)
     }
@@ -64,16 +89,21 @@ impl FindState {
             }
         };
 
+        // 有搜尋範圍：只看範圍結尾以前的文字（符合不會跨出去），而且起點不能早於範圍開頭
+        let (lo, hay) = match self.scope_bytes(text) {
+            Some(r) => (r.start, &text[..r.end]),
+            None => (0, text),
+        };
         let mut found = if backward {
-            sr.find_prev(text, from)
+            sr.find_prev(hay, from).filter(|m| m.start >= lo)
         } else {
-            sr.find_next(text, from)
+            sr.find_next(hay, from.max(lo))
         };
         if found.is_none() {
             found = if backward {
-                sr.find_prev(text, usize::MAX)
+                sr.find_prev(hay, usize::MAX).filter(|m| m.start >= lo)
             } else {
-                sr.find_next(text, 0)
+                sr.find_next(hay, lo)
             };
             self.wrapped = found.is_some();
         }
@@ -106,7 +136,17 @@ impl FindState {
             self.find(&text, selection.start, false);
             return None;
         };
-        let Some(new) = sr.expansion(&text, &selection, &self.replacement) else {
+        let range = self.scope_bytes(&text);
+        let hay = match &range {
+            // 選取要完全落在搜尋範圍裡才能取代
+            Some(r) if selection.start < r.start || selection.end > r.end => {
+                self.find(&text, selection.start, false);
+                return None;
+            }
+            Some(r) => &text[..r.end],
+            None => &text[..],
+        };
+        let Some(new) = sr.expansion(hay, &selection, &self.replacement) else {
             self.find(&text, selection.start, false);
             return None;
         };
@@ -115,6 +155,9 @@ impl FindState {
         buf.break_group();
         buf.replace(start..end, &new);
         let replaced = start..start + new.chars().count();
+        if let Some(s) = self.scope.as_mut() {
+            s.end = (s.end + replaced.len()).saturating_sub(end - start);
+        }
 
         let text = buf.text();
         let mut from = selection.start + new.len();
@@ -134,7 +177,17 @@ impl FindState {
     pub fn replace_all(&mut self, buf: &mut Buffer) -> Result<usize, SearchError> {
         let sr = self.searcher()?;
         let text = buf.text();
-        let (out, n) = sr.replace_all(&text, &self.replacement);
+        let (out, n) = match self.scope_bytes(&text) {
+            None => sr.replace_all(&text, &self.replacement),
+            Some(r) => {
+                // 只換範圍裡的文字，範圍前後原封不動；範圍的結尾跟著新文字的長度
+                let (mid, n) = sr.replace_all(&text[r.clone()], &self.replacement);
+                if let Some(s) = self.scope.as_mut() {
+                    s.end = s.start + mid.chars().count();
+                }
+                (format!("{}{}{}", &text[..r.start], mid, &text[r.end..]), n)
+            }
+        };
         if n > 0 {
             // 只換掉「第一處到最後一處改動」之間的範圍：復原步驟小，復原後畫面也留在改動附近
             let (old_range, new_range) = changed_span(&text, &out);
@@ -174,7 +227,6 @@ fn changed_span(old: &str, new: &str) -> (Range<usize>, Range<usize>) {
 }
 
 /// 字元索引 → 位元組位置；超出範圍時回傳文字長度。
-#[cfg(test)]
 pub fn char_to_byte(text: &str, chars: usize) -> usize {
     text.char_indices()
         .nth(chars)
@@ -352,6 +404,48 @@ mod tests {
         }
         assert_eq!(b.text(), "> a\n> b");
     }
+    #[test]
+    fn a_search_scope_limits_find_replace_and_wraps_inside_it() {
+        let text = "cat cat cat cat";
+        let mut f = state("cat");
+        f.scope = Some(4..11); // 中間兩個 cat
+        assert!(f.find(text, 0, false));
+        assert_eq!(f.current, Some(4..7), "起點在範圍前面：從範圍開頭找");
+        assert!(f.find(text, 7, false));
+        assert_eq!(f.current, Some(8..11));
+        assert!(f.find(text, 11, false));
+        assert_eq!(f.current, Some(4..7), "範圍裡沒有了：繞回範圍開頭，不是整份文件的開頭");
+        assert!(f.wrapped);
+        assert!(f.find(text, 4, true));
+        assert_eq!(f.current, Some(8..11), "向後找也繞在範圍裡");
+
+        let mut b = buf(text);
+        f.replacement = "bird".to_owned();
+        f.find(&b.text(), 4, false);
+        let sel = f.current.clone().unwrap();
+        assert_eq!(f.replace_current(&mut b, sel), Some(4..8));
+        assert_eq!(b.text(), "cat bird cat cat");
+        assert_eq!(f.scope, Some(4..12), "範圍的結尾跟著新文字");
+        assert_eq!(f.replace_current(&mut b, 0..3), None, "範圍外的選取不能取代");
+        assert_eq!(f.replace_all(&mut b).unwrap(), 1);
+        assert_eq!(b.text(), "cat bird bird cat");
+        assert_eq!(f.scope, Some(4..13));
+    }
+
+    #[test]
+    fn the_scope_follows_typing_around_it() {
+        let mut f = state("x");
+        f.scope = Some(10..20);
+        f.shift_scope(5, 3); // 範圍前面打了 3 個字
+        assert_eq!(f.scope, Some(13..23));
+        f.shift_scope(15, 1); // 範圍裡面打了 1 個字
+        assert_eq!(f.scope, Some(13..24));
+        f.shift_scope(40, 2); // 範圍後面
+        assert_eq!(f.scope, Some(13..24));
+        f.shift_scope(14, -4); // 範圍裡刪掉 4 個字
+        assert_eq!(f.scope, Some(13..20));
+    }
+
     #[test]
     fn options_change_the_results() {
         let text = "Cat cat concat";

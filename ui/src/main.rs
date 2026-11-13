@@ -747,6 +747,10 @@ enum Action {
     BeginTabDrag(panes::PaneId, usize),
     /// 把某個窗格的某個分頁搬到別處（放進另一個窗格，或切出新窗格）。
     MoveTab(panes::PaneId, usize, pane_ops::Target),
+    /// 在同一個窗格的分頁列裡調整順序：把第幾個分頁搬到插入位置（0..=分頁數，是搬之前的位置）。
+    ReorderTab(panes::PaneId, usize, usize),
+    /// 把某個窗格的分頁依標籤名稱排序（第二個值為 true 是降冪）。
+    SortTabs(panes::PaneId, bool),
     /// 展開或收起巨集面板。
     ToggleMacroMenu,
     RunMacroEntry(usize),
@@ -776,6 +780,8 @@ enum Action {
     PickSearchFolder,
     /// 搜尋範圍：`true` 是資料夾，`false` 是目前文件。
     SetFolderScope(bool),
+    /// 開啟（以目前編輯區的選取為範圍）或關閉「只在選取範圍內搜尋」。
+    SetFindScope(bool),
     /// 資料夾範圍是否包含子資料夾。
     SetRecursive(bool),
     /// 打開搜尋結果的第幾筆。
@@ -1135,6 +1141,7 @@ impl App {
     /// 整份文字被換掉（新文件、開檔、重新載入）：游標與搜尋狀態都要重來。
     fn text_replaced(&mut self) {
         self.find.invalidate();
+        self.find.scope = None;
         // 錄製中換了文件：錄製不中斷
         let recording = self.editor.recording.take();
         self.editor = EditorState::default();
@@ -1355,12 +1362,13 @@ impl App {
             path: self.doc.path.clone(),
             revision: self.doc.buffer.revision(),
             len: self.doc.buffer.len_bytes(),
+            scope: self.find.scope.clone(),
         };
         let current = self.folder.stamp.clone();
         if current.as_ref() != Some(&want) {
             // 很大的文件：只在搜尋條件改了的時候重搜，打字時不要每個字都掃一遍
             let only_text_changed = current.as_ref().is_some_and(|s| {
-                s.query == want.query && s.options == want.options && s.path == want.path
+                s.query == want.query && s.options == want.options && s.path == want.path && s.scope == want.scope
             });
             if only_text_changed && want.len > find::STATS_MAX_BYTES {
                 self.folder.stamp = Some(want);
@@ -1368,7 +1376,11 @@ impl App {
                 let label = self.doc.name();
                 let path = self.doc.path.clone().unwrap_or_default();
                 let text = self.doc.text().to_owned();
-                self.folder.start_text(ctx, &label, path, text, &want.query, opts);
+                let within = want.scope.as_ref().map(|s| {
+                    let buf = &self.doc.buffer;
+                    buf.char_to_byte(s.start.min(buf.len_chars()))..buf.char_to_byte(s.end.min(buf.len_chars()))
+                });
+                self.folder.start_text(ctx, &label, path, text, &want.query, opts, within);
                 self.folder.stamp = Some(want);
             }
         }
@@ -2084,6 +2096,7 @@ impl App {
         // 換了分頁（切換、新增、開啟、關閉都算）：鍵盤焦點回到編輯區，可以直接打字
         self.pending_editor_focus = true;
         self.find.invalidate();
+        self.find.scope = None; // 選取範圍屬於原本的那份文件
         self.find.reveal = false;
         self.save_session();
     }
@@ -2658,8 +2671,25 @@ impl App {
             }
             Action::StopFolderSearch => self.folder.stop(),
             Action::PickSearchFolder => self.pick_search_folder(),
+            Action::SetFindScope(on) => {
+                if !on {
+                    self.find.scope = None;
+                    self.find_changed();
+                } else {
+                    let sel = self.editor.sel.range();
+                    if sel.is_empty() {
+                        self.push(LogKind::Info, t("請先選取要搜尋的文字範圍"));
+                    } else {
+                        self.find.scope = Some(sel);
+                        self.find_changed();
+                    }
+                }
+            }
             Action::SetFolderScope(on) => {
                 self.clear_hit_highlight();
+                if on {
+                    self.find.scope = None; // 資料夾範圍不能再限定選取範圍
+                }
                 self.folder.folder = on;
                 self.folder.clear();
                 if on {
@@ -2794,6 +2824,8 @@ impl App {
             Action::MovePreview(id, target, side) => self.move_preview(id, target, side),
             Action::BeginTabDrag(pane, i) => self.begin_tab_drag(pane, i),
             Action::MoveTab(pane, i, target) => self.move_tab(pane, i, target),
+            Action::ReorderTab(pane, from, to) => self.reorder_tab(pane, from, to),
+            Action::SortTabs(pane, descending) => self.sort_tabs(pane, descending),
             Action::CloseTab(i) => self.close_tab(if i == usize::MAX { self.tabs.active() } else { i }),
             Action::NextTab => self.switch_tab(self.tabs.neighbor(true)),
             Action::PrevTab => self.switch_tab(self.tabs.neighbor(false)),
@@ -4744,6 +4776,18 @@ impl App {
                 &mut on,
             ) {
                 action = Some(Action::SetFolderScope(on));
+            }
+            // 只在選取的文字範圍內搜尋（資料夾範圍沒有這個概念）
+            if !folder_scope {
+                let mut in_selection = self.find.scope.is_some();
+                if option_toggle(
+                    ui,
+                    Icon::InSelection,
+                    t("只在選取的文字範圍內尋找與取代（先選取文字再按；編輯區會用淡色標出範圍）"),
+                    &mut in_selection,
+                ) {
+                    action = Some(Action::SetFindScope(in_selection));
+                }
             }
             if folder_scope {
                 let mut recursive = self.folder.recursive;
@@ -7394,7 +7438,7 @@ mod tests {
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
                     let App { doc, editor, settings, .. } = &mut *app;
-                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, false, settings);
+                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, None, false, settings);
                 });
             });
             output.textures_delta.clear();
@@ -7458,7 +7502,7 @@ mod tests {
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
                     let App { doc, editor, settings, .. } = &mut *app;
-                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, false, settings);
+                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, None, false, settings);
                 });
             });
             output.textures_delta.clear();
@@ -7518,7 +7562,7 @@ mod tests {
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
                     let App { doc, editor, settings, .. } = &mut *app;
-                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, false, settings);
+                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, None, false, settings);
                 });
             });
             output.textures_delta.clear();
@@ -7620,6 +7664,30 @@ mod tests {
         app.text_replaced();
         assert_eq!(app.editor.sel.head, 0);
         assert!(app.find.current.is_none());
+    }
+
+    #[test]
+    fn reordering_and_sorting_tabs_keep_each_tab_content_and_the_active_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        for (n, text) in [("c.txt", "ccc"), ("a.txt", "aaa"), ("b.txt", "bbb")] {
+            let p = dir.path().join(n);
+            std::fs::write(&p, text).unwrap();
+            app.open_path(&p);
+        }
+        let pane = app.layout.focus;
+        let order = |app: &App| (0..app.tabs.len()).map(|i| app.pane_label(pane, i).0).collect::<Vec<_>>();
+        assert_eq!(order(&app), ["c.txt", "a.txt", "b.txt"]);
+        assert_eq!(app.doc.text(), "bbb");
+        app.reorder_tab(pane, 2, 0); // b 拖到最前面
+        assert_eq!(order(&app), ["b.txt", "c.txt", "a.txt"]);
+        assert_eq!((app.tabs.active(), app.doc.text()), (0, "bbb"), "作用中的還是 b");
+        app.sort_tabs(pane, false);
+        assert_eq!(order(&app), ["a.txt", "b.txt", "c.txt"]);
+        assert_eq!((app.tabs.active(), app.doc.text()), (1, "bbb"));
+        app.sort_tabs(pane, true);
+        assert_eq!(order(&app), ["c.txt", "b.txt", "a.txt"]);
+        assert_eq!((app.tabs.active(), app.doc.text()), (1, "bbb"));
     }
 
     #[test]

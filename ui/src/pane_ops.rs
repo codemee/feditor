@@ -36,6 +36,11 @@ const TAB_SCROLL_STEP: f32 = 160.0;
 const TAB_BODY_PAD: f32 = 4.0;
 const TAB_RADIUS: u8 = 7;
 
+/// 存放某個窗格這一個畫面裡每個分頁的位置（`Vec<egui::Rect>`）的 id。
+fn tab_rects_id(pane: PaneId) -> egui::Id {
+    egui::Id::unique(("tab_rects", pane))
+}
+
 /// 窗格分頁列上的分頁操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCmd {
@@ -224,6 +229,33 @@ impl App {
         self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
         self.pending_editor_focus = true;
         self.tab_changed();
+    }
+
+    /// 在窗格 `pane` 的分頁列裡，把第 `from` 個分頁搬到插入位置 `to`（搬之前的位置，0..=分頁數）。
+    /// 作用中的分頁不變（還是同一份內容）。
+    pub(crate) fn reorder_tab(&mut self, pane: PaneId, from: usize, to: usize) {
+        if self.set_ref(pane).is_none() {
+            return;
+        }
+        let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
+        let changed = self.set_mut(pane).and_then(|s| s.reorder(from, to)).is_some();
+        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        if changed {
+            self.tab_changed();
+        }
+    }
+
+    /// 窗格 `pane` 的分頁依標籤名稱排序。
+    pub(crate) fn sort_tabs(&mut self, pane: PaneId, descending: bool) {
+        if self.set_ref(pane).is_none() {
+            return;
+        }
+        let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
+        let changed = self.set_mut(pane).is_some_and(|s| s.sort_by_name(descending));
+        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        if changed {
+            self.tab_changed();
+        }
     }
 
     /// 要求關閉窗格（按窗格分頁列右端的按鈕）：裡面有未儲存的文件就依序問（儲存、不儲存、全部不儲存、取消）。
@@ -523,6 +555,7 @@ impl App {
         let (prev_offset, prev_max, overflow, force) =
             ctx.data(|d| d.get_temp::<(f32, f32, bool, Option<f32>)>(state_id)).unwrap_or((0.0, 0.0, false, None));
         let count = self.pane_tab_count(pane);
+        ctx.data_mut(|d| d.insert_temp(tab_rects_id(pane), Vec::<egui::Rect>::new()));
         let mut scroll_to = force;
         let mut new_state = None;
         // 外面要包一層 horizontal：with_layout 會佔滿所有可用的高度，不包的話分頁列會跑到窗格正中間
@@ -606,6 +639,14 @@ impl App {
                             ui.close();
                         }
                     }
+                    // 排序放在清單最下面：依標籤名稱，升冪或降冪
+                    ui.separator();
+                    for (label, descending) in [(t("依名稱排序（升冪 A→Z）"), false), (t("依名稱排序（降冪 Z→A）"), true)] {
+                        if ui.selectable_label(false, label).clicked() {
+                            *action = Some(Action::SortTabs(pane, descending));
+                            ui.close();
+                        }
+                    }
                 });
             });
         });
@@ -629,6 +670,8 @@ impl App {
         let attention = self.pane_tab_attention(pane, i);
         let size = egui::vec2(pad + icon_w + galley.size().x + 6.0 + close_w + 4.0, TAB_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+        // 記下每個分頁的位置，拖曳排序時用來判斷插在哪裡（分頁列每個畫面開頭會清空）
+        ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<Vec<egui::Rect>>(tab_rects_id(pane)).push(rect));
         let close = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 4.0 - close_w / 2.0, rect.center().y),
             egui::vec2(close_w, close_w),
@@ -888,9 +931,13 @@ impl App {
                     } else {
                         let reveal = std::mem::take(&mut find.reveal);
                         let highlight = find.current_chars.clone();
+                        let scope = find.scope.clone();
+                        let before = doc.buffer.len_chars();
                         // 使用者在編輯區改了文字：標成未儲存，之前找到的位置與筆數作廢
-                        if show_pane_editor(ui, id, doc, editor, options, highlight, reveal, &*settings) {
+                        if show_pane_editor(ui, id, doc, editor, options, highlight, scope, reveal, &*settings) {
                             find.invalidate();
+                            // 「只在選取範圍內搜尋」的範圍跟著這次編輯移動
+                            find.shift_scope(editor.sel.head, doc.buffer.len_chars() as isize - before as isize);
                         }
                     }
                 } else if let Some(set) = layout.others.get_mut(&id) {
@@ -898,7 +945,7 @@ impl App {
                     if let Some(terminal) = d.terminal.as_mut() {
                         crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
                     } else {
-                        show_pane_editor(ui, id, d, e, options, None, false, &*settings);
+                        show_pane_editor(ui, id, d, e, options, None, None, false, &*settings);
                     }
                 }
             });
@@ -957,12 +1004,36 @@ impl App {
         let hit = pos.and_then(|p| {
             shapes.iter().find(|(_, r, _)| r.contains(p)).map(|&(id, rect, bar_h)| (id, rect, panes::drop_zone(rect, bar_h, p)))
         });
-        let useful = hit.filter(|&(id, _, zone)| self.drop_is_useful(&drag, id, zone));
+        // 拖在自己窗格的分頁列上：是調整順序，不是搬到別處。插入位置由滑鼠左邊有幾個分頁決定
+        let tab_rects: Vec<egui::Rect> = ctx.data(|d| d.get_temp(tab_rects_id(drag.pane))).unwrap_or_default();
+        let reorder_at = match (drag.preview, pos) {
+            (false, Some(p)) if !tab_rects.is_empty() => shapes
+                .iter()
+                .find(|(id, r, bar_h)| *id == drag.pane && *bar_h > 0.0 && p.y < r.min.y + bar_h && r.contains(p))
+                .map(|_| tab_rects.iter().filter(|r| r.center().x < p.x).count()),
+            _ => None,
+        };
+        let useful = if reorder_at.is_some() {
+            None
+        } else {
+            hit.filter(|&(id, _, zone)| self.drop_is_useful(&drag, id, zone))
+        };
 
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("tab_drag_overlay"));
         let painter = ctx.layer_painter(layer);
         let accent = ctx.global_style().visuals.selection.bg_fill;
+        if let Some(at) = reorder_at {
+            let (x, bar) = match tab_rects.get(at) {
+                Some(r) => (r.left(), *r),
+                None => (tab_rects[tab_rects.len() - 1].right(), tab_rects[tab_rects.len() - 1]),
+            };
+            painter.rect_filled(
+                egui::Rect::from_min_max(egui::pos2(x - 1.5, bar.top() + 2.0), egui::pos2(x + 1.5, bar.bottom() - 2.0)),
+                egui::CornerRadius::same(1),
+                accent,
+            );
+        }
         if let Some((_, rect, zone)) = useful {
             let preview = panes::preview_rect(rect, zone).shrink(2.0);
             painter.rect_filled(preview, egui::CornerRadius::same(4), accent.gamma_multiply(0.35));
@@ -979,6 +1050,9 @@ impl App {
 
         if ctx.input(|i| i.pointer.any_released()) {
             self.tab_drag = None;
+            if let Some(at) = reorder_at {
+                return Some(Action::ReorderTab(drag.pane, drag.index, at));
+            }
             return useful.map(|(id, _, zone)| {
                 if drag.preview {
                     if let Zone::Split(side) = zone {
@@ -1004,6 +1078,7 @@ pub(crate) fn show_pane_editor(
     editor: &mut EditorState,
     options: ViewOptions,
     highlight: Option<Range<usize>>,
+    scope: Option<Range<usize>>,
     reveal: bool,
     settings: &crate::settings::Settings,
 ) -> bool {
@@ -1026,6 +1101,7 @@ pub(crate) fn show_pane_editor(
         buffer: &mut doc.buffer,
         state: editor,
         highlight,
+        scope,
         reveal,
         options,
         language,

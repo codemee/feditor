@@ -2,6 +2,18 @@
 
 # Changelog
 
+## [0.13.8] - 2026-11-13
+
+### Added
+- **Drag tabs to reorder them**: drag a tab along its own tab bar and drop it to insert it there; a line marks the insertion point while dragging (Esc cancels), and the active tab stays the same. Dragging anywhere outside the tab bar still moves the tab to another pane or splits off a new pane as before.
+- **The tab list can sort by name**: the bottom of the "Choose a tab" dropdown now has "Sort by name (ascending A→Z)" and "(descending Z→A)", case-insensitive with numbers compared by value (`a2` before `a10`).
+- **Search only inside a selection**: a new "in selection" button on the second row of the find panel (current-document scope only): select text first, then press it, and find, replace, replace all and the hit list work only inside that text; searching wraps around inside the range, and the editor tints it. The range follows typing and replacing around it, and is cancelled when you switch tabs, reload, or switch to folder scope.
+
+### Changed
+- **The hit list now shows every match**: previously only the first match of a line was listed, so the count did not agree with the editor; now a line with three matches lists three, and empty matches count too. The 5000-result limit of the folder scope counts matches as well.
+
+### Fixed
+- **A pattern containing `\n` showed "not found" in the hit list**: the hit list matched line by line, and a line contains no newline character; it now matches against the whole text, so every match the editor finds is listed (a multi-line match only marks its first line).
 ## [0.13.7] - 2026-11-12
 
 ### Fixed
@@ -358,6 +370,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.8]: https://github.com/codemee/feditor/releases/tag/v0.13.8
 [0.13.7]: https://github.com/codemee/feditor/releases/tag/v0.13.7
 [0.13.6]: https://github.com/codemee/feditor/releases/tag/v0.13.6
 [0.13.5]: https://github.com/codemee/feditor/releases/tag/v0.13.5

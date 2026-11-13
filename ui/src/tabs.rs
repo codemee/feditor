@@ -161,6 +161,47 @@ impl TabSet {
         self.active = at;
     }
 
+    /// 把第 `from` 個分頁搬到插入位置 `to`（0..=len，是「搬之前」的位置：`to` 在分頁 `to-1` 與 `to` 之間）。
+    /// 作用中的分頁跟著它原本的內容走。回傳搬完後該分頁的編號；沒有變動時回傳 `None`。
+    pub fn reorder(&mut self, from: usize, to: usize) -> Option<usize> {
+        let len = self.slots.len();
+        if from >= len || to > len {
+            return None;
+        }
+        let dest = if to > from { to - 1 } else { to };
+        if dest == from {
+            return None;
+        }
+        let tab = self.slots.remove(from);
+        self.slots.insert(dest, tab);
+        self.active = match self.active {
+            a if a == from => dest,
+            a if from < a && a <= dest => a - 1,
+            a if dest <= a && a < from => a + 1,
+            a => a,
+        };
+        Some(dest)
+    }
+
+    /// 依標籤名稱排序（不分大小寫，數字依大小比較，名稱相同保持原順序）。內容必須已經收回。
+    /// `descending` 為 true 是降冪（Z→A）。作用中的分頁跟著它原本的內容走。回傳順序有沒有改變。
+    pub fn sort_by_name(&mut self, descending: bool) -> bool {
+        let mut order: Vec<usize> = (0..self.slots.len()).collect();
+        let names: Vec<String> = self.slots.iter().map(|s| s.doc.name()).collect();
+        order.sort_by(|&a, &b| {
+            let ord = natural_cmp(&names[a], &names[b]);
+            if descending { ord.reverse() } else { ord }
+        });
+        if order.iter().enumerate().all(|(i, &o)| i == o) {
+            return false;
+        }
+        let new_active = order.iter().position(|&o| o == self.active).unwrap_or(0);
+        let mut old: Vec<Option<Tab>> = std::mem::take(&mut self.slots).into_iter().map(Some).collect();
+        self.slots = order.iter().map(|&o| old[o].take().expect("每個分頁只取一次")).collect();
+        self.active = new_active;
+        true
+    }
+
     /// 讓第 `i` 個分頁成為作用中分頁（內容必須已經收回；超出範圍就不動）。
     pub fn activate(&mut self, i: usize) {
         if i < self.slots.len() {
@@ -339,6 +380,42 @@ pub enum TabRecord {
     Terminal { number: usize, name: Option<String>, dir: Option<std::path::PathBuf>, shell: Option<String> },
 }
 
+/// 自然排序：不分大小寫，連續的數字依數值大小比較（`a2` 在 `a10` 前面）。
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let take = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut n = String::new();
+                    while let Some(&ch) = it.peek().filter(|ch| ch.is_ascii_digit()) {
+                        n.push(ch);
+                        it.next();
+                    }
+                    n.trim_start_matches('0').to_owned()
+                };
+                let (n, m) = (take(&mut x), take(&mut y));
+                let ord = n.len().cmp(&m.len()).then_with(|| n.cmp(&m));
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(c), Some(d)) => {
+                let ord = c.to_lowercase().cmp(d.to_lowercase());
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+                x.next();
+                y.next();
+            }
+        }
+    }
+}
+
 /// 進行中的巨集錄製（見 `EditorState::recording`）。
 pub type Recording = Option<Vec<crate::editor::commands::Recorded>>;
 
@@ -377,6 +454,59 @@ mod tests {
         fn close(&mut self, i: usize) {
             self.tabs.close(&mut self.doc, &mut self.editor, i)
         }
+    }
+
+    fn file_named(name: &str) -> Document {
+        let mut d = Document::new();
+        d.path = Some(std::path::PathBuf::from(name));
+        d
+    }
+
+    #[test]
+    fn reorder_moves_a_tab_and_the_active_tab_follows_its_content() {
+        let mut t = TabSet::from_tab(Tab { doc: file_named("a"), editor: EditorState::default() });
+        for n in ["b", "c", "d"] {
+            let at = t.len();
+            t.push_tab(Tab { doc: file_named(n), editor: EditorState::default() }, at);
+        }
+        let order = |t: &TabSet| (0..t.len()).map(|i| t.label_stashed(i).0).collect::<Vec<_>>();
+        t.activate(2); // c
+        assert_eq!(t.reorder(0, 3), Some(2)); // a 搬到 c 後面
+        assert_eq!(order(&t), ["b", "c", "a", "d"]);
+        assert_eq!(t.active(), 1, "作用中的 c 往前一格");
+        assert_eq!(t.reorder(1, 1), None, "放回原地不算變動");
+        assert_eq!(t.reorder(1, 2), None, "放在自己後面也一樣");
+        assert_eq!(t.reorder(3, 0), Some(0)); // d 搬到最前面
+        assert_eq!(order(&t), ["d", "b", "c", "a"]);
+        assert_eq!(t.active(), 2, "c 往後一格");
+        assert_eq!(t.reorder(9, 0), None);
+    }
+
+    #[test]
+    fn sort_by_name_is_natural_case_insensitive_and_keeps_the_active_content() {
+        let mut t = TabSet::from_tab(Tab { doc: file_named("b10.txt"), editor: EditorState::default() });
+        for n in ["B2.txt", "a.txt", "b1.txt"] {
+            let at = t.len();
+            t.push_tab(Tab { doc: file_named(n), editor: EditorState::default() }, at);
+        }
+        t.activate(1); // B2.txt
+        assert!(t.sort_by_name(false));
+        let order = |t: &TabSet| (0..t.len()).map(|i| t.label_stashed(i).0).collect::<Vec<_>>();
+        assert_eq!(order(&t), ["a.txt", "b1.txt", "B2.txt", "b10.txt"]);
+        assert_eq!(t.active(), 2);
+        assert!(!t.sort_by_name(false), "已經排好了");
+        assert!(t.sort_by_name(true));
+        assert_eq!(order(&t), ["b10.txt", "B2.txt", "b1.txt", "a.txt"]);
+        assert_eq!(t.active(), 1, "B2.txt 還是作用中的");
+    }
+
+    #[test]
+    fn natural_cmp_compares_numbers_by_value() {
+        use std::cmp::Ordering::*;
+        assert_eq!(natural_cmp("a2", "a10"), Less);
+        assert_eq!(natural_cmp("A", "a"), Equal);
+        assert_eq!(natural_cmp("a01", "a1"), Equal);
+        assert_eq!(natural_cmp("a", "ab"), Less);
     }
 
     #[test]
