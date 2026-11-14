@@ -75,6 +75,8 @@ pub struct TerminalPane {
     scrollbar_drag: bool,
     /// 游標閃爍的起點（egui 的時間，秒）：按鍵送出去的那一刻重設，游標先亮著。
     cursor_epoch: f64,
+    /// 輸入法用的游標位置：最後一次游標顯示時的（行, 欄, 時間），見 [`ime_anchor`]。
+    ime_anchor: Option<(i32, usize, f64)>,
     /// 輸入法正在組的字（還沒確定，不送給 shell；畫在游標的位置）。
     preedit: Option<crate::editor::model::Preedit>,
     /// 程式要求滑鼠回報時，目前按著哪個鍵（0 左、1 中、2 右），以及最後回報的格子（避免同一格重複回報移動）。
@@ -125,6 +127,23 @@ impl Search {
             (Some(c), false) => (c + 1) % n,
         });
         self.jump = true;
+    }
+}
+
+/// 游標隱藏多久之後，輸入法不再沿用「最後一次顯示的位置」而改用游標目前的位置（秒）。
+/// 重繪畫面中途隱藏的時間只有幾毫秒；程式一直把游標藏著（自己畫游標）才會超過。
+const IME_ANCHOR_SECS: f64 = 1.0;
+
+/// 輸入法（組字的字、候選視窗）該放的位置：（行, 欄）。游標顯示時就是游標；隱藏時沿用最後一次顯示的位置
+/// （重繪到一半的游標位置沒有意義），隱藏超過 [`IME_ANCHOR_SECS`] 或從來沒顯示過就用游標目前的位置。
+/// 回傳（要用的位置, 要記下來的「最後顯示的位置」）。
+fn ime_anchor(prev: Option<(i32, usize, f64)>, cursor: (i32, usize), visible: bool, now: f64) -> ((i32, usize), Option<(i32, usize, f64)>) {
+    if visible {
+        return (cursor, Some((cursor.0, cursor.1, now)));
+    }
+    match prev {
+        Some((line, col, at)) if now - at < IME_ANCHOR_SECS => ((line, col), prev),
+        _ => (cursor, prev),
     }
 }
 
@@ -241,6 +260,7 @@ impl TerminalPane {
             drag_scroll_acc: 0.0,
             scrollbar_drag: false,
             cursor_epoch: 0.0,
+            ime_anchor: None,
             preedit: None,
             mouse_button: None,
             last_mouse_cell: None,
@@ -1145,8 +1165,14 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         }
         // 輸入法：告訴系統候選字視窗要放在游標旁，組字中的字畫在游標位置（底線、蓋住底下的格子）
         if focused {
-            let start_col = cur.point.column.0.min(size.cols - 1);
-            let start_row = cur_row.clamp(0, size.lines as i32 - 1);
+            // 程式重繪畫面時會先隱藏游標、跳到畫面底下去畫、再跳回輸入的位置才顯示（Claude Code 每個畫格都這樣）；
+            // 隱藏的時候游標停的是重繪到一半的位置，組字的字與候選視窗不能跟著它跳
+            let now = ctx.input(|i| i.time);
+            let visible = rc.mode.contains(TermMode::SHOW_CURSOR);
+            let ((ime_line, ime_col), keep) = ime_anchor(pane.ime_anchor, (cur.point.line.0, cur.point.column.0), visible, now);
+            pane.ime_anchor = keep;
+            let start_col = ime_col.min(size.cols - 1);
+            let start_row = (ime_line + offset).clamp(0, size.lines as i32 - 1);
             let mut at = cell_rect(start_col, start_row, 1.0);
             if !preedit.text.is_empty() {
                 let text_color = ui.visuals().text_color();
@@ -1412,6 +1438,26 @@ mod tests {
     use super::*;
     use alacritty_terminal::vte::ansi::Rgb;
     use crate::settings::DEFAULT_TERMINAL_MIN_CONTRAST as MIN_CONTRAST;
+
+    #[test]
+    fn ime_stays_at_the_last_shown_cursor_while_the_app_redraws_with_the_cursor_hidden() {
+        // 游標顯示：就是游標，並記下來
+        let (at, kept) = ime_anchor(None, (24, 8), true, 10.0);
+        assert_eq!(at, (24, 8));
+        // 重繪到一半：游標藏起來、停在畫面底下 → 沿用剛才輸入框裡的位置，不能跳到左下角
+        let (at, kept) = ime_anchor(kept, (28, 0), false, 10.02);
+        assert_eq!(at, (24, 8));
+        let (at, kept) = ime_anchor(kept, (26, 3), false, 10.04);
+        assert_eq!(at, (24, 8));
+        // 重繪完游標回到輸入框（輸入了一個字，右移一格）
+        let (at, kept) = ime_anchor(kept, (24, 9), true, 10.06);
+        assert_eq!(at, (24, 9));
+        // 一直藏著（程式自己畫游標）超過一秒：用游標目前的位置，不沿用過期的
+        let (at, _) = ime_anchor(kept, (3, 5), false, 11.5);
+        assert_eq!(at, (3, 5));
+        // 從來沒顯示過：用游標目前的位置
+        assert_eq!(ime_anchor(None, (3, 5), false, 0.0).0, (3, 5));
+    }
 
     #[test]
     fn palette_maps_named_indexed_and_true_colors() {
