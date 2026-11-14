@@ -627,6 +627,11 @@ impl Language {
     }
 }
 
+/// `.env.local`、`.env.production`、`.env.example` 這類檔名（小寫）：以 `.env.` 開頭。
+pub fn is_dotenv_variant(name: &str) -> bool {
+    name.starts_with(".env.")
+}
+
 /// 依檔名（不含資料夾）選語言。
 pub fn language_for_name(name: &str) -> Option<&'static Language> {
     let name = name.to_ascii_lowercase();
@@ -653,6 +658,13 @@ pub fn language_for_name(name: &str) -> Option<&'static Language> {
         "lua" => &LUA,
         "json" | "jsonc" => &JSON,
         "toml" | "ini" | "cfg" | "conf" | "yml" | "yaml" | "properties" | "gitignore" => &CONFIG,
+        // `KEY=value` 加 `#` 註解的同一類：.env 與其他以點開頭、沒有副檔名的設定檔
+        "env" | "flaskenv" | "editorconfig" | "gitconfig" | "gitattributes" | "gitmodules"
+        | "dockerignore" | "npmrc" => &CONFIG,
+        // .env.local、.env.production、.env.example：副檔名是環境名稱，要看檔名開頭
+        _ if is_dotenv_variant(&name) => &CONFIG,
+        // direnv 的 .envrc 是 shell 腳本
+        "envrc" => &SHELL,
         "html" | "htm" | "xml" | "svg" | "xaml" | "vue" => &MARKUP,
         "md" | "markdown" => &MARKDOWN,
         _ => return None,
@@ -1188,6 +1200,23 @@ mod tests {
         assert_eq!(p("notes.txt"), None);
         assert_eq!(p("Makefile"), None);
         assert!(language_for(None).is_none());
+    }
+
+    #[test]
+    fn dotenv_and_friends_use_the_config_highlighting() {
+        let p = |s: &str| language_for(Some(Path::new(s))).map(|l| l.name);
+        for n in [
+            ".env", ".env.local", ".env.production", ".env.example", ".ENV.Example", "prod.env",
+            ".flaskenv", ".editorconfig", ".gitconfig", ".gitattributes", ".npmrc", ".dockerignore",
+        ] {
+            assert_eq!(p(n), Some("設定檔"), "{n}");
+        }
+        assert_eq!(p(".envrc"), Some("Shell"));
+        assert_eq!(p("environment.txt"), None);
+        let r = kinds(&CONFIG, "API_KEY=\"abc\" # note");
+        assert!(r.contains(&("API_KEY".into(), Kind::Function)));
+        assert!(r.contains(&("\"abc\"".into(), Kind::String)));
+        assert!(r.contains(&("# note".into(), Kind::Comment)));
     }
 
     #[test]

@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.9] - 2026-11-14
+
+### 新增
+- **`.env` 檔案有語法上色**：`.env`、`.env.local`、`.env.production`、`.env.example`（所有 `.env.` 開頭的檔名）、`*.env` 與 `.flaskenv` 用「設定檔」的上色（`#` 註解、`KEY=value`、字串、數字），Ctrl+/ 切換註解用 `#`。同一類的 `.editorconfig`、`.gitconfig`、`.gitattributes`、`.gitmodules`、`.dockerignore`、`.npmrc` 也一併歸進來；direnv 的 `.envrc` 是 shell 腳本，用 Shell 上色。
+- **預設開啟的「設定檔」類別多了這些副檔名**：`.env`、`.flaskenv`、`.editorconfig`、`.gitconfig`、`.gitattributes`、`.gitmodules`、`.dockerignore`、`.npmrc`。`.env.local`、`.env.example` 的副檔名在 Windows 是 `local`、`example`，無法登記，雙按仍用原本的程式開啟（語法上色不受影響）。
 ## [0.13.8] - 2026-11-13
 
 ### 新增

@@ -4,11 +4,19 @@ use std::path::Path;
 
 /// 行註解符號；沒有行註解（或不認得的類型）時回傳空字串。
 pub fn comment_prefix(path: Option<&Path>) -> &'static str {
-    let ext = path
-        .and_then(|p| p.extension())
-        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+    // 副檔名；以點開頭又沒有其他點的檔名（.env、.npmrc）整個名稱當副檔名
+    let name = path
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    match ext.as_str() {
+    let ext = name.rsplit_once('.').map_or("", |(_, e)| e);
+    // .env.local、.env.example 等
+    if crate::syntax::is_dotenv_variant(&name) {
+        return "#";
+    }
+    match ext {
+        "env" | "flaskenv" | "envrc" | "editorconfig" | "gitconfig" | "gitattributes"
+        | "gitmodules" | "dockerignore" | "npmrc" => "#",
         "rs" | "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "cs" | "java" | "js" | "mjs" | "cjs"
         | "jsx" | "ts" | "tsx" | "go" | "swift" | "kt" | "kts" | "scala" | "php" | "dart"
         | "css" | "scss" | "less" | "jsonc" | "proto" | "zig" | "v" | "glsl" | "slint" => "//",
@@ -37,5 +45,8 @@ mod tests {
         assert_eq!(comment_prefix(Some(Path::new("notes.txt"))), "");
         assert_eq!(comment_prefix(Some(Path::new("noext"))), "");
         assert_eq!(comment_prefix(None), "");
+        for n in [".env", ".env.local", ".env.example", "prod.env", ".npmrc", ".editorconfig"] {
+            assert_eq!(comment_prefix(Some(Path::new(n))), "#", "{n}");
+        }
     }
 }

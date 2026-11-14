@@ -63,7 +63,10 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         key: "config",
-        extensions: &["json", "jsonc", "toml", "ini", "cfg", "conf", "yml", "yaml", "properties"],
+        extensions: &[
+            "json", "jsonc", "toml", "ini", "cfg", "conf", "yml", "yaml", "properties", "env", "flaskenv",
+            "editorconfig", "gitconfig", "gitattributes", "gitmodules", "dockerignore", "npmrc",
+        ],
         mime_types: &[
             "application/json", "application/toml", "text/x-toml", "application/x-yaml", "application/yaml", "text/yaml",
             "text/x-ini", "application/x-wine-extension-ini", "text/x-properties", "text/x-java-properties",

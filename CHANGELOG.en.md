@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.9] - 2026-11-14
+
+### Added
+- **Syntax highlighting for `.env` files**: `.env`, `.env.local`, `.env.production`, `.env.example` (any name starting with `.env.`), `*.env` and `.flaskenv` use the "config file" highlighting (`#` comments, `KEY=value`, strings, numbers), and Ctrl+/ toggles a `#` comment. Files with the same syntax (`.editorconfig`, `.gitconfig`, `.gitattributes`, `.gitmodules`, `.dockerignore`, `.npmrc`) join the same group; direnv's `.envrc` is a shell script and uses the Shell highlighting.
+- **More extensions in the "config files" category of Open by default**: `.env`, `.flaskenv`, `.editorconfig`, `.gitconfig`, `.gitattributes`, `.gitmodules`, `.dockerignore`, `.npmrc`. The extension of `.env.local` and `.env.example` is `local` / `example` on Windows, which cannot be registered, so a double-click still opens them with the previous program (highlighting is not affected).
 ## [0.13.8] - 2026-11-13
 
 ### Added
