@@ -562,7 +562,6 @@ impl Terminal {
         cell: (u16, u16),
         dir: Option<PathBuf>,
         custom_shell: &str,
-        extra_env: &[(String, String)],
     ) -> std::io::Result<Self> {
         let mut shell = resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path);
         if ShellKind::of(&shell.program) == ShellKind::PowerShell {
@@ -573,7 +572,6 @@ impl Terminal {
         if cfg!(windows) && ShellKind::of(&shell.program) == ShellKind::Cmd {
             env.insert("PROMPT".to_owned(), cmd_prompt(std::env::var("PROMPT").ok().as_deref()));
         }
-        env.extend(extra_env.iter().cloned()); // 執行環境（虛擬環境的 PATH 等）
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program, shell.args)),
             working_directory: dir.filter(|d| d.is_dir()),
@@ -1165,7 +1163,7 @@ mod tests {
         }
         let ctx = egui::Context::default();
         let size = GridSize { cols: 80, lines: 24 };
-        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile", &[]).expect("開不了 pwsh");
+        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile").expect("開不了 pwsh");
         // 等第一個提示字元（回報了資料夾）
         let wait = |what: &str, done: &dyn Fn() -> bool| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1209,7 +1207,7 @@ mod tests {
         let ctx = egui::Context::default();
         let size = GridSize { cols: 80, lines: 24 };
         let start = std::env::temp_dir();
-        let t = Terminal::spawn(&ctx, size, (8, 16), Some(start.clone()), "pwsh -NoLogo -NoProfile", &[]).expect("開不了 pwsh");
+        let t = Terminal::spawn(&ctx, size, (8, 16), Some(start.clone()), "pwsh -NoLogo -NoProfile").expect("開不了 pwsh");
         let target = std::env::current_dir().unwrap();
         t.write(format!("Set-Location -LiteralPath '{}'\r\n", target.display()).into_bytes());
         let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
@@ -1236,7 +1234,7 @@ mod tests {
     fn assert_shell_reports_cwd_after(shell: &str, cd_line: &str, target: &std::path::Path) {
         let ctx = egui::Context::default();
         let size = GridSize { cols: 80, lines: 24 };
-        let t = Terminal::spawn(&ctx, size, (8, 16), Some(std::env::temp_dir()), shell, &[]).expect("開不了 shell");
+        let t = Terminal::spawn(&ctx, size, (8, 16), Some(std::env::temp_dir()), shell).expect("開不了 shell");
         t.write(format!("{cd_line}\r\n").into_bytes());
         let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1270,7 +1268,7 @@ mod tests {
     fn a_real_shell_runs_a_command_and_its_output_reaches_the_grid() {
         let ctx = egui::Context::default();
         let size = GridSize { cols: 80, lines: 24 };
-        let mut t = Terminal::spawn(&ctx, size, (8, 16), None, "", &[]).expect("開不了 shell");
+        let mut t = Terminal::spawn(&ctx, size, (8, 16), None, "").expect("開不了 shell");
         let command: &[u8] = if cfg!(windows) { b"echo feditor-terminal-ok\r\n" } else { b"echo feditor-terminal-ok\n" };
         t.write(command);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);

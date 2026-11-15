@@ -293,21 +293,19 @@ pub fn python_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
     let poetry_lock = root.join("poetry.lock").is_file();
     let uses_uv = uv_lock || has_table(&doc, &["tool", "uv"]);
     let uses_poetry = poetry_lock || has_table(&doc, &["tool", "poetry"]);
-    let venv = root.join(".venv");
-    let venv_ok = venv.join("pyvenv.cfg").is_file();
-
-    // .venv 裡已經裝好的腳本：直接執行，不需要 uv 或 poetry
+    // 虛擬環境裡已經裝好的腳本：直接執行，不需要 uv 或 poetry。
+    // 環境資料夾的名字和直譯器搜尋一致（`.venv`、`venv`、`env`，要有 `pyvenv.cfg`），第一個有這個腳本的環境優先
+    let envs: Vec<PathBuf> = [".venv", "venv", "env"].iter().map(|n| root.join(n)).filter(|d| d.join("pyvenv.cfg").is_file()).collect();
     let mut direct: Vec<CommandSpec> = Vec::new();
-    let mut direct_names: Vec<&str> = Vec::new();
-    if venv_ok {
-        for name in &scripts {
-            let exe = if cfg!(windows) { venv.join("Scripts").join(format!("{name}.exe")) } else { venv.join("bin").join(name) };
-            if exe.is_file() {
-                let mut spec = CommandSpec::new(format!("venv:script:{name}"), name, &[]);
-                spec.program = Some(exe);
-                direct.push(spec);
-                direct_names.push(name);
-            }
+    for name in &scripts {
+        let found = envs.iter().find_map(|env| {
+            let exe = if cfg!(windows) { env.join("Scripts").join(format!("{name}.exe")) } else { env.join("bin").join(name) };
+            exe.is_file().then_some(exe)
+        });
+        if let Some(exe) = found {
+            let mut spec = CommandSpec::new(format!("venv:script:{name}"), name, &[]);
+            spec.program = Some(exe);
+            direct.push(spec);
         }
     }
 
@@ -321,14 +319,14 @@ pub fn python_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
     };
     if uses_uv {
         let mut commands = vec![CommandSpec::new("uv:file", "uv", &["run"]).with_file(&file_name).with_sep()];
-        for name in scripts.iter().filter(|n| !direct_names.contains(&n.as_str())) {
+        for name in &scripts {
             commands.push(CommandSpec::new(format!("uv:script:{name}"), "uv", &["run", name]).with_sep());
         }
         findings.push(Finding { source: manifest.clone(), cwd: root.clone(), tool: Some(&UV), evidence: evidence("uv.lock", uv_lock), commands });
     }
     if uses_poetry {
         let mut commands = vec![CommandSpec::new("poetry:file", "poetry", &["run", "python"]).with_file(&file_name).with_sep()];
-        for name in scripts.iter().filter(|n| !direct_names.contains(&n.as_str())) {
+        for name in &scripts {
             commands.push(CommandSpec::new(format!("poetry:script:{name}"), "poetry", &["run", name]).with_sep());
         }
         findings.push(Finding { source: manifest.clone(), cwd: root.clone(), tool: Some(&POETRY), evidence: evidence("poetry.lock", poetry_lock), commands });
@@ -789,6 +787,21 @@ mod tests {
     }
 
     #[test]
+    fn scripts_installed_in_a_venv_named_venv_or_env_are_listed_too() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "pyproject.toml", "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\nother = \"app:other\"\n");
+        let bin = |env: &str, name: &str| format!("{env}/{}", if cfg!(windows) { format!("Scripts/{name}.exe") } else { format!("bin/{name}") });
+        write(dir.path(), "venv/pyvenv.cfg", "");
+        write(dir.path(), &bin("venv", "serve"), "");
+        write(dir.path(), "env/pyvenv.cfg", "");
+        write(dir.path(), &bin("env", "other"), "");
+        let file = write(dir.path(), "main.py", "");
+        let none = path_with(&dir.path().join("none"), &[]);
+        let r = resolve("Python", &file, None, Some(&none), &ok_probe);
+        assert_eq!(labels(&r), ["other", "serve"], "不同名字的環境裡的腳本都要列出來");
+    }
+
+    #[test]
     fn venv_scripts_run_directly_even_without_uv() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "pyproject.toml", "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\n[tool.uv]\n");
@@ -801,10 +814,10 @@ mod tests {
         assert_eq!(labels(&r), ["serve"], "有 .venv：腳本直接執行，不需要 uv");
         assert!(r.commands[0].program.ends_with(Path::new(exe).file_name().unwrap()));
         assert_eq!(r.notices.len(), 1, "uv 的專案設定還是提醒一下 uv 沒裝");
-        // 有 uv 時，已經能直接執行的腳本不再重複列 `uv run serve`
+        // 有 uv 時，`uv run serve` 也要列出來（uv 會先同步環境），直接執行的版本接在後面
         let with_uv = path_with(&dir.path().join("with"), &["uv"]);
         let r = resolve("Python", &file, None, Some(&with_uv), &ok_probe);
-        assert_eq!(labels(&r), ["uv run main.py", "serve"]);
+        assert_eq!(labels(&r), ["uv run main.py", "uv run serve", "serve"]);
     }
 
     #[test]

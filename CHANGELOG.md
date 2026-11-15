@@ -2,6 +2,13 @@
 
 # 更新紀錄
 
+## [0.13.10] - 2026-11-15
+
+### 修正
+- **開終端機不再改動 shell 的環境**：之前開啟專案裡有虛擬環境的檔案時，新開的終端機會自動把虛擬環境放到 `PATH` 最前面並設定 `VIRTUAL_ENV`。現在終端機一律使用系統原本的環境；執行環境只在按「執行」時才用，直接呼叫找到的直譯器，不影響其他東西。
+
+- **`pyproject.toml` 的 `[project.scripts]` 命令列得更完整**：專案用 uv 或 poetry 時，即使腳本已經裝進虛擬環境，也會列出 `uv run 名稱`／`poetry run 名稱`（原本只剩直接執行的那一項）；虛擬環境除了 `.venv`，也認 `venv`、`env`。
+
 ## [0.13.9] - 2026-11-14
 
 ### 新增
@@ -379,6 +386,8 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.10]: https://github.com/codemee/feditor/releases/tag/v0.13.10
+[0.13.9]: https://github.com/codemee/feditor/releases/tag/v0.13.9
 [0.13.8]: https://github.com/codemee/feditor/releases/tag/v0.13.8
 [0.13.7]: https://github.com/codemee/feditor/releases/tag/v0.13.7
 [0.13.6]: https://github.com/codemee/feditor/releases/tag/v0.13.6

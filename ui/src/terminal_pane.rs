@@ -59,8 +59,6 @@ pub struct TerminalPane {
     error: Option<String>,
     /// shell 的起始資料夾。
     dir: Option<std::path::PathBuf>,
-    /// 開 shell 時要加上的環境變數（執行環境：虛擬環境的 `PATH` 等，見 `runtime_env::terminal_env`）。
-    env: Vec<(String, String)>,
     /// shell 還沒開起來（第一次畫面才開）時先收下的輸入，開好之後馬上送進去（「執行目前檔案」用）。
     pending_input: Vec<u8>,
     /// 這個終端機要執行的 shell（程式加參數）；空字串是系統預設。開的時候就決定了，之後改設定不影響已經開著的。
@@ -239,11 +237,6 @@ impl TerminalPane {
         }
     }
 
-    /// 設定開 shell 時要加上的環境變數（要在 shell 還沒開之前呼叫）。
-    pub fn set_env(&mut self, env: Vec<(String, String)>) {
-        self.env = env;
-    }
-
     pub fn new(dir: Option<std::path::PathBuf>, number: usize, shell: String) -> Self {
         Self {
             uid: NEXT_UID.fetch_add(1, Ordering::Relaxed),
@@ -252,7 +245,6 @@ impl TerminalPane {
             term: None,
             error: None,
             dir,
-            env: Vec::new(),
             pending_input: Vec::new(),
             shell,
             want_focus: true,
@@ -523,11 +515,7 @@ impl App {
             .or_else(|| self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())));
         let shell = shell.unwrap_or_else(|| self.settings.terminal_shell.clone());
         let dir = dir.or_else(|| std::env::current_dir().ok());
-        let env = self.terminal_env(dir.as_deref());
-        let mut doc = Document::new_terminal(lowest_free_number(numbers), dir, shell);
-        if let Some(terminal) = doc.terminal.as_mut() {
-            terminal.set_env(env);
-        }
+        let doc = Document::new_terminal(lowest_free_number(numbers), dir, shell);
         self.open_tab_in_new_pane(target, PaneSide::Bottom, Tab { doc, editor: EditorState::default() });
     }
 
@@ -737,7 +725,7 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
         let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
 
         if pane.term.is_none() && pane.error.is_none() {
-            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell, &pane.env) {
+            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell) {
                 Ok(t) => {
                     if !pane.pending_input.is_empty() {
                         t.write(std::mem::take(&mut pane.pending_input));
@@ -1542,7 +1530,7 @@ mod tests {
         let ctx = egui::Context::default();
         let shell = "pwsh -NoLogo -NoProfile";
         let mut pane = TerminalPane::new(None, 1, shell.to_owned());
-        pane.term = Some(Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell, &[]).expect("開不了 pwsh"));
+        pane.term = Some(Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell).expect("開不了 pwsh"));
         // 沒有鈴聲：就算沒有焦點也不記通知。Windows 的 PowerShell 不用等程式要求，焦點一變就回報
         assert!(!pane.sync_focus(false));
         assert!(!pane.has_attention());
@@ -1585,7 +1573,7 @@ mod tests {
         }
         let ctx = egui::Context::default();
         let shell = "pwsh -NoLogo -NoProfile -NoExit -Command \"[Console]::Write([char]27 + ']9;9;C:/Windows' + [char]7 + [char]27 + ']9;build done' + [char]7)\"";
-        let term = Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell, &[]).expect("開不了 pwsh");
+        let term = Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell).expect("開不了 pwsh");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let (mut rang, mut cwd) = (false, None);
         while std::time::Instant::now() < deadline && !(rang && cwd.is_some()) {

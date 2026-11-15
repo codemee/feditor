@@ -193,7 +193,7 @@ npm（`package.json` 的 `scripts`）、`Makefile`／`justfile`（目標清單�
 - **安全**：`package.json` 的 `scripts`、Makefile、`pyproject.toml` 的腳本都等於任意命令。探測階段不執行；選單上一律顯示完整命令列；不自動執行；使用者換了專案資料夾不沿用上一個專案的選擇（選擇記憶本來就以專案為單位）。
 - **數量**：Makefile 之類可能有幾十個目標。需要上限（例如 12 個，其餘收進「更多…」），或做成可以輸入搜尋的清單。第一版只有 Cargo 與 Python，不會遇到，但資料結構要先留。
 - **跨平台**：Windows 的 `cargo.exe`、`uv.exe`、`.cmd` 包裝；PATH 在 GUI 啟動時常常不完整（所以才有固定位置的備援）；`.venv` 裡可執行檔在 Windows 是 `Scripts\名稱.exe`。
-- **終端機的環境**：現有 `terminal_env` 會在使用者選了 `.venv` 的直譯器時，替終端機加上 `VIRTUAL_ENV` 與 `PATH`。專案命令要不要一起套用，需要決定（建議：`uv`、`poetry` 自己管環境，不套用；`.venv` 腳本套用）。
+- **終端機的環境**：終端機不會被加上 `VIRTUAL_ENV` 或改動 `PATH`（原本的 `terminal_env` 已移除）。`.venv` 裡的腳本直接以完整路徑執行，`uv`、`poetry` 自己管環境。
 - **設定檔解析失敗**：略過，不彈錯誤。但在說明行顯示「`Cargo.toml` 讀不了」比靜默消失好，第二版再決定。
 - **版本探測成本**：每個工具 `--version` 要啟動一個程序（`uv`、`cargo` 都很快，`cargo` 在 rustup 下偶爾會慢）。結果在同一輪搜尋內共用，並且沿用 30 秒快取。
 

@@ -1889,15 +1889,6 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
-    /// 開終端機時要加上的環境變數：`dir`（通常是檔案所在的資料夾）往上找得到專案的虛擬環境、
-    /// 或使用者替這個專案手動選了直譯器時，讓 shell 裡的 `python` 就是那個；否則不動環境。
-    pub(crate) fn terminal_env(&self, dir: Option<&std::path::Path>) -> Vec<(String, String)> {
-        let Some(dir) = dir else { return Vec::new() };
-        let project = runtime_env::project_root(dir).display().to_string();
-        let manual = self.settings.runtime_choices.get(&project).map(String::as_str);
-        runtime_env::terminal_env_here(&runtime_env::PYTHON, dir, manual)
-    }
-
     /// 目前這份文件能不能「在終端機執行」、用哪份規則找執行環境：不是終端機分頁、已經存成檔案、
     /// 而且是 Python，或是能判斷出直譯器的 shell 腳本（見 [`runtime_env::rule_for_file`]）。
     fn run_rule(&self) -> Option<&'static runtime_env::Rule> {

@@ -193,7 +193,7 @@ Project commands (Cargo.toml)
 - **Security**: the `scripts` in `package.json`, Makefiles and the scripts in `pyproject.toml` are arbitrary commands. Discovery never runs them; the menu always shows the full command line; nothing runs automatically; changing the project folder does not carry the previous project's choice over (choices are remembered per project already).
 - **Count**: a Makefile can have dozens of targets. A limit is needed (for example 12, the rest under "More..."), or a searchable list. The first version has only Cargo and Python and will not hit it, but the data structures must leave room.
 - **Cross-platform**: Windows `cargo.exe`, `uv.exe`, `.cmd` wrappers; `PATH` is often incomplete when started from a GUI (hence the fixed-location fallbacks); executables inside `.venv` are `Scripts\name.exe` on Windows.
-- **Terminal environment**: the existing `terminal_env` adds `VIRTUAL_ENV` and `PATH` to the terminal when the user chose a `.venv` interpreter. Whether project commands get the same must be decided (suggestion: `uv` and `poetry` manage their own environment, so no; `.venv` scripts yes).
+- **Terminal environment**: terminals get no `VIRTUAL_ENV` and no `PATH` changes (the old `terminal_env` was removed). Scripts inside `.venv` run by their full path, and `uv` and `poetry` manage their own environment.
 - **Unparsable configuration**: skipped without an error dialog. Showing "`Cargo.toml` could not be read" in the notice line is better than silently vanishing; decide in the second version.
 - **Cost of version probing**: each tool's `--version` starts a process (`uv` and `cargo` are fast; `cargo` under rustup is occasionally slow). Results are shared within one search round and use the 30 s cache.
 

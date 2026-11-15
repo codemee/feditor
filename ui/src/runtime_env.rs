@@ -519,44 +519,6 @@ impl Resolver {
     }
 }
 
-/// 開終端機時要加上的環境變數：讓 shell 裡的 `python` 就是這份文件用的那個。
-/// 不執行 `activate` 腳本（各種 shell 的腳本不同），直接設 `VIRTUAL_ENV` 並把環境的執行檔資料夾放到 `PATH` 最前面，
-/// 所以 pwsh、cmd、bash、zsh 都適用。沒有專案裡的虛擬環境、也沒有手動選擇時回傳空的（用系統原本的環境）。
-pub fn terminal_env(
-    rule: &Rule,
-    dir: &Path,
-    manual: Option<&str>,
-    home: Option<&Path>,
-    env: &dyn Fn(&str) -> Option<String>,
-    path_var: Option<&OsStr>,
-) -> Vec<(String, String)> {
-    let candidates = discover(rule, dir, home, env, path_var);
-    let picked = manual
-        .and_then(|m| candidates.iter().find(|c| c.key() == m))
-        .or_else(|| candidates.iter().find(|c| c.source == Source::Venv));
-    let Some(c) = picked else { return Vec::new() };
-    let Some(bin) = c.program.parent() else { return Vec::new() };
-    let mut dirs = vec![bin.to_path_buf()];
-    if let Some(p) = path_var {
-        dirs.extend(std::env::split_paths(p));
-    }
-    let mut out = Vec::new();
-    if c.source != Source::Global
-        && let Some(env_dir) = &c.env_dir
-    {
-        out.push(("VIRTUAL_ENV".to_owned(), env_dir.display().to_string()));
-    }
-    if let Ok(joined) = std::env::join_paths(dirs) {
-        out.push(("PATH".to_owned(), joined.to_string_lossy().into_owned()));
-    }
-    out
-}
-
-/// 用真實的系統環境算 [`terminal_env`]。
-pub fn terminal_env_here(rule: &Rule, dir: &Path, manual: Option<&str>) -> Vec<(String, String)> {
-    let path = std::env::var_os("PATH");
-    terminal_env(rule, dir, manual, home_dir().as_deref(), &|k| std::env::var(k).ok(), path.as_deref())
-}
 
 #[cfg(test)]
 mod tests {
@@ -681,34 +643,6 @@ mod tests {
     fn a_real_missing_program_is_not_usable() {
         let c = Candidate { program: PathBuf::from("/definitely/not/here/python"), args: vec![], source: Source::Global, origin: "PATH".into(), env_dir: None };
         assert_eq!(probe_version(&PYTHON, &c, Duration::from_secs(1)), None);
-    }
-
-    #[test]
-    fn terminals_get_the_project_environment_on_the_path_but_global_ones_change_nothing() {
-        let root = tempfile::tempdir().unwrap();
-        let work = root.path().join("work");
-        std::fs::create_dir_all(&work).unwrap();
-        // 沒有虛擬環境：不動環境變數
-        assert!(terminal_env(&PYTHON, &work, None, None, &no_env, None).is_empty());
-        let program = fake_venv(&work, ".venv");
-        let old_path = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
-        let vars = terminal_env(&PYTHON, &work, None, None, &no_env, Some(&old_path));
-        let get = |k: &str| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("VIRTUAL_ENV"), Some(work.join(".venv").display().to_string()));
-        let new_path = get("PATH").unwrap();
-        let dirs: Vec<PathBuf> = std::env::split_paths(&new_path).collect();
-        assert_eq!(dirs[0], program.parent().unwrap(), "環境的執行檔資料夾在最前面");
-        assert_eq!(dirs.len(), 3, "原本的 PATH 還在後面");
-        // 手動選了某個全域直譯器：只把它的資料夾放到 PATH 前面，不設 VIRTUAL_ENV
-        let bin = root.path().join("globalbin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let name = if cfg!(windows) { "python3.exe" } else { "python3" };
-        std::fs::write(bin.join(name), "").unwrap();
-        let path = std::env::join_paths([&bin]).unwrap();
-        let manual = bin.join(name).display().to_string();
-        let vars = terminal_env(&PYTHON, &work, Some(&manual), None, &no_env, Some(&path));
-        assert!(vars.iter().all(|(k, _)| k != "VIRTUAL_ENV"));
-        assert!(vars.iter().any(|(k, v)| k == "PATH" && std::env::split_paths(v).next() == Some(bin.clone())));
     }
 
     #[test]

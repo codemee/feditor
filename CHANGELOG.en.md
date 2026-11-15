@@ -2,6 +2,12 @@
 
 # Changelog
 
+## [0.13.10] - 2026-11-15
+
+### Fixed
+- **Opening a terminal no longer changes the shell's environment**: opening a file inside a project with a virtual environment used to make new terminals put that environment first on `PATH` and set `VIRTUAL_ENV`. Terminals now always use the system's original environment; the detected environment is used only when you press Run, by calling the interpreter directly, and affects nothing else.
+- **Commands from `[project.scripts]` in `pyproject.toml` are listed more completely**: in a uv or poetry project, `uv run name` / `poetry run name` is now listed even when the script is already installed in the virtual environment (only the direct entry used to remain); besides `.venv`, the environments `venv` and `env` are recognised too.
+
 ## [0.13.9] - 2026-11-14
 
 ### Added
@@ -379,6 +385,8 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.10]: https://github.com/codemee/feditor/releases/tag/v0.13.10
+[0.13.9]: https://github.com/codemee/feditor/releases/tag/v0.13.9
 [0.13.8]: https://github.com/codemee/feditor/releases/tag/v0.13.8
 [0.13.7]: https://github.com/codemee/feditor/releases/tag/v0.13.7
 [0.13.6]: https://github.com/codemee/feditor/releases/tag/v0.13.6

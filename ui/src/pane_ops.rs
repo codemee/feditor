@@ -438,7 +438,6 @@ impl App {
                         let shell = t.shell.clone().unwrap_or_else(|| self.settings.terminal_shell.clone());
                         let mut doc = Document::new_terminal(t.number, dir.clone(), shell);
                         if let Some(terminal) = doc.terminal.as_mut() {
-                            terminal.set_env(self.terminal_env(dir.as_deref()));
                             if let Some(name) = &t.name {
                                 terminal.set_custom_name(name);
                             }
