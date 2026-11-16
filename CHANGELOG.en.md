@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.11] - 2026-11-16
+
+### Fixed
+- **Ctrl+V did nothing in the terminal on macOS, so Claude Code could not paste images**: on macOS only Cmd+V pastes, but Ctrl+V was also treated as a clipboard shortcut and swallowed. On macOS, Ctrl+C / X / V are now sent to the terminal as ordinary control characters (Claude Code reads the clipboard image on Ctrl+V, and Ctrl+C interrupts a program); Cmd+C / V still copy and paste. Windows and Linux are unaffected.
+
 ## [0.13.10] - 2026-11-15
 
 ### Fixed

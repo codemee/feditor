@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.11] - 2026-11-16
+
+### 修正
+- **macOS 的終端機裡 Ctrl+V 沒反應，Claude Code 無法貼上圖片**：macOS 只有 Cmd+V 是貼上，Ctrl+V 原本也被當成剪貼簿快捷鍵而吃掉。現在 macOS 的 Ctrl+C／X／V 都照一般控制字元送進終端機（Claude Code 靠 Ctrl+V 讀剪貼簿裡的圖片，Ctrl+C 也能中斷程式）；Cmd+C／V 照舊是複製、貼上。Windows 與 Linux 不受影響。
+
 ## [0.13.10] - 2026-11-15
 
 ### 修正

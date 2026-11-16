@@ -668,7 +668,10 @@ impl App {
                     open_search = true;
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                    let clipboard_key = (modifiers.command || modifiers.ctrl) && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
+                    // `command` 在 Windows／Linux 是 Ctrl、在 macOS 是 Cmd。macOS 的 Ctrl+C／X／V 不是剪貼簿快捷鍵
+                    // （Cmd 才是，也只有 Cmd 會產生 Copy／Cut／Paste 事件），要照一般控制字元送進去：
+                    // Claude Code 靠 Ctrl+V（0x16）讀剪貼簿裡的圖片
+                    let clipboard_key = modifiers.command && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
                     let alt_gr = modifiers.ctrl && modifiers.alt;
                     if !clipboard_key && !alt_gr {
                         if let Some(bytes) = terminal::encode_key(key, modifiers, mode) {

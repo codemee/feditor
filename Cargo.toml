@@ -4,6 +4,6 @@ members = ["core", "script", "script-js", "ui"]
 exclude = ["proto"]
 
 [workspace.package]
-version = "0.13.10"
+version = "0.13.11"
 edition = "2024"
 
