@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.12] - 2026-11-16
+
+### Fixed
+- **The Dock icon on macOS looked larger than other apps**: the artwork filled the whole canvas instead of leaving a margin like other macOS icons. macOS now uses an icon scaled to about 80% with a transparent border (both when run directly and in the packaged `FEditor.app`); the Windows and Linux icons are unchanged.
+
 ## [0.13.11] - 2026-11-16
 
 ### Fixed

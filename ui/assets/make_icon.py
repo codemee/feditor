@@ -5,7 +5,7 @@
 """產生 feditor 的應用程式圖示：透明背景、帶藍色外框的文字文件、斜放的鉛筆。
 
 用法（在專案根目錄）：
-    uv run ui/assets/make_icon.py            # 產生 ui/assets/icon.png 與 icon.ico
+    uv run ui/assets/make_icon.py            # 產生 ui/assets/icon.png、icon.ico 與 icon-macos.png
     uv run ui/assets/make_icon.py 預覽.png    # 另外輸出各尺寸的預覽圖（淺色與深色底各一排）
 
 背景是透明的，所以文件要有藍色外框與柔和的陰影，放在白色或深色的工作列上才都看得清楚。
@@ -179,6 +179,11 @@ def main() -> None:
         rendered[s].save(buf, format="PNG")
         pngs.append((s, buf.getvalue()))
     write_ico(OUT_DIR / "icon.ico", pngs)
+
+    # macOS 版：Dock 與 .icns 的圖案要縮到畫布的 80% 左右、四周留透明邊，不然比一般 App 的圖示大
+    mac = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    mac.alpha_composite(render(410), (51, 51))
+    mac.save(OUT_DIR / "icon-macos.png")
 
     # 檢查：四個角落必須是完全透明的，才是真的透明背景
     corners = [rendered[256].getpixel(xy)[3] for xy in [(0, 0), (255, 0), (0, 255), (255, 255)]]

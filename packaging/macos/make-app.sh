@@ -21,12 +21,13 @@ chmod +x "$app/Contents/MacOS/feditor"
 # Info.plist：把版本號填進範本
 sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 
-# 圖示：由 256x256 的 icon.png 產生各種尺寸，再轉成 .icns
+# 圖示：由四周留邊的 512x512 icon-macos.png 產生各種尺寸，再轉成 .icns
 iconset="$(mktemp -d)/FEditor.iconset"
 mkdir -p "$iconset"
-src="$root/ui/assets/icon.png"
+src="$root/ui/assets/icon-macos.png"
 for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
-            "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256"; do
+            "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
+            "512 icon_256x256@2x" "512 icon_512x512"; do
   size="${spec%% *}"
   name="${spec#* }"
   sips -z "$size" "$size" "$src" --out "$iconset/$name.png" > /dev/null

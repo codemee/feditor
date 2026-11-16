@@ -8822,8 +8822,12 @@ fn main() -> eframe::Result {
 
     let settings = Settings::load();
     feditor_core::i18n::apply(settings.language); // 之後產生的所有介面字串都用這個語言
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-        .expect("內建圖示 assets/icon.png 損毀");
+    // macOS 的 Dock 圖示要四周留邊，否則會比其他 App 的大一圈
+    #[cfg(target_os = "macos")]
+    let icon_png: &[u8] = include_bytes!("../assets/icon-macos.png");
+    #[cfg(not(target_os = "macos"))]
+    let icon_png: &[u8] = include_bytes!("../assets/icon.png");
+    let icon = eframe::icon_data::from_png_bytes(icon_png).expect("內建圖示損毀");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_icon(icon),
         ..Default::default()
