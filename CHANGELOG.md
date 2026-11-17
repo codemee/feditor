@@ -2,6 +2,14 @@
 
 # 更新紀錄
 
+## [0.13.13] - 2026-11-17
+
+### 新增
+- **終端機分頁標籤可以顯示轉圈圈**：Claude Code、Codex 忙碌時，標題開頭會有轉動的點字（`⠂ ⠐`）。設定面板「終端機」新增「分頁標題：顯示轉圈圈」，預設開啟，標籤就和 Windows Terminal 一樣顯示；不喜歡標籤一直跳動的話可以關掉。設定檔新增 `terminal_title_spinner`。
+
+### 修正
+- **Windows：在終端機裡跑 Codex 時配色不對**：Windows 內建的 ConPTY 會吃掉程式問終端機底色的詢問（OSC 10／11），Codex 因此當成深色，畫出灰底白字和深色的 diff，即使 FEditor 是淺色配色。現在執行檔內嵌微軟 Windows Terminal 的新版 ConPTY（MIT 授權，見 [第三方元件授權](THIRD-PARTY-NOTICES.md)），第一次開終端機時解開到 `%LOCALAPPDATA%\feditor\conpty\` 再載入；不需要另外安裝、仍是單一執行檔，也不會改動終端機裡的環境變數。解開失敗會退回內建的 ConPTY。
+
 ## [0.13.12] - 2026-11-16
 
 ### 修正
@@ -396,6 +404,9 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13
+[0.13.12]: https://github.com/codemee/feditor/releases/tag/v0.13.12
+[0.13.11]: https://github.com/codemee/feditor/releases/tag/v0.13.11
 [0.13.10]: https://github.com/codemee/feditor/releases/tag/v0.13.10
 [0.13.9]: https://github.com/codemee/feditor/releases/tag/v0.13.9
 [0.13.8]: https://github.com/codemee/feditor/releases/tag/v0.13.8

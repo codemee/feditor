@@ -112,21 +112,30 @@ pub fn focus_report(focused: bool) -> &'static [u8] {
     if focused { b"\x1b[I" } else { b"\x1b[O" }
 }
 
+/// 分頁標籤上要不要顯示程式標題開頭的轉圈圈（設定「終端機標題顯示轉圈圈」）；所有終端機共用，設定載入或改變時更新。
+static SHOW_TITLE_SPINNER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_show_title_spinner(show: bool) {
+    SHOW_TITLE_SPINNER.store(show, Ordering::Relaxed);
+}
+
 /// 程式設的標題，整理成可以放在分頁標籤上的樣子；不該顯示的回傳 `None`：
 /// - 空的；
 /// - shell 自己的預設標題（執行檔的路徑，例如 `C:\Program Files\PowerShell\7\pwsh.exe`）；
-/// - 開頭的點字轉圈圈（Claude Code 忙碌時 `⠂ ⠐` 那種動畫）去掉，不然標籤會一直在跳。
+/// - 開頭的點字轉圈圈（Claude Code、Codex 忙碌時 `⠂ ⠐` 那種動畫）：`keep_spinner` 為 `false` 時去掉
+///   （標籤就不會一直在跳），為 `true` 時照樣顯示。
 ///
 /// 太長的截短，免得分頁撐得太寬。
-pub fn clean_program_title(title: &str) -> Option<String> {
+pub fn clean_program_title(title: &str, keep_spinner: bool) -> Option<String> {
     const MAX_CHARS: usize = 32;
     let is_spinner = |c: char| ('\u{2800}'..='\u{28FF}').contains(&c);
-    let title = title.trim().trim_start_matches(is_spinner).trim();
-    let lower = title.to_ascii_lowercase();
-    let drive_path = title.len() > 2 && title.as_bytes()[1] == b':' && title.as_bytes()[0].is_ascii_alphabetic() && matches!(title.as_bytes()[2], b'\\' | b'/');
-    if title.is_empty() || lower.ends_with(".exe") || drive_path {
+    let stripped = title.trim().trim_start_matches(is_spinner).trim();
+    let lower = stripped.to_ascii_lowercase();
+    let drive_path = stripped.len() > 2 && stripped.as_bytes()[1] == b':' && stripped.as_bytes()[0].is_ascii_alphabetic() && matches!(stripped.as_bytes()[2], b'\\' | b'/');
+    if stripped.is_empty() || lower.ends_with(".exe") || drive_path {
         return None;
     }
+    let title = if keep_spinner { title.trim() } else { stripped };
     let mut chars = title.chars();
     let head: String = chars.by_ref().take(MAX_CHARS).collect();
     Some(if chars.next().is_some() { format!("{head}…") } else { head })
@@ -226,7 +235,8 @@ impl EventListener for Listener {
                     *self.shared.cwd.lock() = Some(dir);
                     *self.shared.program_title.lock() = None;
                 } else {
-                    *self.shared.program_title.lock() = clean_program_title(&title);
+                    // 存原始的標題，讀的時候才依「顯示轉圈圈」的設定整理（設定改了馬上生效）
+                    *self.shared.program_title.lock() = Some(title);
                 }
             }
             Event::ResetTitle => *self.shared.program_title.lock() = None,
@@ -563,6 +573,7 @@ impl Terminal {
         dir: Option<PathBuf>,
         custom_shell: &str,
     ) -> std::io::Result<Self> {
+        crate::conpty::ensure_installed(); // Windows：第一次開終端機時才解開隨附的新版 ConPTY
         let mut shell = resolve_shell(custom_shell, &|k| std::env::var(k).ok(), &exists_in_path);
         if ShellKind::of(&shell.program) == ShellKind::PowerShell {
             let extra = powershell_cwd_args(&shell.args);
@@ -638,7 +649,8 @@ impl Terminal {
 
     /// 裡面執行的程式設的標題（例如 Claude Code 的「✳ Claude Code」）；沒有程式設標題、或它已經結束就是 `None`。
     pub fn program_title(&self) -> Option<String> {
-        self.shared.program_title.lock().clone()
+        let raw = self.shared.program_title.lock().clone()?;
+        clean_program_title(&raw, SHOW_TITLE_SPINNER.load(Ordering::Relaxed))
     }
 
     /// shell 目前所在的資料夾。PowerShell 與 cmd 自己回報（見 [`parse_cwd_title`]）；
@@ -1142,15 +1154,19 @@ mod tests {
 
     #[test]
     fn program_titles_are_cleaned_for_the_tab_label() {
-        assert_eq!(clean_program_title("✳ Claude Code").as_deref(), Some("✳ Claude Code"));
-        assert_eq!(clean_program_title("⠂ Claude Code").as_deref(), Some("Claude Code"), "忙碌的轉圈圈動畫去掉，標籤才不會一直跳");
-        assert_eq!(clean_program_title("  ⠐⠂ 修正終端機  ").as_deref(), Some("修正終端機"));
-        assert_eq!(clean_program_title("claude").as_deref(), Some("claude"));
-        // shell 自己的預設標題（執行檔路徑）和空標題不顯示
+        assert_eq!(clean_program_title("✳ Claude Code", false).as_deref(), Some("✳ Claude Code"));
+        assert_eq!(clean_program_title("⠂ Claude Code", false).as_deref(), Some("Claude Code"), "不顯示轉圈圈：忙碌的動畫去掉，標籤才不會一直跳");
+        assert_eq!(clean_program_title("  ⠐⠂ 修正終端機  ", false).as_deref(), Some("修正終端機"));
+        assert_eq!(clean_program_title("⠂ fshot", true).as_deref(), Some("⠂ fshot"), "顯示轉圈圈：照原樣");
+        assert_eq!(clean_program_title("  ⠐⠂ 修正終端機  ", true).as_deref(), Some("⠐⠂ 修正終端機"));
+        assert_eq!(clean_program_title("claude", false).as_deref(), Some("claude"));
+        // shell 自己的預設標題（執行檔路徑）和空標題不顯示；只有轉圈圈也算空的
         for plain in [r"C:\Program Files\PowerShell\7\pwsh.exe", r"C:\WINDOWS\system32\cmd.exe", "pwsh.exe", "", "   ", "⠂"] {
-            assert_eq!(clean_program_title(plain), None, "{plain:?}");
+            for keep in [false, true] {
+                assert_eq!(clean_program_title(plain, keep), None, "{plain:?} {keep}");
+            }
         }
-        let long = clean_program_title(&"長".repeat(50)).unwrap();
+        let long = clean_program_title(&"長".repeat(50), false).unwrap();
         assert_eq!(long.chars().count(), 33, "32 個字加上刪節號");
         assert!(long.ends_with('…'));
     }

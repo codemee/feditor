@@ -201,6 +201,8 @@ pub struct Settings {
     pub terminal_min_contrast: f32,
     /// 新開的終端機要執行的 shell（程式加參數，例如 `pwsh -NoLogo`）；空字串表示系統預設的 shell。
     pub terminal_shell: String,
+    /// 終端機分頁的標籤上，要不要顯示程式標題開頭的轉圈圈（Claude Code、Codex 忙碌時的動畫）；預設顯示。
+    pub terminal_title_spinner: bool,
     pub view: ViewOptions,
     /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
     pub show_output: bool,
@@ -249,6 +251,7 @@ impl Default for Settings {
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
+            terminal_title_spinner: true,
             view: ViewOptions::default(),
             show_output: false,
             output_pane: true,
@@ -454,6 +457,11 @@ impl Settings {
                     }
                 }
                 "terminal_shell" => settings.terminal_shell = value.trim_matches('"').trim().to_owned(),
+                "terminal_title_spinner" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.terminal_title_spinner = on;
+                    }
+                }
                 "ruler_column" => {
                     // 讀不懂就忽略；超出範圍的拉回範圍內。0 是舊版「不畫」的寫法：視為沒啟用，欄數留預設
                     if let Ok(n) = value.parse::<u32>() {
@@ -563,6 +571,7 @@ impl Settings {
         if !self.terminal_shell.is_empty() {
             text.push_str(&format!("terminal_shell = {}\n", self.terminal_shell.replace(['\r', '\n'], " ")));
         }
+        text.push_str(&format!("terminal_title_spinner = {}\n", self.terminal_title_spinner));
         let v = self.view;
         text.push_str(&format!(
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
@@ -1118,6 +1127,16 @@ mod tests {
         assert_eq!(Settings::parse(&st.to_text()), st);
         assert!(Settings::parse("show_output = on\n").show_output);
         assert!(!Settings::parse("show_output = maybe\n").show_output, "不認得的值忽略");
+    }
+
+    #[test]
+    fn the_terminal_title_spinner_is_shown_by_default_and_can_be_turned_off() {
+        assert!(Settings::default().terminal_title_spinner);
+        let mut st = Settings::default();
+        st.terminal_title_spinner = false;
+        assert!(!Settings::parse(&st.to_text()).terminal_title_spinner);
+        assert!(Settings::parse("terminal_title_spinner = maybe\n").terminal_title_spinner, "不認得的值忽略，維持預設");
+        assert!(Settings::parse("").terminal_title_spinner, "舊的設定檔沒有這行，照常顯示");
     }
 
     #[test]

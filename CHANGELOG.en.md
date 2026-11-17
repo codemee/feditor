@@ -2,6 +2,14 @@
 
 # Changelog
 
+## [0.13.13] - 2026-11-17
+
+### Added
+- **Terminal tabs can show the busy spinner**: while Claude Code or Codex is busy, the start of its title carries a rotating braille spinner (`⠂ ⠐`). The settings panel's Terminal group has a new "Tab title: Show the spinner" option, on by default, so the tab looks like Windows Terminal's; turn it off if you dislike the label jumping. The settings file gains `terminal_title_spinner`.
+
+### Fixed
+- **Windows: wrong colors when running Codex in the terminal**: the ConPTY built into Windows swallows the question programs ask for the terminal's background color (OSC 10 / 11), so Codex assumed a dark terminal and drew white-on-gray text and dark diffs even with a light FEditor scheme. The executable now embeds the newer ConPTY from Microsoft's Windows Terminal (MIT license, see [Third-party notices](THIRD-PARTY-NOTICES.md)) and unpacks it to `%LOCALAPPDATA%\feditor\conpty\` the first time a terminal is opened; nothing to install, it is still a single executable, and the terminal's environment variables are not changed. If unpacking fails it falls back to the built-in ConPTY.
+
 ## [0.13.12] - 2026-11-16
 
 ### Fixed
@@ -395,6 +403,9 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13
+[0.13.12]: https://github.com/codemee/feditor/releases/tag/v0.13.12
+[0.13.11]: https://github.com/codemee/feditor/releases/tag/v0.13.11
 [0.13.10]: https://github.com/codemee/feditor/releases/tag/v0.13.10
 [0.13.9]: https://github.com/codemee/feditor/releases/tag/v0.13.9
 [0.13.8]: https://github.com/codemee/feditor/releases/tag/v0.13.8

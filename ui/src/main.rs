@@ -5,6 +5,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod cli;
+mod conpty;
 mod document;
 mod editor;
 mod find;
@@ -709,6 +710,7 @@ enum Action {
     SetLanguageWrapStyle(String, Option<syntax::WrapStyle>),
     SetTerminalFontSize(f32),
     SetTerminalMinContrast(f32),
+    SetTerminalTitleSpinner(bool),
     SetTerminalShell(String),
     /// 設定編輯區的字型家族；`None` 表示作業系統預設的等寬字型。
     SetFontFamily(Option<String>),
@@ -983,6 +985,7 @@ struct App {
 
 impl App {
     fn new(initial: Option<PathBuf>, settings: Settings) -> Self {
+        terminal::set_show_title_spinner(settings.terminal_title_spinner);
         // 尋找面板上次的位置、大小與表格分隔比例
         let dock = search_dock::SearchDock::from_settings(&settings);
         let mut folder = folder_search::FolderSearch::default();
@@ -2981,6 +2984,13 @@ impl App {
                     self.mark_settings_dirty();
                 }
             }
+            Action::SetTerminalTitleSpinner(on) => {
+                if self.settings.terminal_title_spinner != on {
+                    self.settings.terminal_title_spinner = on;
+                    terminal::set_show_title_spinner(on);
+                    self.mark_settings_dirty();
+                }
+            }
             Action::SetTerminalShell(shell) => {
                 // 不去掉前後空白：使用者正在輸入框裡打字，空白是下一個詞的開頭（用到的時候才會忽略）
                 let shell = shell.replace(['\r', '\n'], " ");
@@ -4423,6 +4433,15 @@ impl App {
                 unit_label(ui, if ratio <= MIN_TERMINAL_CONTRAST { t("（不調整）") } else { ": 1" });
                 if response.changed() {
                     action = Some(Action::SetTerminalMinContrast(ratio));
+                }
+            });
+            form_row(ui, t("分頁標題"), |ui| {
+                let mut on = self.settings.terminal_title_spinner;
+                let response = ui
+                    .checkbox(&mut on, t("顯示轉圈圈"))
+                    .on_hover_text(t("Claude Code、Codex 忙碌時，標題開頭的轉圈動畫（⠂ ⠐）要不要顯示在終端機分頁上；關掉的話標籤不會跟著跳動"));
+                if response.changed() {
+                    action = Some(Action::SetTerminalTitleSpinner(on));
                 }
             });
             // 預設終端機：按工具列的終端機鈕時執行的 shell，從偵測到的清單選，也可以在下面自己寫指令
