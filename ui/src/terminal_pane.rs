@@ -1129,6 +1129,8 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                 let elapsed = (ctx.input(|i| i.time) - pane.cursor_epoch).max(0.0);
                 ((elapsed / CURSOR_BLINK_SECS) as u64) % 2 == 0
             };
+            // 視窗不是作業系統的前景視窗時，不管 egui 記得的焦點在哪，都畫成空心、不閃爍
+            let focused = focused && ctx.input(|i| i.focused);
             if focused {
                 ctx.request_repaint_after(std::time::Duration::from_secs_f64(CURSOR_BLINK_SECS));
             }

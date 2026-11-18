@@ -873,7 +873,8 @@ impl EditorView<'_> {
                     ime_rect = Rect::from_min_max(pos2(x_start, y), pos2(x_end.max(x_start + 2.0), y + row_h));
 
                     let blink = (ui.input(|i| i.time) * 2.0) as u64 % 2 == 0;
-                    if focused && (blink || touched) {
+                    let window_focused = ui.input(|i| i.focused);
+                    if focused && window_focused && (blink || touched) {
                         let stroke = ui.visuals().text_cursor.stroke;
                         let stroke = Stroke::new(stroke.width.max(1.5), stroke.color);
                         painter.line_segment([pos2(x, y), pos2(x, y + row_h)], stroke);
@@ -894,7 +895,7 @@ impl EditorView<'_> {
                         }
                     }
                 }
-                if focused {
+                if focused && ui.input(|i| i.focused) {
                     ui.ctx().request_repaint_after(Duration::from_millis(500));
                 }
 

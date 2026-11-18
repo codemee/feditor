@@ -2,6 +2,13 @@
 
 # 更新紀錄
 
+## [0.13.14] - 2026-11-18
+
+### 變更
+- **應用程式圖示改成「文字文件加終端機」**：右下角的鉛筆換成終端機視窗（深色底、綠色 `>_`），並放大一些，凸顯 FEditor 是整合文字編輯器與終端機的軟體。Windows、macOS、Linux 都套用。
+
+### 修正
+- **視窗不在前景時，編輯區與終端機的游標還在閃**：切到別的視窗後，游標看起來還有輸入焦點，容易在別的視窗誤打字。現在視窗失去焦點時，編輯區的游標不畫、終端機的游標變成空心方框，都不再閃爍。
 ## [0.13.13] - 2026-11-17
 
 ### 新增
@@ -404,6 +411,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14
 [0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13
 [0.13.12]: https://github.com/codemee/feditor/releases/tag/v0.13.12
 [0.13.11]: https://github.com/codemee/feditor/releases/tag/v0.13.11

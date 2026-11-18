@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["pillow"]
 # ///
-"""產生 feditor 的應用程式圖示：透明背景、帶藍色外框的文字文件、斜放的鉛筆。
+"""產生 feditor 的應用程式圖示：透明背景、帶藍色外框的文字文件、右下角的終端機視窗。
 
 用法（在專案根目錄）：
     uv run ui/assets/make_icon.py            # 產生 ui/assets/icon.png、icon.ico 與 icon-macos.png
@@ -96,63 +96,46 @@ def render(size: int) -> Image.Image:
 
     img = Image.alpha_composite(img, layer(text_lines))
 
-    # ── 鉛筆（尖端在左下，往右上延伸）──────────────────────────
-    T = (0.43, 0.94)
-    E = (0.91, 0.40)
-    L = math.dist(T, E)
-    u = ((E[0] - T[0]) / L, (E[1] - T[1]) / L)
-    n = (-u[1], u[0])
-    w = 0.17 if small else 0.15  # 筆身寬度
+    # ── 終端機視窗（右下角，蓋在文件上）──────────────────────────
+    x0, y0, x1, y1 = 0.28, 0.40, 0.97, 0.94
+    rad = 0.07
+    box = [P(x0, y0), P(x1, y1)]
+    # 陰影
+    sh = layer(lambda d: d.rounded_rectangle(
+        [P(x0 + 0.012, y0 + 0.02), P(x1 + 0.012, y1 + 0.02)], radius=rad * S, fill=(8, 30, 110, 130)))
+    img = Image.alpha_composite(img, sh.filter(ImageFilter.GaussianBlur(radius=0.008 * S)))
 
-    def at(a: float, lat: float) -> tuple[float, float]:
-        """沿筆軸 a、垂直偏移 lat 的位置（正規化座標）。"""
-        return P(T[0] + u[0] * a + n[0] * lat, T[1] + u[1] * a + n[1] * lat)
+    def term(d):
+        # 外框（深藍）→ 內部深色底
+        d.rounded_rectangle(box, radius=rad * S, fill=NAVY)
+        ins = 0.022 if small else 0.018
+        d.rounded_rectangle([P(x0 + ins, y0 + ins), P(x1 - ins, y1 - ins)],
+                            radius=(rad - ins) * S, fill=(0x1E, 0x1E, 0x2E, 255))
+        # 標題列
+        bar_h = 0.11 if small else 0.075
+        d.rounded_rectangle([P(x0 + ins, y0 + ins), P(x1 - ins, y0 + ins + bar_h + rad)],
+                            radius=(rad - ins) * S, fill=(0x3A, 0x4A, 0x8C, 255))
+        d.rectangle([P(x0 + ins, y0 + ins + bar_h), P(x1 - ins, y0 + ins + bar_h + rad)],
+                    fill=(0x1E, 0x1E, 0x2E, 255))
+        if not small:
+            for i, c in enumerate([(0xFF, 0x6B, 0x6B), (0xFF, 0xC8, 0x3D), (0x5F, 0xD3, 0x8A)]):
+                cx, cy = P(x0 + 0.055 + i * 0.045, y0 + ins + bar_h / 2)
+                r = 0.014 * S
+                d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=c + (255,))
+        # 提示符號 > 與底線 _
+        green = (0x5F, 0xE3, 0x9A, 255)
+        lw = max(1, int((0.06 if small else 0.05) * S))
+        cy = (y0 + y1) / 2 + 0.08
+        h = 0.11
+        cxl = x0 + 0.12
+        pts = [P(cxl, cy - h), P(cxl + h, cy), P(cxl, cy + h)]
+        d.line(pts, fill=green, width=lw, joint="curve")
+        for p in (pts[0], pts[2]):
+            r = lw / 2
+            d.ellipse([p[0] - r, p[1] - r, p[0] + r, p[1] + r], fill=green)
+        d.line([P(cxl + 0.19, cy + h), P(cxl + 0.34, cy + h)], fill=green, width=lw)
 
-    tip_len = 0.12
-    body_end = 0.47
-    ferrule_end = 0.54
-    o = 0.019  # 輪廓外擴量
-
-    outline = [
-        at(-0.03, 0),
-        at(tip_len, w / 2 + o),
-        at(L + 0.02, w / 2 + o),
-        at(L + 0.02, -(w / 2 + o)),
-        at(tip_len, -(w / 2 + o)),
-    ]
-    shadow_pts = [(x / S + 0.012, y / S + 0.02) for x, y in outline]
-    img = Image.alpha_composite(img, shadow(shadow_pts, 0.0, 0.0, 130))
-    img = Image.alpha_composite(
-        img, layer(lambda d: d.polygon(outline, fill=NAVY))
-    )
-
-    def pencil(d):
-        # 木頭削尖處
-        d.polygon([at(0, 0), at(tip_len, w / 2), at(tip_len, -w / 2)], fill=(0xF6, 0xD7, 0xA7, 255))
-        # 筆芯
-        d.polygon([at(0, 0), at(0.045, w * 0.18), at(0.045, -w * 0.18)], fill=(0x33, 0x33, 0x4A, 255))
-        # 筆身：黃色，下半邊較深，做出立體感
-        d.polygon(
-            [at(tip_len, w / 2), at(body_end, w / 2), at(body_end, -w / 2), at(tip_len, -w / 2)],
-            fill=(0xFF, 0xC8, 0x3D, 255),
-        )
-        d.polygon(
-            [at(tip_len, w / 2), at(body_end, w / 2), at(body_end, w * 0.08), at(tip_len, w * 0.08)],
-            fill=(0xF0, 0xA4, 0x1C, 255),
-        )
-        # 金屬環
-        d.polygon(
-            [at(body_end, w / 2), at(ferrule_end, w / 2), at(ferrule_end, -w / 2), at(body_end, -w / 2)],
-            fill=(0xC9, 0xCF, 0xDA, 255),
-        )
-        # 橡皮擦
-        d.polygon(
-            [at(ferrule_end, w / 2), at(L, w / 2), at(L, -w / 2), at(ferrule_end, -w / 2)],
-            fill=(0xF5, 0x8C, 0xA0, 255),
-        )
-
-    img = Image.alpha_composite(img, layer(pencil))
-
+    img = Image.alpha_composite(img, layer(term))
     return img.resize((size, size), Image.LANCZOS)
 
 

@@ -32,7 +32,7 @@ cargo run --release -p feditor                  # 啟動編輯器
 - **需要的工具**：Rust（stable）。Windows 需要 MSVC 工具集與 Windows SDK（安裝「Build Tools for Visual Studio」的 C++ 工作負載即可）；Linux 需要的系統套件列在 `.github/workflows/ci.yml` 裡，其他發行版可能要調整。
 - **測試**：UI 的測試包含用無頭的 egui 驅動整個 `App`（分頁、窗格、拖放、工作階段、預覽、終端機…）；終端機有一個測試會真的開 shell。測試會掃描原始碼確認翻譯齊全（見[編輯器內部運作](internals.md)）。
 - **雙語文件**：文件（README、CHANGELOG、docs 下的檔案）一律同時提供繁體中文與英文兩個版本，英文版加 `.en` 後綴，兩份檔案開頭放語言切換連結，修改其中一份要同步另一份。
-- **應用程式圖示**（文字文件加鉛筆）由 `ui/assets/make_icon.py` 產生：`uv run ui/assets/make_icon.py`。
+- **應用程式圖示**（文字文件加終端機）由 `ui/assets/make_icon.py` 產生：`uv run ui/assets/make_icon.py`。
 - **終端機顏色檢查**：在終端機裡執行 `examples/terminal-colors.ps1`（可用 `-Only 1,2` 只跑指定段落）。
 
 ## 發佈

@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [0.13.14] - 2026-11-18
+
+### Changed
+- **The app icon is now a text document with a terminal**: the pencil in the lower right is replaced by a terminal window (dark body, green `>_`) and made larger, to show that FEditor combines a text editor and a terminal. Applies to Windows, macOS and Linux.
+
+### Fixed
+- **Carets kept blinking when the window was in the background**: after switching to another window, the editor and terminal carets still looked focused, which made it easy to type into the wrong window. When the window loses focus the editor caret is now hidden and the terminal caret becomes a hollow box, neither blinking.
 ## [0.13.13] - 2026-11-17
 
 ### Added
@@ -403,6 +410,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14
 [0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13
 [0.13.12]: https://github.com/codemee/feditor/releases/tag/v0.13.12
 [0.13.11]: https://github.com/codemee/feditor/releases/tag/v0.13.11
