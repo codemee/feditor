@@ -213,6 +213,50 @@ fn latin_cjk_offset(fonts: egui::FontDefinitions, family: egui::FontFamily) -> f
 /// 建立字型設定：編輯區用指定的等寬字型（`None` 或找不到時用系統預設），
 /// 中文字形用微軟正黑體補，並讓兩者的基準線對齊。
 pub fn build_fonts(family: Option<&str>) -> egui::FontDefinitions {
+    build_fonts_with(family, None)
+}
+
+/// 終端機專用的字型家族名稱（見 [`build_fonts_with`]）。
+pub fn terminal_family() -> egui::FontFamily {
+    egui::FontFamily::Name("terminal".into())
+}
+
+/// 終端機畫面用的字型。這個 `ctx` 還沒裝過終端機字型家族時（例如測試用的空白 context）退回一般等寬字型。
+pub fn terminal_font(ctx: &egui::Context, size: f32) -> egui::FontId {
+    let installed = ctx.fonts_mut(|f| f.definitions().families.contains_key(&terminal_family()));
+    if installed { egui::FontId::new(size, terminal_family()) } else { egui::FontId::monospace(size) }
+}
+
+/// 同 [`build_fonts`]，另外建立終端機專用的字型家族 [`terminal_family`]：
+/// `terminal` 有指定（而且畫得出拉丁字母）就放在最前面，後面接編輯區的等寬字型鏈當後備；
+/// `None` 時終端機直接跟著編輯區。
+pub fn build_fonts_with(family: Option<&str>, terminal: Option<&str>) -> egui::FontDefinitions {
+    let mut fonts = build_editor_fonts(family);
+    let mut chain = fonts.families.get(&egui::FontFamily::Monospace).cloned().unwrap_or_default();
+    let chosen = terminal
+        .and_then(|name| load_family(Some(name)))
+        .filter(|font| renders_latin(font.bytes.clone(), font.index));
+    if let Some(font) = chosen {
+        let mut data = egui::FontData::from_owned(font.bytes);
+        data.index = font.index;
+        fonts.font_data.insert("terminal-mono".into(), Arc::new(data.clone()));
+        chain.insert(0, "terminal-mono".into());
+        fonts.families.insert(terminal_family(), chain);
+        // 和編輯區一樣，把拉丁字母與中文字的基準線對齊
+        if fonts.font_data.contains_key("cjk") {
+            let gap = latin_cjk_offset(fonts.clone(), terminal_family());
+            if gap.abs() < 0.5 {
+                data.tweak.y_offset_factor = gap;
+                fonts.font_data.insert("terminal-mono".into(), Arc::new(data));
+            }
+        }
+    } else {
+        fonts.families.insert(terminal_family(), chain);
+    }
+    fonts
+}
+
+fn build_editor_fonts(family: Option<&str>) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
 
     // 中文字形：優先用微軟正黑體；找不到時 egui 會改用系統的字型後備機制

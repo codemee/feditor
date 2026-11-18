@@ -64,7 +64,7 @@ pub struct TerminalPane {
     /// 這個終端機要執行的 shell（程式加參數）；空字串是系統預設。開的時候就決定了，之後改設定不影響已經開著的。
     shell: String,
     /// 下一個畫面要把鍵盤焦點給它。
-    want_focus: bool,
+    pub(crate) want_focus: bool,
     /// 滑鼠滾輪累積的捲動量（行）。
     scroll_acc: f32,
     /// 拖曳選取時滑鼠在畫面外，自動捲動還沒湊滿一行的零頭。
@@ -722,8 +722,8 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
     ui.painter().rect_filled(body, egui::CornerRadius::same(4), bg);
     let content = body.shrink(6.0);
     ui.set_clip_rect(content.intersect(ui.clip_rect()));
-        // 一格的大小：用終端機自己的字級（設定裡調整）
-        let font = egui::FontId::monospace(opts.font_size);
+        // 一格的大小：用終端機自己的字級與字型（設定裡調整）
+        let font = crate::fonts::terminal_font(&ctx, opts.font_size);
         let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
         let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
 
@@ -1771,7 +1771,7 @@ mod tests {
         let row = row.expect("輸出沒有出現") as f32;
         // 和 draw_body 一樣的格子大小與位置
         let content = screen.shrink(6.0);
-        let font = egui::FontId::monospace(opts.font_size);
+        let font = crate::fonts::terminal_font(&ctx, opts.font_size);
         let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
         let at = |col: f32| egui::pos2(content.min.x + col * cw, content.min.y + (row + 0.5) * ch);
         let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };

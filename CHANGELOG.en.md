@@ -2,6 +2,15 @@
 
 # Changelog
 
+## [0.13.15] - 2026-11-18
+
+### Added
+- **`Alt+Arrow` moves the input focus between panes**: it picks the nearest pane in that direction (the preview pane and terminals count too); when several panes lie that way, the one directly facing the current pane wins, then the upper and the left ones. When there is no pane in that direction the keys go to the editor as usual (`Alt+Up/Down` still move the line). The "Shortcuts" page of the settings panel can change the modifier to `Ctrl+Alt`, `Ctrl+Shift` or `Alt+Shift`, or turn it off; the settings file gains `pane_nav`.
+- **The terminal font can be set separately from the editor's**: the settings panel's Terminal group has a new "Terminal font", which follows the editor by default. The settings file gains `terminal_font_family`.
+
+### Fixed
+- **Nothing could be typed right after startup**: after the layout was restored, a terminal in an unfocused pane grabbed the keyboard focus while the focused pane (blue border) was never given it, so neither side accepted input. At startup the keyboard focus now goes to the focused pane, and unfocused panes no longer grab it.
+
 ## [0.13.14] - 2026-11-18
 
 ### Changed
@@ -410,6 +419,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.15]: https://github.com/codemee/feditor/releases/tag/v0.13.15
 [0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14
 [0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13
 [0.13.12]: https://github.com/codemee/feditor/releases/tag/v0.13.12

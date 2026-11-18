@@ -4,6 +4,7 @@
 //! `editor/view.rs` 的按鍵對照表）沒有常數，照那張表寫在這裡。與畫面無關，方便單元測試。
 
 use crate::macro_lib::format_shortcut;
+use crate::settings::PaneNav;
 use eframe::egui::KeyboardShortcut;
 use feditor_core::i18n::t;
 
@@ -29,8 +30,16 @@ fn group(title: &str, rows: Vec<(&str, String)>) -> Group {
     Group { title: title.to_owned(), rows: rows.into_iter().map(|(action, keys)| Row { action: action.to_owned(), keys }).collect() }
 }
 
+/// 「移到上下左右窗格」的按鍵文字；關掉時顯示破折號。
+fn pane_nav_keys(pane_nav: PaneNav) -> String {
+    match pane_nav {
+        PaneNav::Off => "—".to_owned(),
+        p => ["Up", "Down", "Left", "Right"].iter().map(|k| format!("{}+{k}", p.name())).collect::<Vec<_>>().join(" / "),
+    }
+}
+
 /// 內建的快捷鍵，依用途分組（文字依目前的介面語言）。
-pub fn builtin_groups() -> Vec<Group> {
+pub fn builtin_groups(pane_nav: PaneNav) -> Vec<Group> {
     use crate::{CLOSE_TAB, FIND, FIND_IN_FILES, FIND_NEXT, FIND_PREV, NEW, NEXT_TAB, OPEN, PREV_TAB, REDO, REDO_Y, REPLACE, RERUN, SAVE, SAVE_AS, TOGGLE_PREVIEW, UNDO};
     let two = |a: &KeyboardShortcut, b: &KeyboardShortcut| format!("{} / {}", sc(a), sc(b));
     vec![
@@ -52,6 +61,7 @@ pub fn builtin_groups() -> Vec<Group> {
                 // 反引號的按鍵名稱是 "Backtick"，直接寫符號比較看得懂
                 (t("在編輯區與各終端機之間切換焦點"), "Ctrl+`".to_owned()),
                 (t("新增終端機"), "Ctrl+Shift+`".to_owned()),
+                (t("切換到上、下、左、右的窗格"), pane_nav_keys(pane_nav)),
             ],
         ),
         group(
@@ -113,7 +123,15 @@ mod tests {
     use std::path::PathBuf;
 
     fn all_rows() -> Vec<Row> {
-        builtin_groups().into_iter().flat_map(|g| g.rows).collect()
+        builtin_groups(PaneNav::Alt).into_iter().flat_map(|g| g.rows).collect()
+    }
+
+    #[test]
+    fn the_pane_navigation_row_follows_the_setting() {
+        let keys = |p| builtin_groups(p).into_iter().flat_map(|g| g.rows).find(|r| r.action == "切換到上、下、左、右的窗格").unwrap().keys;
+        assert_eq!(keys(PaneNav::Alt), "Alt+Up / Alt+Down / Alt+Left / Alt+Right");
+        assert!(keys(PaneNav::CtrlShift).starts_with("Ctrl+Shift+Up"));
+        assert_eq!(keys(PaneNav::Off), "—");
     }
 
     #[test]
@@ -143,7 +161,7 @@ mod tests {
 
     #[test]
     fn no_row_is_empty_and_groups_are_not_empty() {
-        for group in builtin_groups() {
+        for group in builtin_groups(PaneNav::Alt) {
             assert!(!group.title.is_empty() && !group.rows.is_empty(), "{group:?}");
             assert!(group.rows.iter().all(|r| !r.action.is_empty() && !r.keys.is_empty()), "{group:?}");
         }

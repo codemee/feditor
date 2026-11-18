@@ -591,8 +591,8 @@ fn option_toggle(ui: &mut egui::Ui, icon: Icon, tip: &str, value: &mut bool) -> 
 }
 
 /// 套用字型設定：編輯區用指定的等寬字型（`None` 表示系統預設）。
-fn install_fonts(ctx: &egui::Context, family: Option<&str>) {
-    ctx.set_fonts(fonts::build_fonts(family));
+fn install_fonts(ctx: &egui::Context, settings: &settings::Settings) {
+    ctx.set_fonts(fonts::build_fonts_with(settings.font_family.as_deref(), settings.terminal_font_family.as_deref()));
 }
 
 /// 規則表達式按鈕的 tooltip：基本語法速查，加上完整說明的連結。
@@ -714,10 +714,12 @@ enum Action {
     SetTerminalShell(String),
     /// 設定編輯區的字型家族；`None` 表示作業系統預設的等寬字型。
     SetFontFamily(Option<String>),
+    SetTerminalFontFamily(Option<String>),
     /// 編輯區的顯示選項（空白字元、行號、目前行、自動換行）。
     SetView(settings::ViewOptions),
     /// 狀態列欄號裡，全形字（中日韓文字等）算 1 欄還是 2 欄。
     SetWideCols(u8),
+    SetPaneNav(settings::PaneNav),
     /// 介面語言：跟隨系統、中文、英文。
     SetLanguage(feditor_core::i18n::LangChoice),
     CloseTab(usize),
@@ -995,7 +997,8 @@ impl App {
             tabs: tabs::TabSet::new(),
             layout: panes::Layout::default(),
             tab_drag: None,
-            pending_editor_focus: false,
+            // 剛啟動：鍵盤焦點要給有焦點的窗格（框線標藍色的那個），不然看起來有焦點卻打不了字
+            pending_editor_focus: true,
             preview_focused: false,
             pick_files_in: pick_files_in_dialog,
             previews: Default::default(),
@@ -2844,6 +2847,12 @@ impl App {
                     self.mark_settings_dirty();
                 }
             }
+            Action::SetPaneNav(p) => {
+                if p != self.settings.pane_nav {
+                    self.settings.pane_nav = p;
+                    self.mark_settings_dirty();
+                }
+            }
             Action::SetTabWidth(width) => {
                 let width = width.clamp(settings::MIN_TAB_COLUMNS, settings::MAX_TAB_COLUMNS);
                 if width != self.settings.tab_width {
@@ -3009,7 +3018,14 @@ impl App {
             Action::SetFontFamily(family) => {
                 if family != self.settings.font_family {
                     self.settings.font_family = family;
-                    install_fonts(ctx, self.settings.font_family.as_deref());
+                    install_fonts(ctx, &self.settings);
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetTerminalFontFamily(family) => {
+                if family != self.settings.terminal_font_family {
+                    self.settings.terminal_font_family = family;
+                    install_fonts(ctx, &self.settings);
                     self.mark_settings_dirty();
                 }
             }
@@ -4416,6 +4432,32 @@ impl App {
         // ── 終端機 ──
         group_title(ui, t("終端機"));
         settings_grid(ui, "settings_terminal", |ui| {
+            // 終端機字型：預設跟著編輯區，也可以另外指定
+            form_row(ui, t("終端機字型"), |ui| match &scan {
+                None => {
+                    ui.label(egui::RichText::new(t("正在找出系統上的等寬字型…")).color(ui.visuals().weak_text_color()));
+                    ui.ctx().request_repaint_after(Duration::from_millis(150));
+                }
+                Some((families, _)) => {
+                    let follow = t("跟隨編輯區").to_owned();
+                    let current = self.settings.terminal_font_family.as_deref().filter(|name| families.iter().any(|f| f == name));
+                    egui::ComboBox::from_id_salt("terminal_font_family")
+                        .icon(icons::combo_chevron)
+                        .width(250.0)
+                        .height(320.0)
+                        .selected_text(current.map_or_else(|| follow.clone(), str::to_owned))
+                        .show_ui(ui, |ui| flat_list(ui, |ui| {
+                            if ui.selectable_label(current.is_none(), &follow).clicked() {
+                                action = Some(Action::SetTerminalFontFamily(None));
+                            }
+                            for name in families {
+                                if ui.selectable_label(current == Some(name.as_str()), name).clicked() {
+                                    action = Some(Action::SetTerminalFontFamily(Some(name.clone())));
+                                }
+                            }
+                        }));
+                }
+            });
             // 終端機字級：點在終端機上時，縮放快捷鍵調的也是它
             form_row(ui, t("終端機字級"), |ui| {
                 let mut size = self.settings.terminal_font_size;
@@ -4520,8 +4562,31 @@ impl App {
         group_title(ui, t("快捷鍵"));
         let weak = |ui: &egui::Ui, text: &str| egui::RichText::new(text.to_owned()).color(ui.visuals().weak_text_color());
         // 項目很多：超過一定高度就出現捲軸，面板不會比畫面還高；群組之間畫分隔線
+        // 唯一可以改的內建快捷鍵：移到上下左右窗格用的修飾鍵
+        settings_grid(ui, "settings_pane_nav", |ui| {
+            form_row(ui, t("切換到上、下、左、右的窗格"), |ui| {
+                let current = self.settings.pane_nav;
+                let label = |p: settings::PaneNav| {
+                    if p == settings::PaneNav::Off { t("不使用").to_owned() } else { format!("{}＋{}", p.name(), t("方向鍵")) }
+                };
+                egui::ComboBox::from_id_salt("pane_nav")
+                    .icon(icons::combo_chevron)
+                    .width(250.0)
+                    .selected_text(label(current))
+                    .show_ui(ui, |ui| flat_list(ui, |ui| {
+                        for p in settings::PaneNav::ALL {
+                            if ui.selectable_label(current == p, label(p)).clicked() {
+                                action = Some(Action::SetPaneNav(p));
+                            }
+                        }
+                    }))
+                    .response
+                    .on_hover_text(t("把輸入焦點移到那個方向最近的窗格；那個方向沒有窗格時，按鍵照常交給編輯區或終端機"));
+            });
+        });
+        group_gap(ui);
         egui::ScrollArea::vertical().id_salt("shortcuts_scroll").max_height(SHORTCUTS_MAX_HEIGHT).min_scrolled_height(SHORTCUTS_MAX_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
-        for (i, group) in shortcuts::builtin_groups().iter().enumerate() {
+        for (i, group) in shortcuts::builtin_groups(self.settings.pane_nav).iter().enumerate() {
             if i > 0 {
                 group_gap(ui);
             }
@@ -5610,6 +5675,7 @@ impl eframe::App for App {
         }
         // 終端機有鍵盤焦點時，按鍵先給它（要在其他快捷鍵之前）
         self.number_untitled_docs();
+        self.pane_arrow_shortcut(&ctx);
         self.terminal_input(&ctx);
         self.sync_terminal_focus(&ctx);
         self.reap_terminals(&ctx);
@@ -8856,7 +8922,7 @@ fn main() -> eframe::Result {
         "FEditor",
         options,
         Box::new(move |cc| {
-            install_fonts(&cc.egui_ctx, settings.font_family.as_deref());
+            install_fonts(&cc.egui_ctx, &settings);
             egui_extras::install_image_loaders(&cc.egui_ctx); // 預覽 SVG 與 Markdown 圖片用
             cc.egui_ctx.set_theme(settings.theme);
             // 關掉 egui 內建的「Ctrl ＋／－ 縮放整個介面」：我們的 Ctrl ＋／－ 是調整編輯區字級

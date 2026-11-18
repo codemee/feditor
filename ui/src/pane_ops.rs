@@ -145,6 +145,52 @@ impl App {
         self.check_external_changes();
     }
 
+    /// Alt+方向鍵：把輸入焦點移到那個方向最近的窗格（預覽窗格也算）。
+    /// 那個方向沒有窗格時什麼都不做、也不吃掉按鍵，讓編輯區照常處理（Alt+上下是移動行）。
+    /// 要在編輯區、終端機處理按鍵之前呼叫。
+    pub(crate) fn pane_arrow_shortcut(&mut self, ctx: &egui::Context) {
+        if self.modal.is_some() || self.tab_drag.is_some() || self.pane_rects.len() < 2 {
+            return;
+        }
+        use crate::settings::PaneNav;
+        let modifiers = match self.settings.pane_nav {
+            PaneNav::Alt => egui::Modifiers::ALT,
+            PaneNav::CtrlAlt => egui::Modifiers::CTRL | egui::Modifiers::ALT,
+            PaneNav::CtrlShift => egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            PaneNav::AltShift => egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+            PaneNav::Off => return,
+        };
+        let from = match self.preview_id() {
+            Some(p) if self.preview_focused => p,
+            _ => self.layout.focus,
+        };
+        for (key, dir) in [
+            (egui::Key::ArrowUp, panes::Dir::Up),
+            (egui::Key::ArrowDown, panes::Dir::Down),
+            (egui::Key::ArrowLeft, panes::Dir::Left),
+            (egui::Key::ArrowRight, panes::Dir::Right),
+        ] {
+            let Some(target) = panes::neighbor(&self.pane_rects, from, dir) else { continue };
+            if !ctx.input_mut(|i| i.consume_key(modifiers, key)) {
+                continue;
+            }
+            if self.is_preview(target) {
+                self.preview_focused = true;
+                ctx.memory_mut(|m| {
+                    if let Some(f) = m.focused() {
+                        m.surrender_focus(f);
+                    }
+                });
+            } else if target == self.layout.focus {
+                // 從預覽回到原本有焦點的窗格：焦點狀態沒換，但鍵盤要回去
+                self.pending_editor_focus = true;
+            } else {
+                self.focus_pane(target);
+            }
+            return;
+        }
+    }
+
     // ── 搬動分頁、切割與關閉窗格 ─────────────────────────────
 
     /// 在窗格 `at` 的 `side` 側切出新窗格，裡面放著 `tab`，並讓它成為有焦點的窗格。
@@ -942,6 +988,8 @@ impl App {
                 } else if let Some(set) = layout.others.get_mut(&id) {
                     let (d, e) = set.active_slot_mut();
                     if let Some(terminal) = d.terminal.as_mut() {
+                        // 沒有焦點的窗格不能搶鍵盤焦點（剛開啟、還記著「要焦點」的終端機會一畫出來就搶走）
+                        terminal.want_focus = false;
                         crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
                     } else {
                         show_pane_editor(ui, id, d, e, options, None, None, false, &*settings);

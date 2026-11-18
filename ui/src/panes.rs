@@ -339,6 +339,46 @@ pub fn preview_rect(rect: Rect, zone: Zone) -> Rect {
     }
 }
 
+/// 鍵盤移動焦點的方向。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dir {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// 從窗格 `from` 往 `dir` 方向找最近的窗格。
+/// 候選必須完全在那個方向的邊界之外；優先和 `from` 在垂直方向上有重疊的（真正「正對面」的），
+/// 再比距離，距離相同時取上方、左方的。沒有就回傳 `None`。
+pub fn neighbor(rects: &[(PaneId, Rect)], from: PaneId, dir: Dir) -> Option<PaneId> {
+    let me = rects.iter().find(|(id, _)| *id == from)?.1;
+    // 單位：像素取整，避免浮點誤差讓「一樣遠」的窗格分出高下
+    let key = |r: Rect| -> (bool, i32, i32) {
+        let (gap, overlap, start) = match dir {
+            Dir::Right => (r.min.x - me.max.x, r.min.y < me.max.y && r.max.y > me.min.y, r.min.y),
+            Dir::Left => (me.min.x - r.max.x, r.min.y < me.max.y && r.max.y > me.min.y, r.min.y),
+            Dir::Down => (r.min.y - me.max.y, r.min.x < me.max.x && r.max.x > me.min.x, r.min.x),
+            Dir::Up => (me.min.y - r.max.y, r.min.x < me.max.x && r.max.x > me.min.x, r.min.x),
+        };
+        // 沒有重疊的排後面（用 bool 的 false < true 反過來）
+        (!overlap, gap.round() as i32, start.round() as i32)
+    };
+    rects
+        .iter()
+        .filter(|(id, r)| {
+            *id != from
+                && match dir {
+                    Dir::Right => r.min.x >= me.max.x - 1.0,
+                    Dir::Left => r.max.x <= me.min.x + 1.0,
+                    Dir::Down => r.min.y >= me.max.y - 1.0,
+                    Dir::Up => r.max.y <= me.min.y + 1.0,
+                }
+        })
+        .min_by_key(|(_, r)| key(*r))
+        .map(|(id, _)| *id)
+}
+
 /// 版面加上各個窗格的內容。`T` 是窗格的內容；目前有焦點的那個窗格的內容不放在這裡
 /// （由呼叫端另外持有），所以 `others` 只有沒焦點的窗格。
 pub struct Layout<T> {
@@ -382,6 +422,41 @@ mod tests {
 
     fn rect_of(a: &Arranged, id: PaneId) -> Rect {
         a.panes.iter().find(|(i, _)| *i == id).unwrap().1
+    }
+
+    #[test]
+    fn arrow_navigation_finds_the_nearest_pane_and_prefers_top_left() {
+        // 0 在左邊整欄；右邊上 1、下 2；2 的下面再切出 3
+        let mut root = Node::Leaf(0);
+        root.split(0, Side::Right, 1);
+        root.split(1, Side::Bottom, 2);
+        root.split(2, Side::Bottom, 3);
+        let a = root.arrange(area(1200.0, 900.0), MIN_PANE);
+        let go = |from, dir| neighbor(&a.panes, from, dir);
+        assert_eq!(go(0, Dir::Right), Some(1), "右邊有好幾個，取上方的");
+        assert_eq!(go(1, Dir::Left), Some(0));
+        assert_eq!(go(2, Dir::Left), Some(0));
+        assert_eq!(go(1, Dir::Down), Some(2));
+        assert_eq!(go(2, Dir::Down), Some(3));
+        assert_eq!(go(3, Dir::Up), Some(2));
+        assert_eq!(go(2, Dir::Up), Some(1));
+        assert_eq!(go(0, Dir::Left), None);
+        assert_eq!(go(0, Dir::Up), None);
+        assert_eq!(go(3, Dir::Down), None);
+        assert_eq!(go(1, Dir::Right), None);
+        assert_eq!(go(99, Dir::Right), None);
+    }
+
+    #[test]
+    fn arrow_navigation_prefers_panes_that_face_each_other_over_closer_diagonal_ones() {
+        // 左欄上下兩格 (0 上、1 下)，右欄整欄 2：從 1 往右是 2；從 2 往左有兩個，取上方的 0
+        let mut root = Node::Leaf(0);
+        root.split(0, Side::Right, 2);
+        root.split(0, Side::Bottom, 1);
+        let a = root.arrange(area(1200.0, 900.0), MIN_PANE);
+        assert_eq!(neighbor(&a.panes, 2, Dir::Left), Some(0));
+        assert_eq!(neighbor(&a.panes, 1, Dir::Right), Some(2));
+        assert_eq!(neighbor(&a.panes, 1, Dir::Up), Some(0));
     }
 
     #[test]

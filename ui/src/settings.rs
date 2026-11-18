@@ -154,6 +154,37 @@ impl Default for ViewOptions {
     }
 }
 
+/// 「移到上下左右窗格」用哪組修飾鍵搭配方向鍵。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneNav {
+    Alt,
+    CtrlAlt,
+    CtrlShift,
+    AltShift,
+    /// 不使用這個快捷鍵。
+    Off,
+}
+
+impl PaneNav {
+    pub const ALL: [PaneNav; 5] = [PaneNav::Alt, PaneNav::CtrlAlt, PaneNav::CtrlShift, PaneNav::AltShift, PaneNav::Off];
+
+    /// 設定檔裡的寫法，也是顯示給使用者看的按鍵名稱（`Off` 除外）。
+    pub fn name(self) -> &'static str {
+        match self {
+            PaneNav::Alt => "Alt",
+            PaneNav::CtrlAlt => "Ctrl+Alt",
+            PaneNav::CtrlShift => "Ctrl+Shift",
+            PaneNav::AltShift => "Alt+Shift",
+            PaneNav::Off => "off",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<PaneNav> {
+        let text = text.trim().trim_matches('"');
+        Self::ALL.into_iter().find(|p| p.name().eq_ignore_ascii_case(text))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -197,6 +228,8 @@ pub struct Settings {
     pub search_split: Option<f32>,
     /// 終端機的字級（點在終端機上時，縮放快捷鍵調的是它）。
     pub terminal_font_size: f32,
+    /// 終端機的字型；`None` 表示跟著編輯區的字型。
+    pub terminal_font_family: Option<String>,
     /// 終端機文字和底色的最低對比度；1 表示不調整。
     pub terminal_min_contrast: f32,
     /// 新開的終端機要執行的 shell（程式加參數，例如 `pwsh -NoLogo`）；空字串表示系統預設的 shell。
@@ -217,6 +250,8 @@ pub struct Settings {
     pub dark_scheme: String,
     /// 狀態列的欄號裡，全形字（中日韓文字等）算幾欄：1（一個字一欄）或 2（和畫面寬度一致）。
     pub wide_cols: u8,
+    /// 搭配方向鍵、把輸入焦點移到上下左右窗格的修飾鍵；預設 Alt。
+    pub pane_nav: PaneNav,
     /// 介面語言：跟隨系統、中文、英文。
     pub language: feditor_core::i18n::LangChoice,
 }
@@ -249,6 +284,7 @@ impl Default for Settings {
             search_dock_height: crate::search_dock::DEFAULT_HEIGHT,
             search_split: None,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
+            terminal_font_family: None,
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
             terminal_title_spinner: true,
@@ -259,6 +295,7 @@ impl Default for Settings {
             light_scheme: String::new(),
             dark_scheme: String::new(),
             wide_cols: 1,
+            pane_nav: PaneNav::Alt,
             language: Default::default(),
         }
     }
@@ -447,6 +484,10 @@ impl Settings {
                             if size.is_finite() { size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE) } else { DEFAULT_TERMINAL_FONT_SIZE };
                     }
                 }
+                "terminal_font_family" => {
+                    let name = value.trim_matches('"').trim();
+                    settings.terminal_font_family = (!name.is_empty()).then(|| name.to_owned());
+                }
                 "terminal_min_contrast" => {
                     if let Ok(ratio) = value.parse::<f32>() {
                         settings.terminal_min_contrast = if ratio.is_finite() {
@@ -477,6 +518,11 @@ impl Settings {
                 "language" => {
                     if let Some(l) = feditor_core::i18n::LangChoice::parse(value) {
                         settings.language = l;
+                    }
+                }
+                "pane_nav" => {
+                    if let Some(p) = PaneNav::parse(value) {
+                        settings.pane_nav = p;
                     }
                 }
                 "wide_cols" => match value {
@@ -567,6 +613,9 @@ impl Settings {
             }
         }
         text.push_str(&format!("terminal_font_size = {}\n", self.terminal_font_size));
+        if let Some(name) = &self.terminal_font_family {
+            text.push_str(&format!("terminal_font_family = {}\n", name.replace(['\r', '\n'], " ")));
+        }
         text.push_str(&format!("terminal_min_contrast = {}\n", self.terminal_min_contrast));
         if !self.terminal_shell.is_empty() {
             text.push_str(&format!("terminal_shell = {}\n", self.terminal_shell.replace(['\r', '\n'], " ")));
@@ -582,6 +631,7 @@ impl Settings {
         text.push_str(&format!("output_pane = {}\n", self.output_pane));
         text.push_str(&format!("preview_sync_scroll = {}\n", self.preview_sync_scroll));
         text.push_str(&format!("wide_cols = {}\n", self.wide_cols));
+        text.push_str(&format!("pane_nav = {}\n", self.pane_nav.name()));
         text.push_str(&format!("language = {}\n", self.language.key()));
         // 名稱是單行文字；有換行的話會破壞設定檔，所以換成空白（正常情況不會有）
         for (key, name) in [("light_scheme", &self.light_scheme), ("dark_scheme", &self.dark_scheme)] {
@@ -1090,6 +1140,31 @@ mod tests {
             assert_eq!(Settings::parse(&s.to_text()).language, l);
         }
         assert_eq!(Settings::parse("language = klingon\n").language, LangChoice::System);
+    }
+
+    #[test]
+    fn terminal_font_family_follows_the_editor_by_default_and_round_trips() {
+        assert_eq!(Settings::default().terminal_font_family, None);
+        assert_eq!(Settings::parse("").terminal_font_family, None);
+        let mut s = Settings::default();
+        s.font_family = Some("Consolas".to_owned());
+        s.terminal_font_family = Some("Cascadia Mono".to_owned());
+        let back = Settings::parse(&s.to_text());
+        assert_eq!(back.terminal_font_family.as_deref(), Some("Cascadia Mono"));
+        assert_eq!(back.font_family.as_deref(), Some("Consolas"), "兩者各自獨立");
+        assert_eq!(Settings::parse("terminal_font_family =  \n").terminal_font_family, None);
+    }
+
+    #[test]
+    fn pane_nav_defaults_to_alt_round_trips_and_ignores_unknown_values() {
+        assert_eq!(Settings::default().pane_nav, PaneNav::Alt);
+        assert_eq!(Settings::parse("").pane_nav, PaneNav::Alt, "舊的設定檔沒有這行");
+        for p in PaneNav::ALL {
+            let mut s = Settings::default();
+            s.pane_nav = p;
+            assert_eq!(Settings::parse(&s.to_text()).pane_nav, p);
+        }
+        assert_eq!(Settings::parse("pane_nav = Hyper\n").pane_nav, PaneNav::Alt);
     }
 
     #[test]
