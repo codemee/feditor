@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.16] - 2026-11-18
+
+### 新增
+- **終端機可以用 `Ctrl+W` 關閉分頁**：終端機有焦點時按 `Ctrl+W` 關閉這個分頁。shell 底下還有程式在跑（不含 shell 本身）時，會先確認，因為關掉會讓程式一起結束；按分頁的 ✕ 關閉也一樣。設定面板「終端機」群組可以取消勾選「Ctrl+W」，讓它照舊送給 shell（刪除前一個字）；設定檔新增 `terminal_ctrl_w_closes`，預設開啟。
+
 ## [0.13.15] - 2026-11-18
 
 ### 新增
@@ -420,6 +425,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.16]: https://github.com/codemee/feditor/releases/tag/v0.13.16
 [0.13.15]: https://github.com/codemee/feditor/releases/tag/v0.13.15
 [0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14
 [0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13

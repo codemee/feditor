@@ -270,6 +270,8 @@ enum Then {
     /// 只是告知：按了按鈕就關掉，沒有後續動作。
     Notice,
     CloseTab,
+    /// 終端機裡還有程式在跑，確認要不要連它一起關掉。
+    CloseRunningTerminal,
     /// 關閉窗格（`App::closing_pane`）之前，逐一問裡面未儲存的文件。
     ClosePane,
     CloseWindow,
@@ -712,6 +714,7 @@ enum Action {
     SetTerminalMinContrast(f32),
     SetTerminalTitleSpinner(bool),
     SetTerminalShell(String),
+    SetTerminalCtrlW(bool),
     /// 設定編輯區的字型家族；`None` 表示作業系統預設的等寬字型。
     SetFontFamily(Option<String>),
     SetTerminalFontFamily(Option<String>),
@@ -1837,6 +1840,11 @@ impl App {
                 No => self.close_active_tab(),
                 _ => {}
             },
+            Then::CloseRunningTerminal => {
+                if answer == Yes {
+                    self.close_active_tab();
+                }
+            }
             Then::ClosePane => {
                 match answer {
                     // 儲存／不儲存：這一份處理完了，把它的分頁關掉（最後一個分頁關掉時窗格也跟著關）
@@ -2253,6 +2261,15 @@ impl App {
         self.switch_tab(i);
         if self.doc.dirty {
             self.ask_save(Then::CloseTab, t("關閉分頁"));
+        } else if self.doc.terminal.as_ref().is_some_and(|t| t.has_running_program()) {
+            // 終端機裡有程式在跑（shell 本身不算）：關掉會連它一起結束，先確認
+            let spec = modal::Spec::new(
+                t("關閉終端機"),
+                t("這個終端機裡還有程式正在執行，關閉分頁會讓它一起結束。要關閉嗎？"),
+            )
+            .button(t("關閉終端機"), modal::Answer::Yes)
+            .button(t("取消"), modal::Answer::Cancel);
+            self.modal = Some(Pending::new(spec, Then::CloseRunningTerminal));
         } else {
             self.close_active_tab();
         }
@@ -2997,6 +3014,12 @@ impl App {
                 if self.settings.terminal_title_spinner != on {
                     self.settings.terminal_title_spinner = on;
                     terminal::set_show_title_spinner(on);
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::SetTerminalCtrlW(on) => {
+                if self.settings.terminal_ctrl_w_closes != on {
+                    self.settings.terminal_ctrl_w_closes = on;
                     self.mark_settings_dirty();
                 }
             }
@@ -4484,6 +4507,15 @@ impl App {
                     .on_hover_text(t("Claude Code、Codex 忙碌時，標題開頭的轉圈動畫（⠂ ⠐）要不要顯示在終端機分頁上；關掉的話標籤不會跟著跳動"));
                 if response.changed() {
                     action = Some(Action::SetTerminalTitleSpinner(on));
+                }
+            });
+            form_row(ui, t("Ctrl+W"), |ui| {
+                let mut on = self.settings.terminal_ctrl_w_closes;
+                let response = ui
+                    .checkbox(&mut on, t("關閉終端機分頁"))
+                    .on_hover_text(t("終端機有焦點時按 Ctrl+W 關閉這個分頁；取消勾選的話，Ctrl+W 照舊送給 shell（刪除前一個字）"));
+                if response.changed() {
+                    action = Some(Action::SetTerminalCtrlW(on));
                 }
             });
             // 預設終端機：按工具列的終端機鈕時執行的 shell，從偵測到的清單選，也可以在下面自己寫指令

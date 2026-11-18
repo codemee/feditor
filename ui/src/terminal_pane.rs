@@ -356,6 +356,11 @@ impl TerminalPane {
         self.term.as_ref().is_some_and(Terminal::exited)
     }
 
+    /// shell 底下有沒有正在執行的程式（shell 本身不算）。
+    pub fn has_running_program(&self) -> bool {
+        self.term.as_ref().is_some_and(Terminal::has_running_program)
+    }
+
     /// 下一個畫面把鍵盤焦點給這個終端機。
     pub fn request_focus(&mut self) {
         self.want_focus = true;
@@ -606,6 +611,7 @@ impl App {
                 pane.open_search();
             }
         }
+        let ctrl_w_closes = self.settings.terminal_ctrl_w_closes;
         let Some(pane) = self.doc.terminal.as_mut().filter(|t| t.has_focus(ctx)) else { return };
         let Some(term) = pane.term.as_ref() else { return };
         let mut taken: Vec<egui::Event> = Vec::new();
@@ -616,6 +622,9 @@ impl App {
                     egui::Event::Key { key, modifiers, .. } if *key == TOGGLE_TERMINAL.logical_key && modifiers.command => false,
                     // Ctrl+Tab、Ctrl+Shift+Tab 是切換分頁，也留給全域處理（終端機沒有對應的字元，送進去只會變成一般的 Tab）
                     egui::Event::Key { key: egui::Key::Tab, modifiers, .. } if modifiers.ctrl || modifiers.command => false,
+                    // Ctrl+W 關閉分頁（設定可關掉；Shift、Alt 一起按的不算，照舊給 shell）
+                    egui::Event::Key { key: egui::Key::W, modifiers, .. }
+                        if ctrl_w_closes && modifiers.command && !modifiers.shift && !modifiers.alt => false,
                     egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) | egui::Event::Ime(_) => true,
                     _ => false,
                 };
@@ -1690,8 +1699,10 @@ mod tests {
                 app.terminal_input(ui.ctx());
                 left = ui.input(|i| {
                     let tabs = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::Tab, .. })).count();
+                    // 第二個數字：A 以外沒被取走的 A；W 另外算在 tabs 裡（都是「留給全域處理」的按鍵）
                     let others = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::A, .. })).count();
-                    (tabs, others)
+                    let w = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::W, .. })).count();
+                    (tabs + w, others)
                 });
                 let body = ui.max_rect();
                 if let Some(t) = app.doc.terminal.as_mut() {
@@ -1713,6 +1724,10 @@ mod tests {
         let ctrl_shift = egui::Modifiers { shift: true, ..ctrl };
         assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, ctrl)]).0, 1, "Ctrl+Tab 要留給切換分頁");
         assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, ctrl_shift)]).0, 1, "Ctrl+Shift+Tab 要留給切換分頁");
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::W, ctrl)]).0, 1, "Ctrl+W 預設留給關閉分頁");
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::W, ctrl_shift)]).0, 0, "Ctrl+Shift+W 還是給 shell");
+        app.settings.terminal_ctrl_w_closes = false;
+        assert_eq!(left_over(&mut app, vec![key(egui::Key::W, ctrl)]).0, 0, "設定關掉之後 Ctrl+W 給 shell");
         // 一般的 Tab（shell 的自動完成）和別的按鍵照舊交給終端機
         assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, egui::Modifiers::NONE)]).0, 0, "單按 Tab 還是給 shell");
         assert_eq!(left_over(&mut app, vec![key(egui::Key::A, egui::Modifiers::NONE)]).1, 0, "一般按鍵還是給 shell");

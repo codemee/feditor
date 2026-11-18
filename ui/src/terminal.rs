@@ -267,9 +267,51 @@ pub struct Terminal {
     sender: EventLoopSender,
     shared: Arc<Shared>,
     size: GridSize,
-    /// shell 的程序編號（Unix 上用來向作業系統問它目前的資料夾）。
-    #[cfg(unix)]
+    /// shell 的程序編號（Unix 上用來向作業系統問它目前的資料夾；兩個系統都用來查它有沒有在跑別的程式）。
     pid: u32,
+}
+
+/// shell（程序 `pid`）底下有沒有正在執行的程式：有子程序就算。Windows 掃程序快照，
+/// 不算主控台的輔助程序（conhost、OpenConsole）；Unix 問 `pgrep -P`（沒有這個指令就當作沒有）。
+#[cfg(windows)]
+fn has_child_program(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    // SAFETY: 快照把關在這個函式裡，用完就關；`PROCESSENTRY32W` 是純 C 結構，全 0 合法，只需要先填 `dwSize`
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = false;
+        let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
+        while ok {
+            if entry.th32ParentProcessID == pid {
+                let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
+                if name != "conhost.exe" && name != "openconsole.exe" {
+                    found = true;
+                    break;
+                }
+            }
+            ok = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+        found
+    }
+}
+
+#[cfg(unix)]
+fn has_child_program(pid: u32) -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// 程序 `pid` 目前的工作資料夾，向作業系統問（Linux 讀 `/proc`，macOS 用 `proc_pidinfo`）。
@@ -596,6 +638,8 @@ impl Terminal {
         let pty = tty::new(&options, window, 0)?;
         #[cfg(unix)]
         let pid = pty.child().id();
+        #[cfg(windows)]
+        let pid = pty.child_watcher().pid().map_or(0, |p| p.get());
         let shared = Arc::new(Shared::default());
         let listener = Listener { ctx: ctx.clone(), shared: shared.clone() };
         let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, listener.clone())));
@@ -612,7 +656,6 @@ impl Terminal {
             sender,
             shared,
             size,
-            #[cfg(unix)]
             pid,
         })
     }
@@ -667,6 +710,12 @@ impl Terminal {
         {
             None
         }
+    }
+
+    /// shell 底下有沒有正在執行的程式（shell 本身不算）。關閉分頁前用來決定要不要先確認。
+    /// 找不到 shell 的程序編號、或 shell 已經結束時是 `false`。
+    pub fn has_running_program(&self) -> bool {
+        self.pid != 0 && !self.exited() && has_child_program(self.pid)
     }
 
     /// shell 已經結束。
@@ -1169,6 +1218,30 @@ mod tests {
         let long = clean_program_title(&"長".repeat(50), false).unwrap();
         assert_eq!(long.chars().count(), 33, "32 個字加上刪節號");
         assert!(long.ends_with('…'));
+    }
+
+    /// 真的開 PowerShell：停在提示字元時 shell 本身不算「有程式在跑」，執行外部程式（ping）期間才算，結束後又不算。
+    #[test]
+    fn a_real_powershell_has_a_running_program_only_while_an_external_program_runs() {
+        if !cfg!(windows) || !exists_in_path("pwsh.exe") {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let size = GridSize { cols: 80, lines: 24 };
+        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile").expect("開不了 pwsh");
+        let wait = |what: &str, done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while std::time::Instant::now() < deadline && !done() {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(done(), "{what}");
+        };
+        wait("第一個提示字元", &|| t.cwd().is_some());
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(!t.has_running_program(), "停在提示字元，shell 本身不算");
+        t.write(b"ping -n 6 127.0.0.1\r\n".to_vec());
+        wait("外部程式執行中", &|| t.has_running_program());
+        wait("程式結束後不再算", &|| !t.has_running_program());
     }
 
     /// 真的開 PowerShell：程式執行期間設的標題要出現，回到提示字元（程式結束）之後要消失。

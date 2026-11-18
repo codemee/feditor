@@ -10,9 +10,9 @@ csv = "1.4.0"
 eframe = "0.37.0"
 egui_extras = { version = "0.37", features = ["svg", "image"] }
 encoding_rs = "0.8.44"
-feditor-core = { version = "0.13.15", path = "../core" }
-feditor-script = { version = "0.13.15", path = "../script" }
-feditor-script-js = { version = "0.13.15", path = "../script-js" }
+feditor-core = { version = "0.13.16", path = "../core" }
+feditor-script = { version = "0.13.16", path = "../script" }
+feditor-script-js = { version = "0.13.16", path = "../script-js" }
 fontique = "0.11.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 notify = "8"
@@ -29,7 +29,7 @@ tempfile = "3.27.0"
 [target."cfg(windows)".dependencies]
 # 工作列的跳躍清單（ICustomDestinationList）要用 COM；windows-sys 沒有 COM 介面的包裝
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Storage_EnhancedStorage", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(target_os = \"macos\")".dependencies]
 libc = "0.2"

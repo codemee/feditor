@@ -236,6 +236,8 @@ pub struct Settings {
     pub terminal_shell: String,
     /// 終端機分頁的標籤上，要不要顯示程式標題開頭的轉圈圈（Claude Code、Codex 忙碌時的動畫）；預設顯示。
     pub terminal_title_spinner: bool,
+    /// 終端機有焦點時，Ctrl+W 關閉這個分頁（預設）；關掉的話 Ctrl+W 照舊送給 shell（刪除前一個字）。
+    pub terminal_ctrl_w_closes: bool,
     pub view: ViewOptions,
     /// 輸出面板展開（`true`）還是收合成一條（`false`，預設）。輸出主要是巨集與開發時看的。
     pub show_output: bool,
@@ -288,6 +290,7 @@ impl Default for Settings {
             terminal_min_contrast: DEFAULT_TERMINAL_MIN_CONTRAST,
             terminal_shell: String::new(),
             terminal_title_spinner: true,
+            terminal_ctrl_w_closes: true,
             view: ViewOptions::default(),
             show_output: false,
             output_pane: true,
@@ -498,6 +501,11 @@ impl Settings {
                     }
                 }
                 "terminal_shell" => settings.terminal_shell = value.trim_matches('"').trim().to_owned(),
+                "terminal_ctrl_w_closes" => {
+                    if let Some(on) = parse_bool(value) {
+                        settings.terminal_ctrl_w_closes = on;
+                    }
+                }
                 "terminal_title_spinner" => {
                     if let Some(on) = parse_bool(value) {
                         settings.terminal_title_spinner = on;
@@ -621,6 +629,7 @@ impl Settings {
             text.push_str(&format!("terminal_shell = {}\n", self.terminal_shell.replace(['\r', '\n'], " ")));
         }
         text.push_str(&format!("terminal_title_spinner = {}\n", self.terminal_title_spinner));
+        text.push_str(&format!("terminal_ctrl_w_closes = {}\n", self.terminal_ctrl_w_closes));
         let v = self.view;
         text.push_str(&format!(
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
@@ -1153,6 +1162,16 @@ mod tests {
         assert_eq!(back.terminal_font_family.as_deref(), Some("Cascadia Mono"));
         assert_eq!(back.font_family.as_deref(), Some("Consolas"), "兩者各自獨立");
         assert_eq!(Settings::parse("terminal_font_family =  \n").terminal_font_family, None);
+    }
+
+    #[test]
+    fn ctrl_w_closes_the_terminal_by_default_and_can_be_turned_off() {
+        assert!(Settings::default().terminal_ctrl_w_closes);
+        assert!(Settings::parse("").terminal_ctrl_w_closes, "舊的設定檔沒有這行");
+        let mut s = Settings::default();
+        s.terminal_ctrl_w_closes = false;
+        assert!(!Settings::parse(&s.to_text()).terminal_ctrl_w_closes);
+        assert!(Settings::parse("terminal_ctrl_w_closes = maybe\n").terminal_ctrl_w_closes);
     }
 
     #[test]

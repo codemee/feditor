@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.16] - 2026-11-18
+
+### Added
+- **A terminal tab can be closed with `Ctrl+W`**: while a terminal has the focus, `Ctrl+W` closes its tab. When something is still running under the shell (the shell itself does not count) it asks first, because closing ends that program too; closing with the tab's ✕ asks the same way. The settings panel's Terminal group can untick "Ctrl+W" so it goes to the shell as before (delete the previous word); the settings file gains `terminal_ctrl_w_closes`, on by default.
+
 ## [0.13.15] - 2026-11-18
 
 ### Added
@@ -419,6 +424,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.16]: https://github.com/codemee/feditor/releases/tag/v0.13.16
 [0.13.15]: https://github.com/codemee/feditor/releases/tag/v0.13.15
 [0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14
 [0.13.13]: https://github.com/codemee/feditor/releases/tag/v0.13.13
