@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.17] - 2026-11-19
+
+### Changed
+- **The "Output pane" setting moved to the settings panel's Interface tab**: the output pane is not part of the editing area, so its "Show" checkbox moved from the Editor tab to the Interface tab. The settings file is unchanged.
+
 ## [0.13.16] - 2026-11-18
 
 ### Added
