@@ -4041,6 +4041,15 @@ impl App {
                 ui.label(theme_label(current));
             });
 
+            form_row(ui, t("輸出窗格"), |ui| {
+                let mut on = self.settings.output_pane;
+                let response = ui
+                    .checkbox(&mut on, t("顯示"))
+                    .on_hover_text(t("視窗下方記錄巨集輸出與錯誤的窗格；關掉後連收合的標題列也不顯示，輸出照樣記錄"));
+                if response.changed() {
+                    action = Some(Action::SetOutputPane(on));
+                }
+            });
             // 右鍵選單整合（只有支援的系統才有這一列）
             if shell_integration::supported() {
                 form_row(ui, file_manager_name(), |ui| {
@@ -4231,15 +4240,6 @@ impl App {
                     .on_hover_text(t("沒有個別設定的檔案類型是否自動換行；個別類型可在「檔案類型」頁覆寫，工具列的自動換行鈕也只改目前的類型"));
                 if response.changed() {
                     action = Some(Action::SetView(settings::ViewOptions { word_wrap: on, ..v }));
-                }
-            });
-            form_row(ui, t("輸出窗格"), |ui| {
-                let mut on = self.settings.output_pane;
-                let response = ui
-                    .checkbox(&mut on, t("顯示"))
-                    .on_hover_text(t("視窗下方記錄巨集輸出與錯誤的窗格；關掉後連收合的標題列也不顯示，輸出照樣記錄"));
-                if response.changed() {
-                    action = Some(Action::SetOutputPane(on));
                 }
             });
             // 顯示：開關按鈕，圖示加 tooltip
