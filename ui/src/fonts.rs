@@ -212,6 +212,7 @@ fn latin_cjk_offset(fonts: egui::FontDefinitions, family: egui::FontFamily) -> f
 
 /// 建立字型設定：編輯區用指定的等寬字型（`None` 或找不到時用系統預設），
 /// 中文字形用微軟正黑體補，並讓兩者的基準線對齊。
+#[cfg(test)]
 pub fn build_fonts(family: Option<&str>) -> egui::FontDefinitions {
     build_fonts_with(family, None)
 }

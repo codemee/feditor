@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.18] - 2026-11-20
+
+### Fixed
+- **The name on the Windows taskbar and in file properties is now `FEditor`**: the taskbar (tooltip, pinned item, jump list) and the file's Properties → Details show the product name embedded in the exe, which was written in lowercase `feditor` and did not match the window title or the macOS name.
+
 ## [0.13.17] - 2026-11-19
 
 ### Changed
@@ -429,6 +434,8 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.18]: https://github.com/codemee/feditor/releases/tag/v0.13.18
+[0.13.17]: https://github.com/codemee/feditor/releases/tag/v0.13.17
 [0.13.16]: https://github.com/codemee/feditor/releases/tag/v0.13.16
 [0.13.15]: https://github.com/codemee/feditor/releases/tag/v0.13.15
 [0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14

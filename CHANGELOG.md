@@ -2,6 +2,11 @@
 
 # 更新紀錄
 
+## [0.13.18] - 2026-11-20
+
+### 修正
+- **Windows 工作列與檔案屬性的名稱改成 `FEditor`**：工作列（提示文字、釘選項目、跳躍清單）和檔案「內容 → 詳細資料」顯示的是 exe 內嵌的產品名稱，原本寫成小寫的 `feditor`，和視窗標題、macOS 的名稱不一致。
+
 ## [0.13.17] - 2026-11-19
 
 ### 變更
@@ -430,6 +435,8 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.18]: https://github.com/codemee/feditor/releases/tag/v0.13.18
+[0.13.17]: https://github.com/codemee/feditor/releases/tag/v0.13.17
 [0.13.16]: https://github.com/codemee/feditor/releases/tag/v0.13.16
 [0.13.15]: https://github.com/codemee/feditor/releases/tag/v0.13.15
 [0.13.14]: https://github.com/codemee/feditor/releases/tag/v0.13.14

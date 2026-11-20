@@ -8,8 +8,8 @@ fn main() {
     {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icon.ico");
-        res.set("ProductName", "feditor");
-        res.set("FileDescription", "feditor");
+        res.set("ProductName", "FEditor");
+        res.set("FileDescription", "FEditor");
         res.compile().expect("內嵌 Windows 資源（圖示）失敗");
     }
 }
