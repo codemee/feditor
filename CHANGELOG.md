@@ -2,6 +2,12 @@
 
 # 更新紀錄
 
+## [0.13.19] - 2026-11-20
+
+### 修正
+- **終端機只有 shell 時，關閉分頁不再誤報「有程式正在執行」**：用 Scoop 安裝的 `pwsh` 是個轉接程式，會再啟動真正的 PowerShell，被誤當成執行中的程式；現在同名的子程序會當成轉接，改看它底下有沒有別的程式。
+- **取消「關閉終端機」確認後，輸入焦點回到終端機**：原本要再點一下終端機才能繼續打字。
+- **中文輸入法開著時，終端機的 Alt+字母／數字有反應**：輸入法會吃掉文字，只留下按鍵事件，所以 Claude Code 的 Alt+V 貼圖沒反應；現在沒有文字事件時會補送 `ESC` 加該字元。
 ## [0.13.18] - 2026-11-20
 
 ### 修正
@@ -435,6 +441,7 @@
 - JavaScript 巨集：QuickJS 引擎（有時間與記憶體上限）、錄製、巨集面板、編輯器 API。
 - 介面：圖示工具列、淺色／深色（EVA 配色）、只列等寬字型、輸入法支援（Windows 驗證過）。
 
+[0.13.19]: https://github.com/codemee/feditor/releases/tag/v0.13.19
 [0.13.18]: https://github.com/codemee/feditor/releases/tag/v0.13.18
 [0.13.17]: https://github.com/codemee/feditor/releases/tag/v0.13.17
 [0.13.16]: https://github.com/codemee/feditor/releases/tag/v0.13.16

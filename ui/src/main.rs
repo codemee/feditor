@@ -1841,6 +1841,8 @@ impl App {
                 _ => {}
             },
             Then::CloseRunningTerminal => {
+                // 取消時鍵盤焦點要回到終端機（關閉時由換分頁處理）
+                self.pending_editor_focus = true;
                 if answer == Yes {
                     self.close_active_tab();
                 }

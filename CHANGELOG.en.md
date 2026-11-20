@@ -2,6 +2,12 @@
 
 # Changelog
 
+## [0.13.19] - 2026-11-20
+
+### Fixed
+- **Closing a terminal tab that only runs the shell no longer warns that a program is running**: `pwsh` installed by Scoop is a shim that launches the real PowerShell as a child, which was mistaken for a running program; a child with the same name is now treated as the shim and its own children are checked instead.
+- **Keyboard focus returns to the terminal after cancelling the "Close terminal" confirmation**: you no longer have to click the terminal before typing again.
+- **Alt+letter/digit works in the terminal while an input method is on**: the input method swallows the text and leaves only the key event, so Alt+V (paste image in Claude Code) did nothing; when no text event accompanies it, `ESC` plus the character is now sent.
 ## [0.13.18] - 2026-11-20
 
 ### Fixed
@@ -434,6 +440,7 @@ The first public release.
 - JavaScript macros: QuickJS engine (with time and memory limits), recording, macro panel, editor API.
 - Interface: icon toolbar, light/dark themes (EVA palette), monospace-only font list, input method support (verified on Windows).
 
+[0.13.19]: https://github.com/codemee/feditor/releases/tag/v0.13.19
 [0.13.18]: https://github.com/codemee/feditor/releases/tag/v0.13.18
 [0.13.17]: https://github.com/codemee/feditor/releases/tag/v0.13.17
 [0.13.16]: https://github.com/codemee/feditor/releases/tag/v0.13.16

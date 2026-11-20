@@ -285,22 +285,44 @@ fn has_child_program(pid: u32) -> bool {
         }
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut found = false;
+        let mut procs: Vec<(u32, u32, String)> = Vec::new(); // (程序編號, 父程序編號, 小寫檔名)
         let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
         while ok {
-            if entry.th32ParentProcessID == pid {
-                let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
-                let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
-                if name != "conhost.exe" && name != "openconsole.exe" {
-                    found = true;
-                    break;
-                }
-            }
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            procs.push((entry.th32ProcessID, entry.th32ParentProcessID, String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase()));
             ok = Process32NextW(snapshot, &mut entry) != 0;
         }
         CloseHandle(snapshot);
-        found
+        any_foreign_child(&procs, pid)
     }
+}
+
+/// 在程序清單裡找 `pid` 底下有沒有「真的程式」。主控台輔助程序不算；
+/// 子程序若和 `pid` 同名，是 Scoop 之類的 shim 再啟動的真正 shell，改往它底下找。
+#[cfg(any(windows, test))]
+fn any_foreign_child(procs: &[(u32, u32, String)], pid: u32) -> bool {
+    let Some(root_name) = procs.iter().find(|p| p.0 == pid).map(|p| p.2.as_str()) else {
+        return false;
+    };
+    let mut current = pid;
+    for _ in 0..8 {
+        let mut next = None;
+        for (child, parent, name) in procs {
+            if *parent != current || name == "conhost.exe" || name == "openconsole.exe" {
+                continue;
+            }
+            if name == root_name {
+                next = Some(*child);
+            } else {
+                return true;
+            }
+        }
+        match next {
+            Some(c) => current = c,
+            None => return false,
+        }
+    }
+    false
 }
 
 #[cfg(unix)]
@@ -876,6 +898,19 @@ pub fn encode_mouse(button: u8, col: usize, row: usize, release: bool, mods: egu
     }
 }
 
+/// 只有按鍵事件、沒有文字事件的 Alt+字母／數字（輸入法吃掉文字時）：補成 ESC＋字元。
+/// 沒有按 Alt、或同時按了 Ctrl／Command 的不處理。
+pub fn alt_letter_fallback(key: egui::Key, mods: egui::Modifiers) -> Option<Vec<u8>> {
+    if !mods.alt || mods.ctrl || mods.command || mods.mac_cmd {
+        return None;
+    }
+    let name = key.name();
+    let mut chars = name.chars();
+    let c = chars.next().filter(char::is_ascii_alphanumeric).filter(|_| chars.next().is_none())?;
+    let c = if mods.shift { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+    Some(alt_text(&c.to_string()))
+}
+
 /// Alt＋可列印字元：前面加 ESC（讓 shell 當成 Meta 鍵）。
 pub fn alt_text(text: &str) -> Vec<u8> {
     let mut out = vec![0x1b];
@@ -900,6 +935,31 @@ pub fn paste_bytes(text: &str, mode: TermMode) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alt_letters_without_a_text_event_become_esc_plus_letter() {
+        let alt = egui::Modifiers::ALT;
+        assert_eq!(alt_letter_fallback(egui::Key::V, alt), Some(b"\x1bv".to_vec()));
+        assert_eq!(alt_letter_fallback(egui::Key::V, egui::Modifiers { shift: true, ..alt }), Some(b"\x1bV".to_vec()));
+        assert_eq!(alt_letter_fallback(egui::Key::Num1, alt), Some(b"\x1b1".to_vec()));
+        assert_eq!(alt_letter_fallback(egui::Key::V, egui::Modifiers::NONE), None);
+        assert_eq!(alt_letter_fallback(egui::Key::V, egui::Modifiers::ALT | egui::Modifiers::CTRL), None);
+        assert_eq!(alt_letter_fallback(egui::Key::ArrowUp, alt), None);
+    }
+
+    #[test]
+    fn a_shim_relaunching_the_same_shell_is_not_a_running_program() {
+        let p = |id: u32, parent: u32, name: &str| (id, parent, name.to_owned());
+        // shim pwsh → 真 pwsh（只有 OpenConsole 和它）：不算
+        let idle = [p(1, 0, "pwsh.exe"), p(2, 1, "openconsole.exe"), p(3, 1, "pwsh.exe")];
+        assert!(!any_foreign_child(&idle, 1));
+        // 真 pwsh 底下跑了 ping：算
+        let busy = [p(1, 0, "pwsh.exe"), p(3, 1, "pwsh.exe"), p(4, 3, "ping.exe")];
+        assert!(any_foreign_child(&busy, 1));
+        // 沒有 shim 的情況照舊
+        assert!(any_foreign_child(&[p(1, 0, "pwsh.exe"), p(4, 1, "ping.exe")], 1));
+        assert!(!any_foreign_child(&[p(1, 0, "pwsh.exe")], 1));
+    }
 
     #[test]
     fn shell_kinds_are_told_apart_by_program_name() {

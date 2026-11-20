@@ -640,6 +640,7 @@ impl App {
         let alt = ctx.input(|i| i.modifiers.alt && !i.modifiers.ctrl);
         let mode = term.mode();
         let mut out: Vec<u8> = Vec::new();
+        let had_text = taken.iter().any(|e| matches!(e, egui::Event::Text(_)));
         for event in taken {
             match event {
                 egui::Event::Text(text) => {
@@ -684,6 +685,10 @@ impl App {
                     let alt_gr = modifiers.ctrl && modifiers.alt;
                     if !clipboard_key && !alt_gr {
                         if let Some(bytes) = terminal::encode_key(key, modifiers, mode) {
+                            out.extend(bytes);
+                        } else if let Some(bytes) = terminal::alt_letter_fallback(key, modifiers).filter(|_| !had_text) {
+                            // 中文輸入法開著時 Alt+字母（例如 Claude Code 貼圖的 Alt+V）被輸入法吃掉，
+                            // 只有按鍵事件、沒有文字事件；沒有文字事件跟著時由這裡補送
                             out.extend(bytes);
                         }
                     }
