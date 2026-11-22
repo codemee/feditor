@@ -2942,13 +2942,18 @@ impl App {
                             self.mark_settings_dirty();
                             if on {
                                 let dir = cli_command::bin_dir().map(|d| d.display().to_string()).unwrap_or_else(|| "~/.local/bin".to_owned());
-                                self.show_notice(
-                                    t("已加入 feditor 指令"),
+                                let message = if cfg!(windows) {
+                                    tf!(
+                                        "已確認 {} 在使用者的 PATH 裡（本來就有的不會重複加入）。\n\n已經開著的終端機要關掉重開才會生效；FEditor 內建的終端機會繼承 FEditor 自己的環境，要重新啟動 FEditor 才拿得到。之後在終端機輸入 feditor 檔案 就能開啟檔案。",
+                                        dir
+                                    )
+                                } else {
                                     tf!(
                                         "已在 {} 建立 feditor 指令。\n\n請確認這個資料夾在 PATH 裡，否則終端機找不到指令。如果還沒有，把下面這行加到 ~/.zshrc（bash 用 ~/.bashrc）之後重開終端機：\n\nexport PATH=\"$HOME/.local/bin:$PATH\"\n\n之後在終端機輸入 feditor 檔案 就能開啟檔案。",
                                         dir
-                                    ),
-                                );
+                                    )
+                                };
+                                self.show_notice(t("已加入 feditor 指令"), message);
                             }
                         }
                         Err(e) => self.push(LogKind::Error, tf!("無法更新 feditor 指令：{}", e)),
@@ -4087,13 +4092,16 @@ impl App {
                     }
                 });
             }
-            // 終端機指令（macOS、Linux）：在 ~/.local/bin 放一個 feditor 指令
+            // 終端機指令：macOS、Linux 在 ~/.local/bin 放一個 feditor 指令；Windows 把程式資料夾加進使用者的 PATH
             if cli_command::supported() {
                 form_row(ui, t("終端機指令"), |ui| {
                     let mut on = self.settings.cli_command;
-                    let response = ui
-                        .checkbox(&mut on, t("加入 feditor 指令"))
-                        .on_hover_text(t("在 ~/.local/bin 建立 feditor 指令，之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就移除（需要把 ~/.local/bin 加入 PATH）"));
+                    let tip = if cfg!(windows) {
+                        t("把 FEditor 所在的資料夾加進使用者的 PATH（已經在 PATH 裡就不重複加入），之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就從使用者的 PATH 移除")
+                    } else {
+                        t("在 ~/.local/bin 建立 feditor 指令，之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就移除（需要把 ~/.local/bin 加入 PATH）")
+                    };
+                    let response = ui.checkbox(&mut on, t("加入 feditor 指令")).on_hover_text(tip);
                     if response.changed() {
                         action = Some(Action::SetCliCommand(on));
                     }
@@ -7185,7 +7193,8 @@ mod tests {
         app.handle(Action::SetCliCommand(true), &ctx);
         assert!(app.settings.cli_command);
         let message = &app.modal.as_ref().expect("加入時要顯示提醒").spec.message;
-        assert!(message.contains("PATH") && message.contains("export PATH"), "{message}");
+        assert!(message.contains("PATH"), "{message}");
+        assert_eq!(message.contains("export PATH"), !cfg!(windows), "{message}");
         app.modal = None;
         app.handle(Action::SetCliCommand(false), &ctx);
         assert!(!app.settings.cli_command && app.modal.is_none(), "移除時不用提醒");

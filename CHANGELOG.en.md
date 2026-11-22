@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.20] - 2026-11-22
+
+### Added
+- **Terminal command on Windows**: "Terminal command" on the settings panel's Interface page adds the folder FEditor is in to your user `PATH`, so `feditor file` works in a terminal. Before adding, the user `PATH` and the current `PATH` (system entries included) are checked for the same folder (ignoring case, a trailing slash and `%VARIABLES%`); if it is there, nothing is added twice. Unticking removes only that folder and keeps the registry value's original type.
+
 ## [0.13.19] - 2026-11-20
 
 ### Fixed

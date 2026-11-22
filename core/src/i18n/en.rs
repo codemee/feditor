@@ -462,7 +462,15 @@ pub const ENGLISH: &[(&str, &str)] = &[
         "已在 {} 建立 feditor 指令。\n\n請確認這個資料夾在 PATH 裡，否則終端機找不到指令。如果還沒有，把下面這行加到 ~/.zshrc（bash 用 ~/.bashrc）之後重開終端機：\n\nexport PATH=\"$HOME/.local/bin:$PATH\"\n\n之後在終端機輸入 feditor 檔案 就能開啟檔案。",
         "Created the feditor command in {}.\n\nMake sure this folder is in your PATH, otherwise the terminal cannot find the command. If it is not, add the line below to ~/.zshrc (~/.bashrc for bash) and restart the terminal:\n\nexport PATH=\"$HOME/.local/bin:$PATH\"\n\nThen type feditor followed by a file name in the terminal to open it.",
     ),
-    ("無法更新 feditor 指令：{}", "Could not update the feditor command: {}"),
+    (
+        "已確認 {} 在使用者的 PATH 裡（本來就有的不會重複加入）。\n\n已經開著的終端機要關掉重開才會生效；FEditor 內建的終端機會繼承 FEditor 自己的環境，要重新啟動 FEditor 才拿得到。之後在終端機輸入 feditor 檔案 就能開啟檔案。",
+        "Made sure {} is in your user PATH (it is not added twice if it was already there).\n\nTerminals that are already open must be restarted to see the change. FEditor's built-in terminals inherit FEditor's own environment, so restart FEditor itself for them. Then type feditor followed by a file name in the terminal to open it.",
+    ),
+    (
+        "把 FEditor 所在的資料夾加進使用者的 PATH（已經在 PATH 裡就不重複加入），之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就從使用者的 PATH 移除",
+        "Adds the folder FEditor is in to your user PATH (not added again if it is already in PATH) so you can type feditor followed by a file name in the terminal; untick to remove it from your user PATH",
+    ),
+    ("無法更新 feditor 指令：{}","Could not update the feditor command: {}"),
     ("終端機指令", "Terminal command"),
     ("加入 feditor 指令", "Add the feditor command"),
     ("在 ~/.local/bin 建立 feditor 指令，之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就移除（需要把 ~/.local/bin 加入 PATH）", "Creates a feditor command in ~/.local/bin so you can type feditor followed by a file name in the terminal; untick to remove it (~/.local/bin must be in your PATH)"),

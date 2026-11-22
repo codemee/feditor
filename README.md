@@ -130,6 +130,7 @@
   - **macOS**：用 Launch Services 把這些副檔名對應的內容類型的預設處理程式設成 FEditor，原本的記在設定資料夾的 `file-assoc-backup.txt`，取消時還原。要用打包好的 `FEditor.app`（放在「應用程式」資料夾）才設得到。
   - **Linux**：寫 `~/.local/share/applications/feditor.desktop`，並在 `~/.config/mimeapps.list` 把這些 MIME 類型的預設程式排成 FEditor 第一個（原本的留在後面，取消時拿掉就還原）。
   - 設定檔：`file_assoc = true|false`、`file_assoc_groups = code,config`（類別名稱：`code`、`config`、`markup`、`text`）。程式每次啟動、在開著的狀況下會再套用一次，所以程式搬了位置也會跟上。
+- **終端機指令（Windows）**：設定面板「介面」的「終端機指令」勾選「加入 feditor 指令」，會把 FEditor 所在的資料夾加進**使用者**的 `PATH`（只動這一項；該資料夾已經在 `PATH` 裡就不重複加入）。已經開著的終端機要關掉重開；FEditor 內建的終端機會繼承 FEditor 自己的環境，要重新啟動 FEditor 才會生效。之後在任何終端機輸入 `feditor 檔案` 就能開啟。取消勾選只會從使用者的 `PATH` 拿掉那個資料夾。程式搬了位置時，取消再勾選一次，`PATH` 才會指到新的資料夾。
 - **終端機指令（macOS、Linux）**：設定面板「介面」的「終端機指令」勾選「加入 feditor 指令」，會在 `~/.local/bin` 建立一個很短的 `feditor` 腳本（把程式放到背景啟動，終端機馬上回到提示字元），之後可以在終端機輸入 `feditor 檔案` 開啟；已經開著 FEditor 時，檔案會交給那個視窗。加入時會跳出提醒：`~/.local/bin` 要在 `PATH` 裡，沒有的話把 `export PATH="$HOME/.local/bin:$PATH"` 加到 `~/.zshrc`（bash 用 `~/.bashrc`）再重開終端機。取消勾選就移除；只會動 FEditor 自己建立的腳本，同名的別的檔案不會被覆蓋或刪除。程式搬了位置，下次啟動會自動更新腳本裡的路徑。
 
   升級後若「打開檔案的應用程式」沒有 FEditor，確認 `FEditor.app` 是新版（舊版會留著舊的登記），必要時執行 `lsregister -f` 重新登記。
