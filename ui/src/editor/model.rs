@@ -146,6 +146,10 @@ pub struct EditorState {
     pub(super) multi_step: bool,
     /// Alt＋拖曳矩形選取時，按下去那一點的（行, 顯示欄）。
     pub rect_anchor: Option<(usize, usize)>,
+    /// 正在用滑鼠拖著選取的文字（要搬動或複製）時，被拖的那段範圍。
+    pub text_drag: Option<Range<usize>>,
+    /// 別的程式拖過來、等著插進文字的（文字, 放開的位置, 當時的 egui pass 編號）；畫面上的編輯區下一個 pass 取走。
+    pub incoming_drop: Option<(String, eframe::egui::Pos2, u64)>,
     /// 巨集錄製中：目前錄到的動作；沒在錄製時為 None。見 commands.rs。
     pub recording: Option<Vec<super::commands::Recorded>>,
     /// 語法上色的跨行狀態快取（畫面用）。
@@ -484,6 +488,38 @@ impl EditorState {
             range.start
         };
         self.sel = Selection::collapsed(start + text.chars().count());
+        self.goal_col = None;
+        self.scroll_to_caret = true;
+        true
+    }
+
+    /// 把選取範圍 `range` 的文字拖到 `to`：`copy` 為真是複製，否則是搬動（一步復原）。
+    /// 放在範圍自己裡面的搬動什麼都不做，回傳 `false`。完成後選取剛放下的文字。
+    pub fn drop_text(&mut self, buf: &mut Buffer, range: Range<usize>, to: usize, copy: bool) -> bool {
+        let to = to.min(buf.len_chars());
+        if range.is_empty() || range.end > buf.len_chars() || (!copy && (range.start..=range.end).contains(&to)) {
+            return false;
+        }
+        self.interrupt_composition();
+        let text = buf.slice(range.clone());
+        let len = range.len();
+        buf.break_group();
+        // 搬動是「改寫」範圍起點到放下處之間的一段，這樣整個動作只有一個復原步驟
+        let start = if copy {
+            buf.insert(to, &text);
+            to
+        } else if to >= range.end {
+            let between = buf.slice(range.end..to);
+            buf.replace(range.start..to, &format!("{between}{text}"));
+            to - len
+        } else {
+            let between = buf.slice(to..range.start);
+            buf.replace(to..range.end, &format!("{text}{between}"));
+            to
+        };
+        buf.break_group();
+        self.extra.clear();
+        self.sel = Selection { anchor: start, head: start + len };
         self.goal_col = None;
         self.scroll_to_caret = true;
         true
@@ -1187,6 +1223,31 @@ mod tests {
         assert_eq!(b.text(), "abXcd", "貼上自成一步，不與前面的打字合併");
         s.undo(&mut b);
         assert_eq!(b.text(), "abcd");
+    }
+
+    #[test]
+    fn dragging_selected_text_moves_or_copies_it_in_one_undo_step() {
+        let mut s = EditorState::default();
+        let mut b = Buffer::from_text("abcdef");
+        assert!(s.drop_text(&mut b, 1..3, 5, false), "往後搬");
+        assert_eq!(b.text(), "adebcf");
+        assert_eq!(s.sel.range(), 3..5);
+        s.undo(&mut b);
+        assert_eq!(b.text(), "abcdef", "一步復原");
+
+        assert!(s.drop_text(&mut b, 4..6, 1, false), "往前搬");
+        assert_eq!(b.text(), "aefbcd");
+        assert_eq!(s.sel.range(), 1..3);
+
+        let mut b = Buffer::from_text("abcdef");
+        assert!(s.drop_text(&mut b, 0..2, 6, true), "複製");
+        assert_eq!(b.text(), "abcdefab");
+        assert_eq!(s.sel.range(), 6..8);
+
+        let mut b = Buffer::from_text("abcdef");
+        assert!(!s.drop_text(&mut b, 1..4, 2, false), "放在自己裡面不動作");
+        assert!(!s.drop_text(&mut b, 1..4, 4, false), "放在自己的邊界也不動作");
+        assert_eq!(b.text(), "abcdef");
     }
 
     #[test]

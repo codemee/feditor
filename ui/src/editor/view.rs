@@ -644,7 +644,65 @@ impl EditorView<'_> {
                 if response.clicked() || response.drag_started() || response.dragged() {
                     response.request_focus();
                 }
-                if let Some(pos) = response.interact_pointer_pos() {
+                // 在已選取的文字上按住拖曳：搬動（按住 Ctrl 放開是複製）選取的文字，不是重新選取
+                let mut drop_idx: Option<usize> = None;
+                if response.drag_started() && !alt && !shift && state.extra.is_empty() && !state.sel.is_empty() && state.preedit.is_none() {
+                    if let Some(origin_pos) = ui.input(|i| i.pointer.press_origin()) {
+                        let (idx, _) = char_at(&mut layouts, ui, state, buffer, origin_pos);
+                        let range = state.sel.range();
+                        if range.contains(&idx) {
+                            state.text_drag = Some(range);
+                        }
+                    }
+                }
+                // 別的程式正拖著文字經過這個編輯區：標出放開後的插入處
+                if let Some(pos) = ui.ctx().data(|d| d.get_temp::<Pos2>(Id::unique("external_text_drop_hover"))) {
+                    if visible.contains(pos) {
+                        drop_idx = Some(char_at(&mut layouts, ui, state, buffer, pos).0);
+                    }
+                }
+                if state.text_drag.is_some() && ui.input(|i| i.key_pressed(Key::Escape)) {
+                    state.text_drag = None;
+                }
+                if let Some(range) = state.text_drag.clone() {
+                    if response.drag_stopped() {
+                        state.text_drag = None;
+                        if let Some(pos) = response.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.latest_pos())) {
+                            if visible.contains(pos) {
+                                let (idx, _) = char_at(&mut layouts, ui, state, buffer, pos);
+                                touched |= state.drop_text(buffer, range, idx, ctrl);
+                            }
+                        }
+                    } else if let Some(pos) = response.interact_pointer_pos() {
+                        // 和瀏覽器一樣：游標維持一般箭頭，旁邊跟著半透明的被拖文字；複製時箭頭右下角多一個「+」
+                        ui.ctx().set_cursor_icon(CursorIcon::Default);
+                        let ghost: String = buffer
+                            .slice(range.start..range.end.min(range.start + 400))
+                            .lines()
+                            .take(4)
+                            .map(|l| l.chars().take(50).collect::<String>())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let layer = eframe::egui::LayerId::new(eframe::egui::Order::Tooltip, Id::unique("text_drag_ghost"));
+                        let gp = ui.ctx().layer_painter(layer);
+                        let galley = gp.layout_no_wrap(ghost, font_id.clone(), text_color.gamma_multiply(0.75));
+                        let top_left = pos + vec2(14.0, 18.0);
+                        let bg = Rect::from_min_size(top_left, galley.size()).expand(3.0);
+                        gp.rect_filled(bg, 3.0, ui.visuals().extreme_bg_color.gamma_multiply(0.8));
+                        gp.rect_stroke(bg, 3.0, Stroke::new(1.0, ui.visuals().selection.stroke.color.gamma_multiply(0.6)), eframe::egui::StrokeKind::Inside);
+                        gp.galley(top_left, galley, text_color);
+                        if ctrl {
+                            let c = pos + vec2(20.0, 12.0);
+                            gp.circle_filled(c, 7.0, ui.visuals().selection.bg_fill);
+                            let s = Stroke::new(2.0, Color32::WHITE);
+                            gp.line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], s);
+                            gp.line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], s);
+                        }
+                        if visible.contains(pos) {
+                            drop_idx = Some(char_at(&mut layouts, ui, state, buffer, pos).0);
+                        }
+                    }
+                } else if let Some(pos) = response.interact_pointer_pos() {
                     if response.triple_clicked() {
                         let (idx, _) = char_at(&mut layouts, ui, state, buffer, pos);
                         state.select_line_at(buffer, idx);
@@ -712,6 +770,17 @@ impl EditorView<'_> {
 
                 if response.drag_stopped() {
                     state.rect_anchor = None;
+                }
+
+                // 別的程式拖過來的文字：插在放開的位置（太舊的、不在這個編輯區裡的丟掉）
+                if let Some((text, pos, pass)) = state.incoming_drop.take() {
+                    let now = ui.ctx().cumulative_pass_nr();
+                    if visible.contains(pos) && now.saturating_sub(pass) <= 3 && state.preedit.is_none() {
+                        let (idx, _) = char_at(&mut layouts, ui, state, buffer, pos);
+                        state.set_caret(buffer, idx, false);
+                        touched |= state.paste(buffer, &text);
+                        response.request_focus();
+                    }
                 }
 
                 // 滑鼠操作可能打斷了組字，這一列的排版要跟上
@@ -871,6 +940,18 @@ impl EditorView<'_> {
                     let x_end = text_left
                         + layout.x_at(caret_col + preedit_len).max(layout.x_at(caret_col));
                     ime_rect = Rect::from_min_max(pos2(x_start, y), pos2(x_end.max(x_start + 2.0), y + row_h));
+
+                    // 拖著文字時，放開會落在哪裡：畫一條指示線
+                    if let Some(idx) = drop_idx {
+                        let line = buffer.line_of_char(idx);
+                        let col = idx - buffer.line_start(line);
+                        let rs = state.rows_for(buffer, line);
+                        let row = rows.first_row(line) + state.row_index(buffer, &rs, line, col);
+                        let i = ensure_row(&mut layouts, &rows, ui, &spec, buffer, state, row);
+                        let x = text_left + layouts[i].x_at(col);
+                        let y = origin.y + row as f32 * row_h;
+                        painter.line_segment([pos2(x, y), pos2(x, y + row_h)], Stroke::new(2.0, ui.visuals().selection.stroke.color));
+                    }
 
                     let blink = (ui.input(|i| i.time) * 2.0) as u64 % 2 == 0;
                     let window_focused = ui.input(|i| i.focused);

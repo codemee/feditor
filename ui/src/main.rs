@@ -39,11 +39,14 @@ mod shell_integration;
 mod macos_open;
 #[cfg(windows)]
 mod jump_list;
+#[cfg(windows)]
+mod text_drop;
 mod single_instance;
 mod syntax;
 mod tabs;
 mod terminal;
 mod terminal_pane;
+use terminal_pane::DropPayload;
 mod terminal_text;
 mod scroll_sync;
 mod shell_icons;
@@ -506,14 +509,19 @@ fn drop_position(ctx: &egui::Context) -> Option<egui::Pos2> {
         use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
         // SAFETY: `pt` 是有效的輸出緩衝區
-        if unsafe { GetCursorPos(&mut pt) } != 0
-            && let Some(inner) = ctx.input(|i| i.viewport().inner_rect)
-        {
-            let ppp = ctx.pixels_per_point();
-            return Some(egui::pos2(pt.x as f32 / ppp, pt.y as f32 / ppp) - inner.min.to_vec2());
+        if unsafe { GetCursorPos(&mut pt) } != 0 && ctx.input(|i| i.viewport().inner_rect).is_some() {
+            return Some(screen_to_window(ctx, pt.x, pt.y));
         }
     }
     ctx.input(|i| i.pointer.latest_pos())
+}
+
+/// 螢幕座標（像素）換算成視窗內的座標（點）。
+#[cfg(windows)]
+pub(crate) fn screen_to_window(ctx: &egui::Context, x: i32, y: i32) -> egui::Pos2 {
+    let ppp = ctx.pixels_per_point();
+    let origin = ctx.input(|i| i.viewport().inner_rect).map_or(egui::Vec2::ZERO, |r| r.min.to_vec2());
+    egui::pos2(x as f32 / ppp, y as f32 / ppp) - origin
 }
 
 fn drop_overlay(ctx: &egui::Context, count: usize) {
@@ -5685,9 +5693,27 @@ impl eframe::App for App {
             ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if !dropped.is_empty() {
             // 放在終端機上：把路徑貼進去（像一般終端機）；其他地方才開成分頁
-            let into_terminal = self.modal.is_none() && drop_position(&ctx).is_some_and(|pos| self.drop_into_terminal(pos, &dropped));
+            let into_terminal = self.modal.is_none() && drop_position(&ctx).is_some_and(|pos| self.drop_into_terminal(pos, DropPayload::Paths(&dropped)));
             if !into_terminal {
                 self.open_dropped(dropped);
+            }
+        }
+        // 別的程式拖過來的文字：放在終端機上就貼進去，放在編輯區就插在放開的位置
+        #[cfg(windows)]
+        {
+            // 拖著文字經過時，編輯區在游標下標出放開後的插入處（見 editor/view.rs）
+            let hover_id = egui::Id::unique("external_text_drop_hover");
+            match text_drop::hover(&ctx) {
+                Some(pos) => ctx.data_mut(|d| {
+                    d.insert_temp(hover_id, pos);
+                }),
+                None => ctx.data_mut(|d| d.remove::<egui::Pos2>(hover_id)),
+            }
+        }
+        #[cfg(windows)]
+        for (text, pos) in text_drop::take(&ctx) {
+            if self.modal.is_none() {
+                self.drop_text_at(&ctx, pos, &text);
             }
         }
         let hovering = ctx.input(|i| i.raw.hovered_files.len());
@@ -9010,6 +9036,16 @@ fn main() -> eframe::Result {
             {
                 let ctx = cc.egui_ctx.clone();
                 macos_open::set_wake(move || ctx.request_repaint());
+            }
+            // 讓別的程式拖過來的文字也收得進來（winit 只收檔案）
+            #[cfg(windows)]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                if let Ok(handle) = cc.window_handle()
+                    && let RawWindowHandle::Win32(h) = handle.as_raw()
+                {
+                    text_drop::install(h.hwnd.get(), cc.egui_ctx.clone());
+                }
             }
             app.sync_shell_menu();
             app.sync_cli_command();

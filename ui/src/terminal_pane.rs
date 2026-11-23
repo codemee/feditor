@@ -48,6 +48,14 @@ impl TerminalOptions {
     }
 }
 
+/// 拖進視窗、要送進終端機的東西。
+pub(crate) enum DropPayload<'a> {
+    /// 檔案或資料夾的路徑：依 shell 的規則加引號。
+    Paths(&'a [std::path::PathBuf]),
+    /// 文字：原樣貼上。
+    Text(&'a str),
+}
+
 pub struct TerminalPane {
     uid: u64,
     /// 顯示在標題上的編號（目前沒人用的最小正整數）。
@@ -415,7 +423,7 @@ impl App {
 
     /// 拖進視窗的檔案放在 `pos`：那裡是終端機窗格（作用中的分頁是終端機）就把路徑貼進去並給它焦點，回傳 `true`；
     /// 否則回傳 `false`，由呼叫端照一般方式開檔。
-    pub(crate) fn drop_into_terminal(&mut self, pos: egui::Pos2, paths: &[std::path::PathBuf]) -> bool {
+    pub(crate) fn drop_into_terminal(&mut self, pos: egui::Pos2, payload: DropPayload) -> bool {
         let Some(id) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, _)| *id) else { return false };
         let pane = if id == self.layout.focus {
             self.doc.terminal.as_deref_mut()
@@ -424,7 +432,10 @@ impl App {
         };
         let Some(pane) = pane else { return false };
         let Some(term) = pane.term.as_ref() else { return false };
-        let text = terminal::dropped_paths_text(terminal::shell_kind(&pane.shell), paths);
+        let text = match payload {
+            DropPayload::Paths(paths) => terminal::dropped_paths_text(terminal::shell_kind(&pane.shell), paths),
+            DropPayload::Text(text) => text.to_owned(),
+        };
         term.write(terminal::paste_bytes(&text, term.mode()));
         term.term.lock().scroll_display(Scroll::Bottom);
         self.focus_pane(id);
@@ -432,6 +443,20 @@ impl App {
             pane.request_focus();
         }
         true
+    }
+
+    /// 別的程式拖過來的文字放在 `pos`：終端機就貼進去；否則讓那個窗格的編輯區取得焦點，
+    /// 下一個畫面把文字插在放開的位置。
+    #[cfg(windows)]
+    pub(crate) fn drop_text_at(&mut self, ctx: &egui::Context, pos: egui::Pos2, text: &str) {
+        if self.drop_into_terminal(pos, DropPayload::Text(text)) {
+            return;
+        }
+        let Some(id) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, _)| *id) else { return };
+        self.focus_pane(id);
+        if self.doc.terminal.is_none() && id == self.layout.focus {
+            self.editor.incoming_drop = Some((text.to_owned(), pos, ctx.cumulative_pass_nr()));
+        }
     }
 
     /// 識別編號為 `uid` 的終端機在哪個窗格的第幾個分頁（已經關掉了就是 `None`）。

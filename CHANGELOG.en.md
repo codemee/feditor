@@ -2,6 +2,15 @@
 
 # Changelog
 
+## [0.13.22] - 2026-11-23
+
+### Added
+- **Drag and drop text**: press on selected text in the editor and drag to move it to where you release; a translucent copy of the dragged text follows the pointer and a line marks the drop position. Hold Ctrl (Cmd on macOS) when releasing to copy, Esc cancels. A move is a single undo step; dropping inside the selection itself does nothing.
+- **Windows: drag text in from other programs**: text selected in a browser or another program can be dragged into the editor (inserted where you release, with a position line while dragging) or a terminal (pasted). winit's own drop target only accepts files, so it is replaced by one that also accepts text, handing files back to the original handling; the source program's translucent drag image is shown over the window too.
+- **Dropping files on a terminal pastes their paths**: several paths are separated by spaces, and a path with spaces or special characters is quoted by that shell's rules (PowerShell, cmd, bash-like) instead of opening editor tabs. Dropping anywhere else opens files as before.
+
+### Known limitations
+- Dragging text in from other programs is Windows-only for now; macOS is not supported yet, and dropping files on a terminal has not been tried on macOS.
 ## [0.13.21] - 2026-11-23
 
 ### Fixed
