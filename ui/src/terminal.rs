@@ -918,6 +918,19 @@ pub fn alt_text(text: &str) -> Vec<u8> {
     out
 }
 
+/// 拖進終端機的檔案或資料夾：路徑之間用空格隔開；只有安全字元就原樣貼上，有空白或特殊字元才依 shell 的規則加引號。
+pub fn dropped_paths_text(kind: ShellKind, paths: &[PathBuf]) -> String {
+    let plain = |c: char| c.is_alphanumeric() || "-_./:~".contains(c) || (c == '\\' && kind != ShellKind::Posix);
+    paths
+        .iter()
+        .map(|p| {
+            let text = p.to_string_lossy();
+            if !text.is_empty() && text.chars().all(plain) { text.into_owned() } else { kind.quote(&text) }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// 貼上的文字：換行統一成 `\r`；shell 要求括號貼上模式時加上包裝，並去掉文字裡會提早結束它的序列。
 pub fn paste_bytes(text: &str, mode: TermMode) -> Vec<u8> {
     let body = text.replace("\r\n", "\r").replace('\n', "\r");
@@ -1235,6 +1248,19 @@ mod tests {
         let bracketed = paste_bytes("x\x1b[201~y", TermMode::BRACKETED_PASTE);
         assert_eq!(bracketed, b"\x1b[200~xy\x1b[201~");
         assert_eq!(alt_text("b"), b"\x1bb");
+    }
+
+    #[test]
+    fn dropped_paths_are_quoted_only_when_needed_and_per_shell() {
+        let p = |s: &str| PathBuf::from(s);
+        let plain = [p(r"C:\work\a.txt"), p("/tmp/b.txt")];
+        assert_eq!(dropped_paths_text(ShellKind::PowerShell, &plain), r"C:\work\a.txt /tmp/b.txt");
+        assert_eq!(dropped_paths_text(ShellKind::Posix, &plain[..1]), r"'C:\work\a.txt'", "bash 裡反斜線要加引號");
+        let spaced = [p(r"C:\my docs\it's.txt")];
+        assert_eq!(dropped_paths_text(ShellKind::Cmd, &spaced), "\"C:\\my docs\\it's.txt\"");
+        assert_eq!(dropped_paths_text(ShellKind::PowerShell, &spaced), r"'C:\my docs\it''s.txt'");
+        assert_eq!(dropped_paths_text(ShellKind::Posix, &[p("/a b/c")]), "'/a b/c'");
+        assert_eq!(dropped_paths_text(ShellKind::PowerShell, &[p("中文.txt"), p("x y")]), "中文.txt 'x y'");
     }
 
     #[test]

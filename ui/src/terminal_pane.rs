@@ -413,6 +413,27 @@ impl App {
         out
     }
 
+    /// 拖進視窗的檔案放在 `pos`：那裡是終端機窗格（作用中的分頁是終端機）就把路徑貼進去並給它焦點，回傳 `true`；
+    /// 否則回傳 `false`，由呼叫端照一般方式開檔。
+    pub(crate) fn drop_into_terminal(&mut self, pos: egui::Pos2, paths: &[std::path::PathBuf]) -> bool {
+        let Some(id) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, _)| *id) else { return false };
+        let pane = if id == self.layout.focus {
+            self.doc.terminal.as_deref_mut()
+        } else {
+            self.layout.others.get_mut(&id).and_then(|set| set.active_slot_mut().0.terminal.as_deref_mut())
+        };
+        let Some(pane) = pane else { return false };
+        let Some(term) = pane.term.as_ref() else { return false };
+        let text = terminal::dropped_paths_text(terminal::shell_kind(&pane.shell), paths);
+        term.write(terminal::paste_bytes(&text, term.mode()));
+        term.term.lock().scroll_display(Scroll::Bottom);
+        self.focus_pane(id);
+        if let Some(pane) = self.doc.terminal.as_deref_mut() {
+            pane.request_focus();
+        }
+        true
+    }
+
     /// 識別編號為 `uid` 的終端機在哪個窗格的第幾個分頁（已經關掉了就是 `None`）。
     fn find_terminal_by_uid(&self, uid: u64) -> Option<(PaneId, usize)> {
         for id in self.layout.root.leaves() {

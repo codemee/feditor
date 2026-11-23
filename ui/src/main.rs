@@ -497,6 +497,25 @@ fn no_hover_outline(ui: &mut egui::Ui) {
 }
 
 /// 檔案拖到視窗上、還沒放開時的提示：整個視窗蓋一層淡色，中間寫「放開以開啟 N 個檔案」。
+/// 檔案放開時滑鼠在視窗內的位置（點）。OS 的拖放途中不會送滑鼠移動事件，egui 記的位置是舊的，
+/// 所以 Windows 上直接問系統游標在哪裡，再換算成視窗內座標。
+fn drop_position(ctx: &egui::Context) -> Option<egui::Pos2> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        let mut pt = POINT { x: 0, y: 0 };
+        // SAFETY: `pt` 是有效的輸出緩衝區
+        if unsafe { GetCursorPos(&mut pt) } != 0
+            && let Some(inner) = ctx.input(|i| i.viewport().inner_rect)
+        {
+            let ppp = ctx.pixels_per_point();
+            return Some(egui::pos2(pt.x as f32 / ppp, pt.y as f32 / ppp) - inner.min.to_vec2());
+        }
+    }
+    ctx.input(|i| i.pointer.latest_pos())
+}
+
 fn drop_overlay(ctx: &egui::Context, count: usize) {
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
@@ -5665,7 +5684,11 @@ impl eframe::App for App {
         let dropped: Vec<PathBuf> =
             ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if !dropped.is_empty() {
-            self.open_dropped(dropped);
+            // 放在終端機上：把路徑貼進去（像一般終端機）；其他地方才開成分頁
+            let into_terminal = self.modal.is_none() && drop_position(&ctx).is_some_and(|pos| self.drop_into_terminal(pos, &dropped));
+            if !into_terminal {
+                self.open_dropped(dropped);
+            }
         }
         let hovering = ctx.input(|i| i.raw.hovered_files.len());
         if hovering > 0 {
