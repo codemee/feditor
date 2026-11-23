@@ -266,13 +266,10 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         }
         Icon::Save => floppy(painter, &p, stroke, &rect_of),
         Icon::SaveAs => {
-            floppy(painter, &p, stroke, &rect_of);
-            // 右下角的「+」徽章；用當下的底色把後方線條蓋掉（hover 時底色不同，所以不能寫死）
-            let c = p(12.5, 12.5);
-            painter.circle_filled(c, 4.0 * s, bg);
-            painter.circle_stroke(c, 3.6 * s, stroke);
-            line(&[(12.5, 10.8), (12.5, 14.2)]);
-            line(&[(10.8, 12.5), (14.2, 12.5)]);
+            // 兩張交疊的磁碟片：後方偏右上，前方偏左下並以當下底色蓋住後方線條
+            // （hover 時底色不同，所以不能寫死）
+            floppy_xf(painter, &p, stroke, &rect_of, 2.8, 0.2, 0.8, None);
+            floppy_xf(painter, &p, stroke, &rect_of, -0.2, 3.2, 0.8, Some(bg));
         }
         Icon::Run => {
             // 空心三角形：和其他按鈕一樣只有線條、沒有填色
@@ -484,18 +481,16 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             line(&[(9.0, 4.5), (11.5, 7.0)]);
         }
         Icon::TabsToSpaces | Icon::SpacesToTabs => {
-            // 上面是 Tab 符號（箭頭＋豎線），下面是空白符號（開口向上的括號），右邊的箭頭由換出的一邊指向換進的一邊
-            line(&[(2.0, 4.5), (9.0, 4.5)]);
-            line(&[(6.8, 2.7), (9.0, 4.5), (6.8, 6.3)]);
-            line(&[(11.0, 2.7), (11.0, 6.3)]);
-            line(&[(2.0, 10.0), (2.0, 12.5), (11.0, 12.5), (11.0, 10.0)]);
-            if icon == Icon::TabsToSpaces {
-                line(&[(14.0, 3.0), (14.0, 13.0)]);
-                line(&[(12.6, 11.4), (14.0, 13.0), (15.4, 11.4)]);
-            } else {
-                line(&[(14.0, 13.0), (14.0, 3.0)]);
-                line(&[(12.6, 4.6), (14.0, 3.0), (15.4, 4.6)]);
-            }
+            // Tab 符號（箭頭＋豎線）與空白符號（開口向上的括號）上下排列，右邊的箭頭由換出的一邊指向換進的一邊
+            // 空白→Tab 時上下對調：空白在上、Tab 在下，光看圖就能分辨換的方向
+            let (ty, sy) = if icon == Icon::TabsToSpaces { (4.5, 10.0) } else { (11.5, 3.0) };
+            line(&[(2.0, ty), (9.0, ty)]);
+            line(&[(6.8, ty - 1.8), (9.0, ty), (6.8, ty + 1.8)]);
+            line(&[(11.0, ty - 1.8), (11.0, ty + 1.8)]);
+            line(&[(2.0, sy), (2.0, sy + 2.5), (11.0, sy + 2.5), (11.0, sy)]);
+            // 箭頭一律由上方的符號指向下方的符號（換出 → 換進）
+            line(&[(14.0, 3.0), (14.0, 13.0)]);
+            line(&[(12.6, 11.4), (14.0, 13.0), (15.4, 11.4)]);
         }
         Icon::Reformat => {
             // 四行文字，縮排依序為 0、1、2、1：像是排好的程式碼
@@ -573,25 +568,36 @@ fn floppy(
     stroke: Stroke,
     rect_of: &impl Fn(f32, f32, f32, f32) -> Rect,
 ) {
-    painter.add(Shape::closed_line(
-        [(2.0, 2.0), (12.0, 2.0), (14.0, 4.0), (14.0, 14.0), (2.0, 14.0)]
-            .iter()
-            .map(|&(x, y)| p(x, y))
-            .collect(),
-        stroke,
-    ));
-    painter.rect_stroke(
-        rect_of(5.0, 2.0, 11.0, 6.0),
-        CornerRadius::ZERO,
-        stroke,
-        StrokeKind::Middle,
-    );
-    painter.rect_stroke(
-        rect_of(4.5, 9.0, 11.5, 14.0),
-        CornerRadius::ZERO,
-        stroke,
-        StrokeKind::Middle,
-    );
+    floppy_xf(painter, p, stroke, rect_of, 0.0, 0.0, 1.0, None);
+}
+
+/// 磁碟片，可縮放（k）與平移（ox, oy）；`fill` 有值時先以該底色填滿外形（用來蓋住後方的線條）。
+fn floppy_xf(
+    painter: &Painter,
+    p: &impl Fn(f32, f32) -> Pos2,
+    stroke: Stroke,
+    rect_of: &impl Fn(f32, f32, f32, f32) -> Rect,
+    ox: f32,
+    oy: f32,
+    k: f32,
+    fill: Option<Color32>,
+) {
+    let t = |x: f32, y: f32| (ox + x * k, oy + y * k);
+    let outline: Vec<Pos2> = [(2.0, 2.0), (12.0, 2.0), (14.0, 4.0), (14.0, 14.0), (2.0, 14.0)]
+        .iter()
+        .map(|&(x, y)| {
+            let (x, y) = t(x, y);
+            p(x, y)
+        })
+        .collect();
+    if let Some(bg) = fill {
+        painter.add(Shape::convex_polygon(outline.clone(), bg, Stroke::NONE));
+    }
+    painter.add(Shape::closed_line(outline, stroke));
+    let (a, b) = (t(5.0, 2.0), t(11.0, 6.0));
+    painter.rect_stroke(rect_of(a.0, a.1, b.0, b.1), CornerRadius::ZERO, stroke, StrokeKind::Middle);
+    let (a, b) = (t(4.5, 9.0), t(11.5, 14.0));
+    painter.rect_stroke(rect_of(a.0, a.1, b.0, b.1), CornerRadius::ZERO, stroke, StrokeKind::Middle);
 }
 
 /// 圓弧加箭頭。角度單位為度，螢幕座標 y 向下，所以正的 `sweep_deg` 是順時針、負的是逆時針。

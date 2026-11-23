@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [0.13.21] - 2026-11-23
+
+### Fixed
+- **"Spaces to tabs" and "Tabs to spaces" icons looked too alike**: "Spaces to tabs" now swaps the space and tab symbols top to bottom, and the arrow always points down, so the direction is clear at a glance.
+
+### Changed
+- **"Save as" icon is now two overlapping floppy disks**, replacing the floppy disk with a "+" badge.
 ## [0.13.20] - 2026-11-22
 
 ### Added
