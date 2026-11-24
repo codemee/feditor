@@ -220,6 +220,11 @@ impl TabSet {
         (&mut tab.doc, &mut tab.editor)
     }
 
+    /// 沒有焦點的窗格：它目前顯示的分頁的文件（唯讀）。
+    pub fn active_doc(&self) -> &Document {
+        &self.slots[self.active].doc
+    }
+
     /// 要查第 `i` 個分頁的文件。`live` 是「作用中分頁在外面」時的那一份（沒有焦點的窗格傳 `None`）。
     fn doc_in<'a>(&'a self, live: Option<&'a Document>, i: usize) -> &'a Document {
         match live {

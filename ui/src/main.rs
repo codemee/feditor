@@ -499,9 +499,9 @@ fn no_hover_outline(ui: &mut egui::Ui) {
     }
 }
 
-/// 檔案拖到視窗上、還沒放開時的提示：整個視窗蓋一層淡色，中間寫「放開以開啟 N 個檔案」。
+/// 檔案拖到視窗上、還沒放開時的提示：游標所在的窗格蓋一層淡色，中間寫「放開以開啟 N 個檔案」。
 /// 檔案放開時滑鼠在視窗內的位置（點）。OS 的拖放途中不會送滑鼠移動事件，egui 記的位置是舊的，
-/// 所以 Windows 上直接問系統游標在哪裡，再換算成視窗內座標。
+/// 所以 Windows、macOS 上直接問系統游標在哪裡，再換算成視窗內座標。
 fn drop_position(ctx: &egui::Context) -> Option<egui::Pos2> {
     #[cfg(windows)]
     {
@@ -512,6 +512,10 @@ fn drop_position(ctx: &egui::Context) -> Option<egui::Pos2> {
         if unsafe { GetCursorPos(&mut pt) } != 0 && ctx.input(|i| i.viewport().inner_rect).is_some() {
             return Some(screen_to_window(ctx, pt.x, pt.y));
         }
+    }
+    #[cfg(target_os = "macos")]
+    if let (Some((x, y)), Some(rect)) = (macos_open::mouse_position(), ctx.input(|i| i.viewport().inner_rect)) {
+        return Some(egui::pos2(x, y) - rect.min.to_vec2());
     }
     ctx.input(|i| i.pointer.latest_pos())
 }
@@ -524,12 +528,11 @@ pub(crate) fn screen_to_window(ctx: &egui::Context, x: i32, y: i32) -> egui::Pos
     egui::pos2(x as f32 / ppp, y as f32 / ppp) - origin
 }
 
-fn drop_overlay(ctx: &egui::Context, count: usize) {
+fn drop_overlay(ctx: &egui::Context, rect: egui::Rect, count: usize, into_terminal: bool) {
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::unique("drop_overlay"),
     ));
-    let rect = ctx.content_rect();
     let accent = ctx.global_style().visuals.selection.bg_fill;
     painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.35));
     painter.rect_stroke(
@@ -538,7 +541,9 @@ fn drop_overlay(ctx: &egui::Context, count: usize) {
         egui::Stroke::new(2.0, accent),
         egui::StrokeKind::Inside,
     );
-    let text = if count == 1 {
+    let text = if into_terminal {
+        t("放開以貼上路徑").to_owned()
+    } else if count == 1 {
         t("放開以開啟檔案").to_owned()
     } else {
         tf!("放開以開啟 {count} 個檔案", count = count)
@@ -5705,6 +5710,12 @@ impl eframe::App for App {
             // 放在終端機上：把路徑貼進去（像一般終端機）；其他地方才開成分頁
             let into_terminal = self.modal.is_none() && drop_position(&ctx).is_some_and(|pos| self.drop_into_terminal(pos, DropPayload::Paths(&dropped)));
             if !into_terminal {
+                // 開在放開位置的窗格（提示也標在那裡）
+                if self.modal.is_none()
+                    && let Some((id, _, _)) = drop_position(&ctx).and_then(|pos| self.drop_target_at(pos))
+                {
+                    self.focus_pane(id);
+                }
                 self.open_dropped(dropped);
             }
         }
@@ -5727,8 +5738,11 @@ impl eframe::App for App {
             }
         }
         let hovering = ctx.input(|i| i.raw.hovered_files.len());
-        if hovering > 0 {
-            drop_overlay(&ctx, hovering);
+        if hovering > 0 && self.modal.is_none() {
+            // 只在游標所在的窗格蓋提示：終端機是貼上路徑，其他窗格是開啟檔案
+            if let Some((_, rect, into_terminal)) = drop_position(&ctx).and_then(|pos| self.drop_target_at(pos)) {
+                drop_overlay(&ctx, rect, hovering, into_terminal);
+            }
         }
 
         // 要關閉視窗了：先把還沒寫入的設定存起來，並記住開著的分頁

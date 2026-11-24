@@ -192,6 +192,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("自動", "Auto"),
     ("語言（語法上色）。自動：依副檔名，沒有檔名時看內容判斷；也可以手動指定", "Language (syntax coloring). Auto: by file extension, or by content when there is no file name; you can also choose one by hand"),
     // ── 對話框與檔案操作 ──
+    ("放開以貼上路徑", "Drop to paste the path"),
     ("放開以開啟檔案", "Drop to open the file"),
     ("放開以開啟 {count} 個檔案", "Drop to open {count} files"),
     ("無法儲存設定：{e}", "Cannot save the settings: {e}"),

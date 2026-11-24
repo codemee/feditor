@@ -108,3 +108,17 @@ pub fn install() {
     }
     std::mem::forget(observer);
 }
+
+/// 系統游標目前的位置：螢幕座標（點），原點在主螢幕左上角（和 egui 的視窗座標同一個方向）。
+/// 拖放途中系統不會送滑鼠移動事件，egui 記的位置是舊的，所以直接問系統。
+pub fn mouse_position() -> Option<(f32, f32)> {
+    // SAFETY: NSEvent、NSScreen 的類別方法，沒有副作用；回傳的是值。
+    unsafe {
+        let point: objc2_foundation::NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let screens: Option<Retained<AnyObject>> = msg_send![class!(NSScreen), screens];
+        let primary: Option<Retained<AnyObject>> = msg_send![&*screens?, firstObject];
+        let frame: objc2_foundation::NSRect = msg_send![&*primary?, frame];
+        // Cocoa 的 y 軸朝上、原點在主螢幕左下角；換成朝下
+        Some((point.x as f32, (frame.size.height - point.y) as f32))
+    }
+}

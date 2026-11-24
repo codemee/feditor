@@ -2,6 +2,14 @@
 
 # Changelog
 
+## [0.13.24] - 2026-11-24
+
+### Fixed
+- **macOS/Linux: `feditor --send` ran in the background, so errors and the exit code were lost**: the installed `~/.local/bin/feditor` script only ran `-w`, `-h` and `-v` in the foreground and sent everything else to the background with its output discarded, so a missing terminal printed nothing, the exit code was always 0, and `--stdin` could not read its input. `--send` now runs in the foreground. An already installed script is updated by turning the command line command off and on again in the settings (or reinstalling).
+- **Dragging a file onto the window covered the whole window with the hint**: it now covers only the pane under the cursor, saying "Drop to paste the path" over a terminal pane and "Drop to open the file" over any other pane.
+- **A dropped file opened in the pane that had focus**: it now opens in the pane where it was dropped.
+- **macOS: the cursor position during a drag was wrong**: the system is now asked for the cursor position directly, so the hint and the drop land on the right pane.
+
 ## [0.13.23] - 2026-11-24
 
 ### Added

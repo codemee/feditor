@@ -438,6 +438,13 @@ impl App {
         out
     }
 
+    /// `pos` 所在的窗格，以及它目前顯示的分頁是不是終端機。不在任何窗格內就是 `None`。
+    pub(crate) fn drop_target_at(&self, pos: egui::Pos2) -> Option<(PaneId, egui::Rect, bool)> {
+        let (id, rect) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, r)| (*id, *r))?;
+        let is_terminal = if id == self.layout.focus { self.doc.terminal.is_some() } else { self.layout.others.get(&id).is_some_and(|set| set.active_doc().terminal.is_some()) };
+        Some((id, rect, is_terminal))
+    }
+
     /// 拖進視窗的檔案放在 `pos`：那裡是終端機窗格（作用中的分頁是終端機）就把路徑貼進去並給它焦點，回傳 `true`；
     /// 否則回傳 `false`，由呼叫端照一般方式開檔。
     pub(crate) fn drop_into_terminal(&mut self, pos: egui::Pos2, payload: DropPayload) -> bool {
