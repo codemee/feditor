@@ -190,6 +190,7 @@ fn quote(text: &str) -> String {
 pub fn script(exe: &Path) -> String {
     format!(
         "#!/bin/sh\n{MARKER}\n\
+         [ \"$1\" = --send ] && exec {exe} \"$@\"\n\
          for a in \"$@\"; do\n\
          \x20 case \"$a\" in\n\
          \x20   --) break ;;\n\
@@ -287,6 +288,8 @@ mod tests {
         assert_eq!(s.lines().nth(1), Some(MARKER));
         assert!(s.contains("nohup '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\" >/dev/null 2>&1 &"), "{s}");
         assert!(s.contains("-w|--wait|-h|--help|-v|--version) exec '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\""), "{s}");
+        // --send 要看得到錯誤訊息、拿得到結束碼、讀得到標準輸入：前景執行
+        assert!(s.contains("[ \"$1\" = --send ] && exec '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\""), "{s}");
         let odd = script(Path::new("/tmp/it's here/feditor"));
         assert!(odd.contains(r"'/tmp/it'\''s here/feditor'"), "{odd}");
     }

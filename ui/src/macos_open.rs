@@ -15,7 +15,7 @@ use objc2::ffi::class_addMethod;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, NSObject, Sel};
 use objc2::{class, define_class, msg_send, sel, MainThreadOnly};
-use objc2_foundation::{MainThreadMarker, NSString, NSURL};
+use objc2_foundation::{MainThreadMarker, NSString};
 
 /// 收到、還沒被主畫面取走的路徑，以及收到時要叫醒畫面的函式。
 static PENDING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
