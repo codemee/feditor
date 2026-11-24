@@ -2,6 +2,18 @@
 
 # Changelog
 
+## [0.13.23] - 2026-11-24
+
+### Added
+- **Command line `feditor --send`: send text or keys to a terminal**: hands them to the running FEditor, which feeds them to the chosen terminal (it neither raises the window nor changes the focus or the tab being shown). `-t NAME` picks the terminal (matched against the first part of its tab label, case-insensitive; a default name can be written as just its number), `-k KEY` sends a key (`Enter`, `Esc`, `Tab`, arrows, `F1`-`F12`, `Ctrl+C`, `Alt+B`, ...), `-e` sends Enter, and plain text is typed as is. Text and keys are sent in the order given. `--paste` sends the text as a bracketed paste so the newlines of multi-line text are not taken as Enter (suits interactive programs such as Claude Code); `--file FILE` and `--stdin` read the text from a file or standard input. When the terminal cannot be found, several match the name, or a key is misspelled, nothing is sent and the reason is shown (with the names of the existing terminals) with exit code 1. `--send` must be the first argument.
+- **`--help`, `--version` and error messages are now visible on Windows**: the release build is a windowed program and used to print nothing in a terminal; it now attaches to the terminal that started it before printing, and still writes to the redirect when standard output is redirected.
+- **Debug PTY recording**: start FEditor with the environment variable `FEDITOR_PTY_DUMP=file-prefix` and every terminal saves the raw output of its shell (`.bin`) and a timestamped text log (`.log`: how many bytes were read, the window size, what the program asked and what was answered, and the input sent to the shell), so a terminal display problem can be replayed and reproduced. Not enabled at all when the variable is not set.
+
+### Changed
+- **A terminal's tab label now always starts with its name**, followed by the program's title or the folder: "Terminal 2 · feditor", "Terminal 2 · ✳ Claude Code"; one you named reads "Server · feditor". Two terminals in the same folder can still be told apart.
+
+### Fixed
+- **Windows: after a terminal printed a lot at once, the view stopped half-way until a key was pressed**: for example `claude --continue` restoring a long conversation left the view in the middle of the conversation with no input line until any key was pressed or another window was clicked. On Windows the output is first collected into an internal pipe and the reader is woken when there is new data; but each read handles at most about 64 KB before yielding, leaving the rest in the pipe, and "wake me when there is more" is only registered again after a read finds the pipe empty, so when the program stopped after its burst nobody read the rest until the next input. Every read that returns data now posts a "readable" event, so reading goes on until the pipe is really empty.
 ## [0.13.22] - 2026-11-23
 
 ### Added

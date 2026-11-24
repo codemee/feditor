@@ -18,9 +18,64 @@ impl Target {
     }
 }
 
+/// `--send` 要送進終端機的一項東西，依命令列上的順序送。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SendItem {
+    /// 文字，當成使用者打的字送進去（換行是 Enter，不會自動在最後補 Enter）；`--paste` 時用括號貼上送。
+    Text(String),
+    /// 按鍵，例如 `Enter`、`Ctrl+C`、`Up`（寫法見 [`crate::terminal::parse_key`]）。
+    Key(String),
+    /// 標準輸入的內容（最後一個換行去掉）。只在命令列解析之後、送出之前用 [`SendArgs::resolve_inputs`] 換成 `Text`。
+    Stdin,
+    /// 檔案的內容（最後一個換行去掉）。同上，送出之前換成 `Text`。
+    File(String),
+}
+
+/// `feditor --send`：把文字或按鍵送進執行中的 FEditor 裡的某個終端機。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SendArgs {
+    /// 終端機的名稱；沒指定就用目前的終端機。
+    pub terminal: Option<String>,
+    pub items: Vec<SendItem>,
+    /// `--paste`：文字用「括號貼上」送（程式有開括號貼上模式時，換行不會被當成 Enter）。
+    pub paste: bool,
+}
+
+impl SendArgs {
+    /// 把 `Stdin`、`File` 項目換成讀到的內容（最後一個換行去掉）；讀不到、或內容是空的就回傳錯誤，
+    /// 不會悄悄送出空字串。沒有這類項目就不會去讀。`stdin` 只會讀一次，`file` 依檔名各讀一次。
+    pub fn resolve_inputs(
+        &mut self,
+        stdin: impl FnOnce() -> Result<String, String>,
+        file: impl Fn(&str) -> Result<String, String>,
+    ) -> Result<(), String> {
+        let trim = |text: String| text.strip_suffix("\r\n").or_else(|| text.strip_suffix('\n')).unwrap_or(&text).to_owned();
+        let mut stdin = Some(stdin);
+        let mut stdin_text: Option<String> = None;
+        for item in &mut self.items {
+            let (text, what) = match item {
+                SendItem::Stdin => {
+                    if stdin_text.is_none() {
+                        stdin_text = Some(trim((stdin.take().ok_or("標準輸入只能讀一次")?)()?));
+                    }
+                    (stdin_text.clone().unwrap_or_default(), "標準輸入".to_owned())
+                }
+                SendItem::File(path) => (trim(file(path)?), format!("檔案 {path}")),
+                _ => continue,
+            };
+            if text.is_empty() {
+                return Err(format!("{what}是空的，沒有東西可以送"));
+            }
+            *item = SendItem::Text(text);
+        }
+        Ok(())
+    }
+}
+
 /// 解析後的命令列。
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Args {
+    pub send: Option<SendArgs>,
     pub help: bool,
     pub version: bool,
     /// `-n`：不交給執行中的視窗，另外開一個新視窗。
@@ -41,6 +96,25 @@ pub const USAGE: &str = "\
   --                 之後的都當成檔名
 
 檔名後面可以接 :行 或 :行:欄，開啟後跳到那個位置，例如 feditor src/main.rs:120:5
+
+把文字或按鍵送進終端機（--send 要放在第一個）：
+  feditor --send [-t 名稱] [-e] [-k 按鍵]… [--paste] [--stdin] [文字]…
+      送進執行中的 FEditor 的終端機（不會把視窗叫到前面）。
+
+      -t, --terminal 名稱   終端機的名稱（分頁上最前面那段：預設的「終端機 2」或自己取的名字；
+                            預設名稱也可以只寫編號 2）。沒指定時用目前的終端機，
+                            只有一個終端機時就是它
+      --text 文字           明確指定一段文字（文字以 - 開頭時用）；直接寫的文字也一樣
+      -k, --key 按鍵        送一個按鍵，例如 Enter、Esc、Tab、Up、Ctrl+C、Alt+B、F5
+      -e, --enter           送 Enter，等於 -k Enter
+      --paste               文字用「括號貼上」送：多行文字的換行不會被當成 Enter
+                            （Claude Code 這類互動程式適用；要送出再加 -e）
+      -f, --file 檔案       把檔案的內容當成文字送（最後一個換行去掉），例如 feditor --send -f 提示.txt --paste -e
+      --stdin               從標準輸入讀文字（最後一個換行去掉），
+                            例如 Get-Content 檔案 -Raw | feditor --send --stdin --paste -e
+      文字、按鍵依命令列上的順序送，文字不會自動補 Enter。例如：
+        feditor --send -t 伺服器 \"cargo run\" -e
+        feditor --send -t 2 -k Ctrl+C
 ";
 
 /// 解析 `args`（不含程式名稱）。不認得的選項回傳錯誤訊息。
@@ -54,6 +128,13 @@ fn parse_with(
 ) -> Result<Args, String> {
     let mut out = Args::default();
     let mut only_files = false;
+    let mut args = args.into_iter().peekable();
+    // 第一個參數是 --send：把文字、按鍵送進終端機，後面的參數都是 --send 的
+    if args.peek().is_some_and(|a| a == "--send") {
+        args.next();
+        out.send = Some(parse_send(args)?);
+        return Ok(out);
+    }
     for arg in args {
         let text = arg.to_string_lossy();
         if !only_files && text.starts_with('-') && text.len() > 1 {
@@ -70,6 +151,40 @@ fn parse_with(
             continue;
         }
         out.targets.push(split_position(&PathBuf::from(&arg), &exists));
+    }
+    Ok(out)
+}
+
+/// 解析 `--send` 後面的參數。
+fn parse_send(args: impl Iterator<Item = std::ffi::OsString>) -> Result<SendArgs, String> {
+    let mut out = SendArgs::default();
+    let mut args = args;
+    let mut literal = false; // `--` 之後都是文字
+    while let Some(arg) = args.next() {
+        let text = arg.to_string_lossy().into_owned();
+        if literal || !text.starts_with('-') || text == "-" {
+            out.items.push(SendItem::Text(text));
+            continue;
+        }
+        let mut value = |name: &str| args.next().map(|v| v.to_string_lossy().into_owned()).ok_or_else(|| format!("{name} 後面要接值"));
+        match text.as_str() {
+            "--" => literal = true,
+            "-t" | "--terminal" => out.terminal = Some(value(&text)?),
+            "--text" => out.items.push(SendItem::Text(value(&text)?)),
+            "-k" | "--key" => {
+                let key = value(&text)?;
+                crate::terminal::parse_key(&key)?;
+                out.items.push(SendItem::Key(key));
+            }
+            "-e" | "--enter" => out.items.push(SendItem::Key("Enter".to_owned())),
+            "--paste" => out.paste = true,
+            "--stdin" => out.items.push(SendItem::Stdin),
+            "-f" | "--file" => out.items.push(SendItem::File(value(&text)?)),
+            t => return Err(format!("--send 不認得的選項：{t}（文字以 - 開頭時請用 --text）")),
+        }
+    }
+    if out.items.is_empty() {
+        return Err("--send 要至少給一段文字、一個按鍵或 --stdin".to_owned());
     }
     Ok(out)
 }
@@ -129,6 +244,65 @@ mod tests {
         assert!(run(&["--version"], &[]).unwrap().version);
     }
 
+    #[test]
+    fn send_parses_terminal_text_and_keys_in_order() {
+        let a = run(&["--send", "-t", "伺服器", "cargo run", "-e", "--text", "-x", "-k", "Ctrl+C"], &[]).unwrap();
+        let send = a.send.unwrap();
+        assert_eq!(send.terminal.as_deref(), Some("伺服器"));
+        assert_eq!(
+            send.items,
+            vec![
+                SendItem::Text("cargo run".into()),
+                SendItem::Key("Enter".into()),
+                SendItem::Text("-x".into()),
+                SendItem::Key("Ctrl+C".into()),
+            ]
+        );
+        assert!(a.targets.is_empty());
+        // `--` 之後都是文字
+        let send = run(&["--send", "--", "-k"], &[]).unwrap().send.unwrap();
+        assert_eq!(send.items, vec![SendItem::Text("-k".into())]);
+    }
+
+    #[test]
+    fn send_rejects_bad_input_and_only_the_first_argument_makes_it_a_send() {
+        assert!(run(&["--send"], &[]).is_err(), "沒有內容");
+        assert!(run(&["--send", "-k", "Nonsense"], &[]).is_err(), "不認得的按鍵");
+        assert!(run(&["--send", "-t"], &[]).is_err(), "缺值");
+        assert!(run(&["--send", "--bogus", "x"], &[]).is_err());
+        // 單獨的 send 現在只是檔名
+        let a = run(&["send"], &[]).unwrap();
+        assert!(a.send.is_none() && a.targets == vec![Target::plain("send")]);
+        // --send 不是第一個參數：不認得的選項
+        assert!(run(&["a.txt", "--send"], &[]).is_err());
+    }
+
+    #[test]
+    fn paste_stdin_and_file_options_are_resolved_before_sending() {
+        let send = run(&["--send", "--paste", "--stdin", "-e", "--file", "提示.txt"], &[]).unwrap().send.unwrap();
+        assert!(send.paste);
+        assert_eq!(send.items, vec![SendItem::Stdin, SendItem::Key("Enter".into()), SendItem::File("提示.txt".into())]);
+        // 只有 --stdin 或 --file 也算有內容
+        assert!(run(&["--send", "--stdin"], &[]).is_ok() && run(&["--send", "-f", "x"], &[]).is_ok());
+        assert!(run(&["--send", "--file"], &[]).is_err(), "缺檔名");
+        let no_file = |_: &str| -> Result<String, String> { panic!("不該讀檔") };
+        let mut send = send;
+        send.resolve_inputs(|| Ok("a\nb\n".to_owned()), |p| Ok(format!("內容來自{p}\r\n"))).unwrap();
+        assert_eq!(send.items[0], SendItem::Text("a\nb".into()), "最後一個換行去掉");
+        assert_eq!(send.items[2], SendItem::Text("內容來自提示.txt".into()), "檔案內容也去掉最後一個換行");
+        let mut crlf = SendArgs { items: vec![SendItem::Stdin], ..Default::default() };
+        crlf.resolve_inputs(|| Ok("x\r\n\r\n".to_owned()), no_file).unwrap();
+        assert_eq!(crlf.items[0], SendItem::Text("x\r\n".into()), "只去掉最後一個");
+        let mut none = SendArgs { items: vec![SendItem::Text("t".into())], ..Default::default() };
+        none.resolve_inputs(|| panic!("沒有 --stdin 不該去讀"), no_file).unwrap();
+        // 讀不到、或內容是空的：回報錯誤，不會悄悄送出空字串（PowerShell 的管線不會傳給視窗程式，讀到的就是空的）
+        let mut bad = SendArgs { items: vec![SendItem::Stdin], ..Default::default() };
+        assert!(bad.resolve_inputs(|| Err("讀不到".into()), no_file).is_err());
+        let mut empty = SendArgs { items: vec![SendItem::Stdin], ..Default::default() };
+        assert!(empty.resolve_inputs(|| Ok(String::new()), no_file).unwrap_err().contains("標準輸入是空的"));
+        let mut empty_file = SendArgs { items: vec![SendItem::File("a".into())], ..Default::default() };
+        assert!(empty_file.resolve_inputs(|| Ok("x".into()), |_| Ok("\n".into())).unwrap_err().contains("檔案 a是空的"));
+    }
     #[test]
     fn unknown_options_are_errors_but_double_dash_allows_dashed_names() {
         assert!(run(&["--nope"], &[]).is_err());

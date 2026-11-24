@@ -52,9 +52,18 @@ struct Shared {
     bells: std::sync::atomic::AtomicUsize,
     /// 目前畫面用的配色，程式用 OSC 4／10／11／12 問顏色時照它回答；窗格每一幀更新（見 [`Terminal::set_theme_colors`]）。
     theme: parking_lot_free::Mutex<Option<ThemeColors>>,
+    /// 除錯記錄（`FEDITOR_PTY_DUMP`），平常是 `None`。
+    log: parking_lot_free::Mutex<Option<Arc<crate::pty_tap::DumpLog>>>,
 }
 
 impl Shared {
+    /// 有開除錯記錄時寫一行。
+    fn note(&self, text: &str) {
+        if let Some(log) = self.log.lock().as_ref() {
+            log.note(text);
+        }
+    }
+
     /// [`pty_tap`] 在輸出裡撈到的東西（在讀取輸出的背景執行緒上呼叫）。
     fn on_osc(&self, osc: Osc, ctx: &egui::Context) {
         match osc {
@@ -225,6 +234,7 @@ impl EventListener for Listener {
             }
             // 程式問終端機的問題（游標位置、裝置屬性…），答案要寫回 shell
             Event::PtyWrite(text) => {
+                self.shared.note(&format!("reply to program: {:?}", text));
                 if let Some(tx) = self.shared.sender.lock().as_ref() {
                     let _ = tx.send(Msg::Input(text.into_bytes().into()));
                 }
@@ -668,7 +678,12 @@ impl Terminal {
         // 輸出先給 pty_tap 看一遍，撈出 OSC 7（目前資料夾）和通知（OSC 9／777／99），這些 alacritty_terminal 不處理
         let tap_shared = shared.clone();
         let tap_ctx = ctx.clone();
-        let pty = Tapped::new(Box::new(pty), move |osc| tap_shared.on_osc(osc, &tap_ctx));
+        let dump = crate::pty_tap::open_dump();
+        if let Some((_, log)) = &dump {
+            log.note(&format!("start {}x{}", size.cols, size.lines));
+            *shared.log.lock() = Some(log.clone());
+        }
+        let pty = Tapped::new(Box::new(pty), move |osc| tap_shared.on_osc(osc, &tap_ctx)).with_dump(dump);
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)?;
         let sender = event_loop.channel();
         *shared.sender.lock() = Some(sender.clone());
@@ -688,6 +703,7 @@ impl Terminal {
             return;
         }
         self.size = size;
+        self.shared.note(&format!("resize {}x{}", size.cols, size.lines));
         let mut term = self.term.lock();
         // 縮放後文字會重排（程式也會重畫），原來選的格子已經不是那段文字，留著會停在錯的地方，所以清掉
         term.selection = None;
@@ -698,7 +714,9 @@ impl Terminal {
 
     /// 把資料送給 shell（當成使用者打的字）。
     pub fn write(&self, bytes: impl Into<std::borrow::Cow<'static, [u8]>>) {
-        let _ = self.sender.send(Msg::Input(bytes.into()));
+        let bytes = bytes.into();
+        self.shared.note(&format!("input: {:?}", String::from_utf8_lossy(&bytes)));
+        let _ = self.sender.send(Msg::Input(bytes));
     }
 
 
@@ -929,6 +947,75 @@ pub fn dropped_paths_text(kind: ShellKind, paths: &[PathBuf]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// 命令列 `send -k` 的按鍵寫法：`Enter`、`Esc`、`Tab`、`Space`、`Backspace`、`Delete`、`Insert`、`Home`、`End`、
+/// `PageUp`、`PageDown`、`Up`／`Down`／`Left`／`Right`、`F1`～`F12`、單一字母或數字，前面可以用 `+` 接
+/// `Ctrl`、`Shift`、`Alt`（例如 `Ctrl+C`、`Alt+B`、`Ctrl+Shift+Left`）。不分大小寫。
+pub fn parse_key(spec: &str) -> Result<(egui::Key, egui::Modifiers), String> {
+    let mut mods = egui::Modifiers::NONE;
+    let mut parts: Vec<&str> = spec.split('+').map(str::trim).collect();
+    let name = parts.pop().filter(|n| !n.is_empty()).ok_or_else(|| format!("不認得的按鍵：{spec}"))?;
+    for m in parts {
+        match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods.ctrl = true,
+            "shift" => mods.shift = true,
+            "alt" | "option" => mods.alt = true,
+            _ => return Err(format!("不認得的修飾鍵「{m}」（可用 Ctrl、Shift、Alt）：{spec}")),
+        }
+    }
+    let lower = name.to_ascii_lowercase();
+    let canonical = match lower.as_str() {
+        "enter" | "return" => "Enter",
+        "esc" | "escape" => "Escape",
+        "tab" => "Tab",
+        "space" => "Space",
+        "backspace" | "bs" => "Backspace",
+        "delete" | "del" => "Delete",
+        "insert" | "ins" => "Insert",
+        "home" => "Home",
+        "end" => "End",
+        "pageup" | "pgup" => "PageUp",
+        "pagedown" | "pgdn" => "PageDown",
+        "up" => "ArrowUp",
+        "down" => "ArrowDown",
+        "left" => "ArrowLeft",
+        "right" => "ArrowRight",
+        _ => name,
+    };
+    let canonical = if canonical.len() == 1 { canonical.to_ascii_uppercase() } else if canonical.starts_with(['f', 'F']) { canonical.to_ascii_uppercase() } else { canonical.to_owned() };
+    egui::Key::from_name(&canonical).map(|k| (k, mods)).ok_or_else(|| format!("不認得的按鍵：{spec}"))
+}
+
+/// 一個按鍵要送給 shell 的位元組。沒有修飾鍵（或只有 Shift）的字母、數字就是那個字元；Alt 加字元是 ESC 加字元；
+/// 其餘照一般按鍵編碼（方向鍵、Ctrl+字母…）。
+fn key_bytes(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Option<Vec<u8>> {
+    let name = key.name();
+    let mut chars = name.chars();
+    let single = chars.next().filter(char::is_ascii_alphanumeric).filter(|_| chars.next().is_none());
+    if let Some(c) = single.filter(|_| !mods.ctrl) {
+        let c = if mods.shift { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+        return Some(if mods.alt { alt_text(&c.to_string()) } else { c.to_string().into_bytes() });
+    }
+    encode_key(key, mods, mode)
+}
+
+/// `--send` 的內容換成要寫進 shell 的位元組：文字照打（換行是 `\r`），`paste` 時改用括號貼上（見 [`paste_bytes`]）；
+/// 按鍵依 [`parse_key`] 編碼。
+pub fn send_bytes(items: &[crate::cli::SendItem], paste: bool, mode: TermMode) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            crate::cli::SendItem::Text(text) if paste => out.extend(paste_bytes(text, mode)),
+            crate::cli::SendItem::Text(text) => out.extend(text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()),
+            crate::cli::SendItem::Stdin | crate::cli::SendItem::File(_) => return Err("內部錯誤：標準輸入或檔案還沒讀進來".to_owned()),
+            crate::cli::SendItem::Key(spec) => {
+                let (key, mods) = parse_key(spec)?;
+                out.extend(key_bytes(key, mods, mode).ok_or_else(|| format!("這個按鍵沒辦法送進終端機：{spec}"))?);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// 貼上的文字：換行統一成 `\r`；shell 要求括號貼上模式時加上包裝，並去掉文字裡會提早結束它的序列。
@@ -1248,6 +1335,29 @@ mod tests {
         let bracketed = paste_bytes("x\x1b[201~y", TermMode::BRACKETED_PASTE);
         assert_eq!(bracketed, b"\x1b[200~xy\x1b[201~");
         assert_eq!(alt_text("b"), b"\x1bb");
+    }
+
+    #[test]
+    fn send_keys_are_parsed_and_encoded() {
+        use crate::cli::SendItem::{Key, Text};
+        let bytes = |items: &[crate::cli::SendItem]| send_bytes(items, false, TermMode::NONE).unwrap();
+        assert_eq!(bytes(&[Key("Enter".into())]), b"\r");
+        assert_eq!(bytes(&[Key("esc".into())]), b"\x1b");
+        assert_eq!(bytes(&[Key("Ctrl+C".into())]), vec![3]);
+        assert_eq!(bytes(&[Key("ctrl+shift+left".into())]), b"\x1b[1;6D");
+        assert_eq!(bytes(&[Key("Up".into())]), b"\x1b[A");
+        assert_eq!(bytes(&[Key("F5".into())]), b"\x1b[15~");
+        assert_eq!(bytes(&[Key("Alt+b".into())]), b"\x1bb");
+        assert_eq!(bytes(&[Key("a".into()), Key("Shift+a".into()), Key("7".into())]), b"aA7");
+        // 文字照打，換行變成 Enter；文字與按鍵依順序
+        assert_eq!(bytes(&[Text("ls\nnext".into()), Key("Enter".into())]), b"ls\rnext\r");
+        assert!(parse_key("Hyper+X").is_err() && parse_key("Ctrl+").is_err() && parse_key("").is_err());
+        assert!(parse_key("Nonsense").is_err());
+        // --paste：整段文字用括號貼上送（換行不會觸發送出）；程式沒開括號貼上模式就和一般貼上一樣
+        let paste = |mode| send_bytes(&[Text("a\nb".into()), Key("Enter".into())], true, mode).unwrap();
+        assert_eq!(paste(TermMode::BRACKETED_PASTE), b"\x1b[200~a\rb\x1b[201~\r");
+        assert_eq!(paste(TermMode::NONE), b"a\rb\r");
+        assert!(send_bytes(&[crate::cli::SendItem::Stdin], false, TermMode::NONE).is_err());
     }
 
     #[test]

@@ -5624,9 +5624,14 @@ impl eframe::App for App {
             }
         }
         // 別的 FEditor 轉交來的路徑：加進待開清單，並把視窗叫到前面
+        let mut sends = Vec::new();
         if let Some(rx) = &self.incoming {
             let mut any = false;
-            while let Ok(req) = rx.try_recv() {
+            while let Ok(mut req) = rx.try_recv() {
+                if let Some(send) = req.send.take() {
+                    sends.push(send);
+                    continue;
+                }
                 let paths: Vec<PathBuf> = req.targets.iter().map(|t| t.path.clone()).collect();
                 self.startup_goto.extend(req.targets.into_iter().filter(|t| t.line.is_some()));
                 if let Some(done) = req.done {
@@ -5639,6 +5644,11 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
+        }
+        // `feditor --send`：把文字、按鍵送進指定的終端機（不動視窗與焦點），結果回給對方
+        for send in sends {
+            let result = self.send_to_terminal(send.terminal.as_deref(), &send.items, send.paste);
+            let _ = send.reply.send(result);
         }
         // 有對話框在等回答時先不開（資料夾的選檔交談窗不能疊上去），等對話框關了再處理
         if !self.startup_paths.is_empty() && self.modal.is_none() {
@@ -8841,6 +8851,41 @@ mod tests {
         assert!(app.terminal_tabs().is_empty());
     }
     #[test]
+    fn send_goes_to_the_named_terminal_in_any_pane_without_changing_focus() {
+        use crate::cli::SendItem::{Key, Text};
+        let mut app = App::new(None, Settings::default());
+        let editor_pane = app.layout.focus;
+        app.new_terminal(); // 終端機 1
+        app.doc.terminal.as_mut().unwrap().set_custom_name("伺服器");
+        app.new_terminal(); // 終端機 2，在另一個窗格
+        let focused_before = (app.layout.focus, app.tabs.active());
+        let pending = |app: &mut App, name: &str| -> String {
+            app.all_terminals_mut().into_iter().find(|t| t.name() == name).unwrap().pending_text()
+        };
+        // 名稱（不分大小寫）、預設名稱的編號：各送到自己那一個，焦點不動
+        assert_eq!(app.send_to_terminal(Some("伺服器"), &[Text("cargo run".into()), Key("Enter".into())], false), Ok(()));
+        assert_eq!(app.send_to_terminal(Some("終端機 2"), &[Key("Ctrl+C".into())], false), Ok(()));
+        assert_eq!(app.send_to_terminal(Some("2"), &[Text("x".into())], false), Ok(()));
+        assert_eq!(pending(&mut app, "伺服器"), "cargo run\r");
+        assert_eq!(pending(&mut app, "終端機 2"), "\u{3}x");
+        assert_eq!((app.layout.focus, app.tabs.active()), focused_before, "不改變焦點與顯示的分頁");
+        // 編號只對預設名稱有效：「伺服器」的編號 1 不能用
+        assert!(app.send_to_terminal(Some("1"), &[Text("x".into())], false).unwrap_err().contains("找不到"));
+        // 找不到：訊息列出現有的名稱
+        let err = app.send_to_terminal(Some("不存在"), &[Text("x".into())], false).unwrap_err();
+        assert!(err.contains("不存在") && err.contains("伺服器") && err.contains("終端機 2"), "{err}");
+        // 沒指定名稱：作用中的分頁是終端機就用它；焦點在編輯區、又有好幾個終端機就要求指定
+        assert_eq!(app.send_to_terminal(None, &[Text("y".into())], false), Ok(()));
+        assert_eq!(pending(&mut app, "終端機 2"), "\u{3}xy");
+        app.focus_pane(editor_pane);
+        assert!(app.doc.terminal.is_none());
+        assert!(app.send_to_terminal(None, &[Text("z".into())], false).unwrap_err().contains("-t"));
+        // 壞的按鍵不會送出任何東西
+        assert!(app.send_to_terminal(Some("伺服器"), &[Text("w".into()), Key("Nonsense".into())], false).is_err());
+        assert_eq!(pending(&mut app, "伺服器"), "cargo run\r");
+    }
+
+    #[test]
     fn double_clicking_a_terminal_tab_renames_it_and_an_empty_name_restores_the_default() {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
@@ -8960,6 +9005,31 @@ mod tests {
         assert_eq!(app.doc.text(), "one");
     }
 }
+/// 命令列模式（說明、版本、錯誤訊息）輸出文字。Windows 的正式版是視窗程式，沒有主控台：
+/// 先接上啟動它的終端機；標準輸出被導向（檔案、管線）時照舊寫到那裡。
+fn cli_print(to_stderr: bool, text: &str) {
+    use std::io::Write;
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+        // SAFETY: 單純的系統呼叫，沒有指標參數
+        let redirected = unsafe {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+            let handle = GetStdHandle(if to_stderr { STD_ERROR_HANDLE } else { STD_OUTPUT_HANDLE });
+            !handle.is_null() && handle as isize != -1
+        };
+        if !redirected && let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+            let _ = console.write_all(text.as_bytes());
+            return;
+        }
+    }
+    if to_stderr {
+        let _ = std::io::stderr().write_all(text.as_bytes());
+    } else {
+        let _ = std::io::stdout().write_all(text.as_bytes());
+    }
+}
+
 fn main() -> eframe::Result {
     // 這台機器的 Vulkan 後端會崩潰，Windows 上預設改用 DX12（使用者仍可自行覆寫）
     #[cfg(windows)]
@@ -8971,16 +9041,34 @@ fn main() -> eframe::Result {
     let args = match cli::parse(std::env::args_os().skip(1)) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("feditor: {e}\n\n{}", cli::USAGE);
+            cli_print(true, &format!("feditor: {e}\n\n{}", cli::USAGE));
             std::process::exit(2);
         }
     };
     if args.help {
-        print!("{}", cli::USAGE);
+        cli_print(false, cli::USAGE);
         return Ok(());
     }
     if args.version {
-        println!("feditor {}", env!("CARGO_PKG_VERSION"));
+        cli_print(false, &format!("feditor {}\n", env!("CARGO_PKG_VERSION")));
+        return Ok(());
+    }
+    // `feditor --send`：把文字、按鍵交給執行中的 FEditor 就結束，不開視窗
+    if let Some(mut send) = args.send {
+        let result = send
+            .resolve_inputs(
+                || {
+                    let mut text = Vec::new();
+                    std::io::Read::read_to_end(&mut std::io::stdin(), &mut text).map_err(|e| format!("讀不到標準輸入：{e}"))?;
+                    Ok(String::from_utf8_lossy(&text).into_owned())
+                },
+                |path| std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).map_err(|e| format!("讀不到檔案 {path}：{e}")),
+            )
+            .and_then(|()| single_instance::send(&send));
+        if let Err(e) = result {
+            cli_print(true, &format!("feditor --send: {e}\n"));
+            std::process::exit(1);
+        }
         return Ok(());
     }
 

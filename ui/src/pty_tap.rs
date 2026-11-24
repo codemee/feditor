@@ -188,12 +188,60 @@ fn percent_decode(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// 除錯用的記錄（環境變數 `FEDITOR_PTY_DUMP` 有設才會有，平常不啟用）：每個終端機一份文字記錄（`.log`：
+/// 什麼時間讀到幾個位元組、視窗大小變了、送了什麼給 shell）和一份原始輸出（`.bin`：shell 送來的位元組原封不動）。
+/// 終端機畫面出問題時，把這兩個檔案拿去重播就能重現。
+pub struct DumpLog {
+    file: std::sync::Mutex<std::fs::File>,
+    start: std::time::Instant,
+}
+
+impl DumpLog {
+    pub fn note(&self, text: &str) {
+        use std::io::Write;
+        if let Ok(mut file) = self.file.lock() {
+            let _ = writeln!(file, "{:>9.3} {text}", self.start.elapsed().as_secs_f64());
+        }
+    }
+}
+
+/// 依 `FEDITOR_PTY_DUMP`（檔名前綴）開一組記錄檔：`<前綴>-<行程編號>-<序號>.bin` 與 `.log`。沒設就是 `None`。
+pub fn open_dump() -> Option<(std::fs::File, Arc<DumpLog>)> {
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let base = std::env::var_os("FEDITOR_PTY_DUMP").filter(|b| !b.is_empty())?;
+    let name = format!("{}-{}-{}", base.to_string_lossy(), std::process::id(), COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let bin = std::fs::File::create(format!("{name}.bin")).ok()?;
+    let log = std::fs::File::create(format!("{name}.log")).ok()?;
+    Some((bin, Arc::new(DumpLog { file: std::sync::Mutex::new(log), start: std::time::Instant::now() })))
+}
+
 /// 讀的時候順便把資料給 [`Scanner`] 看的 PTY 讀取端。
 pub struct TapReader<R> {
     inner: *mut R,
     scanner: Scanner,
     found: Vec<Osc>,
     on_found: Box<dyn FnMut(Osc) + Send>,
+    dump: Option<(std::fs::File, Arc<DumpLog>)>,
+    /// 事件迴圈登記讀取時給的（poller, 事件），讀到資料之後用來補投喚醒（見 [`TapReader::nudge`]）。
+    wake: Arc<std::sync::Mutex<Option<(Arc<Poller>, Event)>>>,
+}
+
+impl<R> TapReader<R> {
+    /// 讀到資料之後，替事件迴圈再補投一個「可讀」事件，讓它多讀一次、一路讀到管線真的空了。
+    ///
+    /// Windows 上 alacritty_terminal 的輸出是先由背景執行緒收進一條內部管線，管線有新資料才喚醒事件迴圈；
+    /// 但事件迴圈每次最多處理約 64KB 就會先讓出（`MAX_LOCKED_READ`），管線裡可能還剩資料，而「下次有資料再喚醒」
+    /// 要等讀到管線空了才會重新登記。程式一次吐出一大塊（Claude Code 還原很長的對話）就停下來時，
+    /// 剩下的就留在管線裡沒人去讀，直到下一次輸入才被讀出來，畫面看起來停在中途。補投這個事件讓迴圈再跑一次：
+    /// 那次讀到空，喚醒才會重新登記好。其他平台的輪詢是水平觸發，不需要。
+    fn nudge(&self) {
+        #[cfg(windows)]
+        if let Some((poller, _)) = self.wake.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            use polling::os::iocp::{CompletionPacket, PollerIocpExt};
+            // 事件迴圈只認 `PTY_READ_WRITE_TOKEN` 這個鍵（Windows 的 PTY 登記時把迴圈給的鍵換成它），用別的鍵會被忽略
+            let _ = poller.post(CompletionPacket::new(Event::readable(alacritty_terminal::tty::PTY_READ_WRITE_TOKEN)));
+        }
+    }
 }
 
 // SAFETY: `inner` 指向同一個 `Tapped` 裡面、放在 `Box` 中的 PTY 讀取端，只有這個 `TapReader` 會用它；
@@ -204,6 +252,14 @@ impl<R: io::Read> io::Read for TapReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // SAFETY: 見 `Tapped::new`：`inner` 指向 `Box<P>` 裡的讀取端，`Tapped` 活著它就有效，而且沒有別的參考同時在用
         let n = unsafe { &mut *self.inner }.read(buf)?;
+        if let Some((bin, log)) = &mut self.dump {
+            use std::io::Write;
+            let _ = bin.write_all(&buf[..n]);
+            log.note(&format!("read {n} bytes"));
+        }
+        if n > 0 {
+            self.nudge();
+        }
         self.scanner.feed(&buf[..n], &mut self.found);
         for osc in self.found.drain(..) {
             (self.on_found)(osc);
@@ -216,13 +272,26 @@ impl<R: io::Read> io::Read for TapReader<R> {
 pub struct Tapped<P: EventedReadWrite> {
     pty: Box<P>,
     reader: TapReader<P::Reader>,
+    /// 和 `reader.wake` 是同一份：登記讀取時記下 poller 與事件。
+    wake: Arc<std::sync::Mutex<Option<(Arc<Poller>, Event)>>>,
 }
 
 impl<P: EventedReadWrite> Tapped<P> {
     pub fn new(mut pty: Box<P>, on_found: impl FnMut(Osc) + Send + 'static) -> Self {
         // 讀取端在 `Box` 裡，位置不會因為 `Tapped` 被搬動而改變
         let inner: *mut P::Reader = pty.reader();
-        Self { pty, reader: TapReader { inner, scanner: Scanner::default(), found: Vec::new(), on_found: Box::new(on_found) } }
+        let wake = Arc::new(std::sync::Mutex::new(None));
+        Self { pty, reader: TapReader { inner, scanner: Scanner::default(), found: Vec::new(), on_found: Box::new(on_found), dump: None, wake: wake.clone() }, wake }
+    }
+
+    fn remember(&self, poller: &Arc<Poller>, event: Event) {
+        *self.wake.lock().unwrap_or_else(|e| e.into_inner()) = Some((poller.clone(), event));
+    }
+
+    /// 開啟除錯記錄（見 [`open_dump`]）。
+    pub fn with_dump(mut self, dump: Option<(std::fs::File, Arc<DumpLog>)>) -> Self {
+        self.reader.dump = dump;
+        self
     }
 }
 
@@ -231,9 +300,11 @@ impl<P: EventedReadWrite> EventedReadWrite for Tapped<P> {
     type Writer = P::Writer;
 
     unsafe fn register(&mut self, poller: &Arc<Poller>, event: Event, mode: PollMode) -> io::Result<()> {
+        self.remember(poller, event);
         unsafe { self.pty.register(poller, event, mode) }
     }
     fn reregister(&mut self, poller: &Arc<Poller>, event: Event, mode: PollMode) -> io::Result<()> {
+        self.remember(poller, event);
         self.pty.reregister(poller, event, mode)
     }
     fn deregister(&mut self, poller: &Arc<Poller>) -> io::Result<()> {
@@ -373,5 +444,30 @@ mod tests {
         }
         assert_eq!(got, data, "資料原封不動");
         assert_eq!(*seen.lock().unwrap(), vec![Osc::Notify, Osc::Cwd("file:///C:/x".into())]);
+    }
+
+    /// 事件迴圈每次只處理一部分就讓出，管線裡可能還剩資料；讀到資料之後要替它補投一個「可讀」事件，
+    /// 不然剩下的要等到下一次輸入才會被讀出來（Claude Code 還原很長的對話時畫面停在中途）。
+    #[cfg(windows)]
+    #[test]
+    fn reading_data_posts_a_readable_event_so_leftover_output_is_not_stranded() {
+        let poller = Arc::new(Poller::new().unwrap());
+        let mut tapped = Tapped::new(Box::new(Fake(io::Cursor::new(b"abc".to_vec()), Vec::new())), |_| {});
+        // 事件迴圈登記讀取（假的 PTY 自己什麼事件也不會送）
+        unsafe { tapped.register(&poller, Event::readable(0), PollMode::Level).unwrap() };
+        let mut events = polling::Events::new();
+        poller.wait(&mut events, Some(std::time::Duration::from_millis(50))).unwrap();
+        assert!(events.iter().next().is_none(), "還沒讀到資料之前沒有事件");
+        let mut buf = [0u8; 8];
+        assert_eq!(tapped.reader().read(&mut buf).unwrap(), 3);
+        events.clear();
+        poller.wait(&mut events, Some(std::time::Duration::from_secs(2))).unwrap();
+        let event = events.iter().next().expect("讀到資料之後要補投事件");
+        assert!(event.readable && event.key == alacritty_terminal::tty::PTY_READ_WRITE_TOKEN, "事件迴圈只認這個鍵：{}", event.key);
+        // 讀到空（資料讀完了）就不再補投，迴圈不會空轉
+        events.clear();
+        assert_eq!(tapped.reader().read(&mut buf).unwrap(), 0);
+        poller.wait(&mut events, Some(std::time::Duration::from_millis(100))).unwrap();
+        assert!(events.iter().next().is_none(), "讀到空不補投");
     }
 }

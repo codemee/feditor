@@ -10,8 +10,9 @@
 //! 用戶端 → FEDITOR2 <使用者名稱>
 //! 用戶端 → wait（要等檔案關閉才結束時才有這一行）
 //! 用戶端 → open<TAB><行><TAB><欄><TAB><絕對路徑>（有幾個就幾行；行、欄是 0 表示沒指定）
+//! 用戶端 → send<TAB><終端機名稱，可空>（feditor send：之後接 text<TAB><文字>、key<TAB><按鍵>；文字裡的反斜線、換行、TAB 寫成 \\ \n \r \t）
 //! 用戶端 → （空行，結束）
-//! 伺服器 → OK
+//! 伺服器 → OK（send 是處理完才回；失敗回 ERR<TAB><原因>）
 //! 伺服器 → DONE（只有 wait 才有：那些檔案都關閉之後）
 //! ```
 //! 第一行必須是這個固定的開頭加上同一個使用者名稱：網頁或別的程式亂送的資料（例如 HTTP 請求）
@@ -19,7 +20,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use crate::cli::Target;
+use crate::cli::{SendArgs, SendItem, Target};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -28,12 +29,91 @@ use std::time::Duration;
 pub const PORT: u16 = 49731;
 
 const MAGIC: &str = "FEDITOR2";
+/// `--send` 用另一個開頭：不認得 send 的舊版會把它當成陌生資料直接丟掉（用戶端就知道對方太舊），
+/// 不會像開檔請求那樣不管內容就回 OK。
+const MAGIC_SEND: &str = "FEDITOR3";
 
-/// 轉交來的一批要開的檔案。
+/// 轉交來的一批要開的檔案，或一個 `send`（把文字、按鍵送進終端機）。
 pub struct Request {
     pub targets: Vec<Target>,
     /// 對方在等：這些檔案都關閉之後，對 `done` 送一個訊號（或直接丟掉它，表示不用等了）。
     pub done: Option<mpsc::Sender<()>>,
+    pub send: Option<SendRequest>,
+}
+
+/// `feditor --send` 的請求：處理完（或失敗）把結果丟進 `reply`，對方才會結束並顯示錯誤。
+pub struct SendRequest {
+    pub terminal: Option<String>,
+    pub items: Vec<SendItem>,
+    /// 文字用括號貼上送。
+    pub paste: bool,
+    pub reply: mpsc::Sender<Result<(), String>>,
+}
+
+/// 文字要拆成不超過這麼多字元一行送出（協定一行有長度上限）。
+const TEXT_CHUNK: usize = 4000;
+
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
+}
+
+fn unescape(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// `feditor --send`：把文字、按鍵交給執行中的 FEditor。沒有 FEditor 在執行、或對方回報失敗（找不到終端機…）就回傳錯誤訊息。
+pub fn send(args: &SendArgs) -> Result<(), String> {
+    send_at(PORT, args)
+}
+
+pub fn send_at(port: u16, args: &SendArgs) -> Result<(), String> {
+    let mut stream = TcpStream::connect_timeout(&address(port), Duration::from_millis(500)).map_err(|_| "FEditor 沒有在執行，沒辦法送".to_owned())?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let mut message = format!("{MAGIC_SEND} {}\nsend\t{}\n", user_name(), escape(args.terminal.as_deref().unwrap_or("")));
+    if args.paste {
+        message.push_str("paste\n");
+    }
+    for item in &args.items {
+        match item {
+            SendItem::Text(text) => {
+                let chars: Vec<char> = text.chars().collect();
+                for chunk in chars.chunks(TEXT_CHUNK) {
+                    message.push_str(&format!("text\t{}\n", escape(&chunk.iter().collect::<String>())));
+                }
+            }
+            SendItem::Key(key) => message.push_str(&format!("key\t{}\n", escape(key))),
+            // 標準輸入在送出之前就換成文字了（見 SendArgs::resolve_inputs）
+            SendItem::Stdin | SendItem::File(_) => {}
+        }
+    }
+    message.push('\n');
+    stream.write_all(message.as_bytes()).map_err(|e| format!("送出失敗：{e}"))?;
+    let mut reply = String::new();
+    BufReader::new(stream).read_line(&mut reply).map_err(|_| "FEditor 沒有回應".to_owned())?;
+    let reply = reply.trim_end_matches(['\r', '\n']);
+    if reply == "OK" {
+        Ok(())
+    } else if let Some(message) = reply.strip_prefix("ERR\t") {
+        Err(unescape(message))
+    } else {
+        Err("FEditor 沒有回應（可能是不支援 --send 的舊版，或別的使用者的 FEditor）".to_owned())
+    }
 }
 
 /// 啟動時的角色。
@@ -138,13 +218,31 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
             // 每個連線各用一個執行緒：有人連上來卻不說話，不會卡住後面正常的請求
             let (tx, notify) = (tx.clone(), notify.clone());
             std::thread::spawn(move || {
-                let Some((targets, wait, mut stream)) = read_request(stream) else { return };
+                let Some(parsed) = read_request(stream) else { return };
+                let (targets, wait, mut stream) = (parsed.targets, parsed.wait, parsed.stream);
+                if let Some(args) = parsed.send {
+                    // send：等畫面那邊處理完，把結果（OK 或錯誤）回給對方
+                    let (reply_tx, reply_rx) = mpsc::channel();
+                    let request = Request { targets: Vec::new(), done: None, send: Some(SendRequest { terminal: args.terminal, items: args.items, paste: args.paste, reply: reply_tx }) };
+                    if tx.send(request).is_err() {
+                        return;
+                    }
+                    notify();
+                    let answer = match reply_rx.recv_timeout(Duration::from_secs(8)) {
+                        Ok(Ok(())) => "OK\n".to_owned(),
+                        Ok(Err(message)) => format!("ERR\t{}\n", escape(&message)),
+                        Err(_) => format!("ERR\t{}\n", escape("FEditor 沒有及時處理（可能正在顯示對話框）")),
+                    };
+                    let _ = stream.write_all(answer.as_bytes());
+                    return;
+                }
                 if targets.is_empty() {
                     return;
                 }
+                let _ = stream.write_all(b"OK\n");
                 let (done_tx, done_rx) = mpsc::channel();
                 let done = wait.then_some(done_tx);
-                if tx.send(Request { targets, done }).is_err() {
+                if tx.send(Request { targets, done, send: None }).is_err() {
                     return;
                 }
                 notify();
@@ -158,31 +256,49 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
     rx
 }
 
-/// 讀一個連線的請求；格式不對就 `None`。正確的話回 `OK`，並把連線交還（`wait` 時之後還要回 `DONE`）。
-fn read_request(stream: TcpStream) -> Option<(Vec<Target>, bool, TcpStream)> {
+struct Parsed {
+    targets: Vec<Target>,
+    wait: bool,
+    /// `send` 請求的內容。
+    send: Option<SendArgs>,
+    stream: TcpStream,
+}
+
+/// 讀一個連線的請求；格式不對就 `None`。正確的話把連線交還：開檔的請求之後要先回 `OK`（`wait` 時再回 `DONE`），
+/// `send` 要等處理完才回 `OK` 或錯誤。
+fn read_request(stream: TcpStream) -> Option<Parsed> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let mut first = String::new();
     // 限制長度：不是我們的用戶端就不要一直讀下去
     std::io::Read::take(&mut reader, 4096).read_line(&mut first).ok()?;
-    if first.trim_end() != format!("{MAGIC} {}", user_name()) {
+    let first = first.trim_end();
+    if first != format!("{MAGIC} {}", user_name()) && first != format!("{MAGIC_SEND} {}", user_name()) {
         return None;
     }
     let mut targets = Vec::new();
     let mut wait = false;
-    for _ in 0..1000 {
+    let mut send: Option<SendArgs> = None;
+    for _ in 0..2000 {
         let mut line = String::new();
         if std::io::Read::take(&mut reader, 32768).read_line(&mut line).ok()? == 0 {
             return None; // 沒收到結束的空行就斷線
         }
         let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
-            let mut out = stream;
-            out.write_all(b"OK\n").ok()?;
-            return Some((targets, wait, out));
+            return Some(Parsed { targets, wait, send, stream });
         }
         if line == "wait" {
             wait = true;
+        } else if let Some(rest) = line.strip_prefix("send\t") {
+            let name = unescape(rest);
+            send = Some(SendArgs { terminal: (!name.is_empty()).then_some(name), ..Default::default() });
+        } else if let Some(rest) = line.strip_prefix("text\t") {
+            send.as_mut()?.items.push(SendItem::Text(unescape(rest)));
+        } else if let Some(rest) = line.strip_prefix("key\t") {
+            send.as_mut()?.items.push(SendItem::Key(unescape(rest)));
+        } else if line == "paste" {
+            send.as_mut()?.paste = true;
         } else if let Some(rest) = line.strip_prefix("open\t") {
             let mut f = rest.splitn(3, '\t');
             let (l, c, path) = (f.next()?, f.next()?, f.next()?);
@@ -254,6 +370,8 @@ mod tests {
         };
         // 網頁送來的 HTTP 請求、別的使用者、沒有結束空行：都不回 OK，也不開任何檔案
         assert_eq!(send("POST / HTTP/1.1\r\nHost: localhost\r\n\r\n/etc/passwd\n\n"), "");
+        // 舊版只認得 FEDITOR2：send 的開頭它不會回 OK（用戶端據此知道對方不支援）
+        assert_eq!(send(&format!("{MAGIC_SEND} someone-else\nsend\t\ntext\tx\n\n")), "");
         assert_eq!(send(&format!("{MAGIC} someone-else\nopen\t0\t0\t/tmp/x\n\n")), "");
         assert_eq!(send(&format!("{MAGIC} {}\nopen\t0\t0\t/tmp/x\n", user_name())), "");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "不該收到任何路徑");
@@ -296,6 +414,52 @@ mod tests {
         let client = std::thread::spawn(move || forward(address(port), &[Target::plain("/tmp/w.txt")], true));
         drop(rx.recv_timeout(Duration::from_secs(3)).unwrap()); // 丟掉 done：不用等了
         assert!(client.join().unwrap());
+    }
+
+    #[test]
+    fn send_carries_text_and_keys_and_returns_the_receivers_answer() {
+        let port = free_port();
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let rx = serve(listener, || {});
+        // 扮演畫面那一邊：收到 send 就檢查內容，名稱叫「壞」的回報失敗
+        let app = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let send = rx.recv_timeout(Duration::from_secs(3)).unwrap().send.unwrap();
+                let answer = if send.terminal.as_deref() == Some("壞") { Err("找不到終端機「壞」".to_owned()) } else { Ok(()) };
+                if answer.is_ok() {
+                    assert_eq!(send.terminal.as_deref(), Some("伺服器"));
+                    assert!(send.paste, "--paste 旗標送到");
+                    assert_eq!(send.items, vec![SendItem::Text("ls\ttab\\back\nline2".into()), SendItem::Key("Enter".into())], "tab、反斜線、換行原樣送到");
+                }
+                send.reply.send(answer).unwrap();
+            }
+        });
+        let args = SendArgs { terminal: Some("伺服器".into()), items: vec![SendItem::Text("ls\ttab\\back\nline2".into()), SendItem::Key("Enter".into())], paste: true };
+        assert_eq!(send_at(port, &args), Ok(()));
+        let bad = SendArgs { terminal: Some("壞".into()), items: vec![SendItem::Key("Enter".into())], paste: false };
+        assert_eq!(send_at(port, &bad), Err("找不到終端機「壞」".to_owned()));
+        app.join().unwrap();
+        // 沒人在聽
+        assert!(send_at(free_port(), &args).unwrap_err().contains("沒有在執行"));
+    }
+
+    #[test]
+    fn escaping_round_trips_special_characters_and_long_text_is_split() {
+        let text = "a\tb\\n\r\n中文\\";
+        assert_eq!(unescape(&escape(text)), text);
+        assert!(!escape(text).contains(['\n', '\r', '\t']));
+        let port = free_port();
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let rx = serve(listener, || {});
+        let long = "字".repeat(TEXT_CHUNK * 2 + 5);
+        let sent = long.clone();
+        let client = std::thread::spawn(move || send_at(port, &SendArgs { terminal: None, items: vec![SendItem::Text(sent)], paste: false }));
+        let send = rx.recv_timeout(Duration::from_secs(3)).unwrap().send.unwrap();
+        let joined: String = send.items.iter().map(|i| match i { SendItem::Text(t) => t.as_str(), _ => "" }).collect();
+        assert_eq!(joined, long, "拆成好幾行送，收到的接起來和原本一樣");
+        assert!(send.items.len() >= 3 && send.terminal.is_none());
+        send.reply.send(Ok(())).unwrap();
+        assert_eq!(client.join().unwrap(), Ok(()));
     }
 
     #[test]

@@ -245,6 +245,25 @@ impl TerminalPane {
         }
     }
 
+    /// 終端機的名稱（分頁標籤最前面那段）：自己取的名字，沒有就是預設的「終端機 2」。
+    pub fn name(&self) -> String {
+        self.custom_name.clone().unwrap_or_else(|| self.default_title())
+    }
+
+    /// `feditor --send`：把文字與按鍵送給 shell（不改變焦點）。shell 還沒開起來就先收著，開好之後送出。
+    pub fn send_input(&mut self, items: &[crate::cli::SendItem], paste: bool) -> Result<(), String> {
+        let mode = self.term.as_ref().map_or(TermMode::NONE, |t| t.mode());
+        let bytes = terminal::send_bytes(items, paste, mode)?;
+        match &self.term {
+            Some(term) => {
+                term.term.lock().scroll_display(Scroll::Bottom);
+                term.write(bytes);
+            }
+            None => self.pending_input.extend_from_slice(&bytes),
+        }
+        Ok(())
+    }
+
     pub fn new(dir: Option<std::path::PathBuf>, number: usize, shell: String) -> Self {
         Self {
             uid: NEXT_UID.fetch_add(1, Ordering::Relaxed),
@@ -308,18 +327,16 @@ impl TerminalPane {
         &self.shell
     }
 
-    /// 分頁上的名稱：使用者取的名字；沒有就看有什麼明確的資訊可用：裡面的程式（Claude Code 這類）設了標題就用標題
-    /// （「✳ Claude Code」），否則 shell 有回報目前資料夾就用資料夾名稱（「feditor」）；
-    /// 兩者都沒有才用預設的「終端機 2」。
+    /// 分頁上的名稱：終端機的名稱放在最前面（使用者取的名字，沒有就是預設的「終端機 2」，兩個終端機在同一個資料夾也分得出來），
+    /// 後面接有什麼明確的資訊可用：裡面的程式（Claude Code 這類）設了標題就用標題（「終端機 2 · ✳ Claude Code」），
+    /// 否則 shell 有回報目前資料夾就用資料夾名稱（「伺服器 · feditor」）；兩者都沒有就只有名稱。
     pub fn title(&self) -> String {
-        if let Some(name) = &self.custom_name {
-            return name.clone();
+        let name = self.custom_name.clone().unwrap_or_else(|| self.default_title());
+        let detail = self.term.as_ref().and_then(Terminal::program_title).or_else(|| self.cwd().map(|dir| folder_label(&dir)));
+        match detail {
+            Some(detail) => format!("{name} · {detail}"),
+            None => name,
         }
-        self.term
-            .as_ref()
-            .and_then(Terminal::program_title)
-            .or_else(|| self.cwd().map(|dir| folder_label(&dir)))
-            .unwrap_or_else(|| self.default_title())
     }
 
     /// 分頁上的名稱。沒有焦點時收到通知的標記不放在文字裡（● 會和檔案的「未儲存」混淆），
@@ -457,6 +474,45 @@ impl App {
         if self.doc.terminal.is_none() && id == self.layout.focus {
             self.editor.incoming_drop = Some((text.to_owned(), pos, ctx.cumulative_pass_nr()));
         }
+    }
+
+    /// 所有終端機（含背景分頁、別的窗格）。作用中的分頁是終端機時，它排在最前面。
+    pub(crate) fn all_terminals_mut(&mut self) -> Vec<&mut TerminalPane> {
+        let mut out: Vec<&mut TerminalPane> = Vec::new();
+        out.extend(self.doc.terminal.as_deref_mut());
+        out.extend(self.tabs.terminals_mut());
+        for set in self.layout.others.values_mut() {
+            out.extend(set.terminals_mut());
+        }
+        out
+    }
+
+    /// `feditor --send`：把 `items`（文字與按鍵）送進名稱是 `name` 的終端機；`name` 是 `None` 時用目前的終端機，
+    /// 只有一個終端機時就是它。名稱比對分頁標籤最前面那段（自己取的名字，或預設的「終端機 2」，不分大小寫），
+    /// 預設名稱也可以只寫編號。找不到或有好幾個符合時回傳錯誤訊息（附上現有的名稱）。不改變焦點與顯示的分頁。
+    pub(crate) fn send_to_terminal(&mut self, name: Option<&str>, items: &[crate::cli::SendItem], paste: bool) -> Result<(), String> {
+        let active_is_terminal = self.doc.terminal.is_some();
+        let mut terminals = self.all_terminals_mut();
+        let names: Vec<String> = terminals.iter().map(|t| t.name()).collect();
+        let list = || if names.is_empty() { "目前沒有終端機".to_owned() } else { format!("現有的終端機：{}", names.join("、")) };
+        let index = match name.map(str::trim).filter(|n| !n.is_empty()) {
+            Some(wanted) => {
+                let number: Option<usize> = wanted.parse().ok();
+                let matches: Vec<usize> = (0..terminals.len())
+                    .filter(|&i| names[i].eq_ignore_ascii_case(wanted) || terminals[i].title().eq_ignore_ascii_case(wanted) || (number == Some(terminals[i].number()) && terminals[i].custom_name().is_none()))
+                    .collect();
+                match matches.as_slice() {
+                    [one] => *one,
+                    [] => return Err(format!("找不到終端機「{wanted}」。{}", list())),
+                    _ => return Err(format!("有好幾個終端機叫「{wanted}」，沒辦法決定要送給哪一個。{}", list())),
+                }
+            }
+            None if terminals.len() == 1 => 0,
+            // 作用中的分頁是終端機：它排在最前面
+            None if active_is_terminal => 0,
+            None => return Err(format!("沒有指定終端機（用 -t 名稱）。{}", list())),
+        };
+        terminals[index].send_input(items, paste)
     }
 
     /// 識別編號為 `uid` 的終端機在哪個窗格的第幾個分頁（已經關掉了就是 `None`）。
