@@ -86,6 +86,8 @@ pub enum Icon {
     LangEnglish,
     /// 通知（鈴鐺）：終端機在背景收到通知時標在分頁上。
     Bell,
+    /// 更多（兩個向右的箭頭）：工具列放不下的按鈕收在這裡。
+    Overflow,
 }
 
 /// 按鈕尺寸。工具列用 `Normal`，狀態列用 `Small`。
@@ -344,6 +346,10 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         Icon::ChevronDown => line(&[(3.5, 6.0), (8.0, 10.5), (12.5, 6.0)]),
         Icon::ChevronRight => line(&[(6.0, 3.5), (10.5, 8.0), (6.0, 12.5)]),
         Icon::ChevronLeft => line(&[(10.0, 3.5), (5.5, 8.0), (10.0, 12.5)]),
+        Icon::Overflow => {
+            line(&[(3.5, 3.5), (7.5, 8.0), (3.5, 12.5)]);
+            line(&[(8.5, 3.5), (12.5, 8.0), (8.5, 12.5)]);
+        }
         Icon::Close => {
             line(&[(3.5, 3.5), (12.5, 12.5)]);
             line(&[(12.5, 3.5), (3.5, 12.5)]);

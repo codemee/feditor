@@ -51,6 +51,9 @@ mod terminal_text;
 mod scroll_sync;
 mod shell_icons;
 mod watcher;
+mod window_chrome;
+#[cfg(windows)]
+mod win_frame;
 #[cfg(windows)]
 mod win_icon;
 mod theme;
@@ -342,9 +345,11 @@ fn tight_buttons(ui: &mut egui::Ui) {
 }
 
 /// 設定面板左側的標籤（順序與 `settings_page` 的頁碼一致）。
-const SETTINGS_TABS: [&str; 7] = ["介面", "編輯區", "檔案類型", "預覽", "終端機", "狀態列", "快捷鍵"];
+const SETTINGS_TABS: [&str; 8] = ["介面", "編輯區", "檔案類型", "預覽", "終端機", "狀態列", "快捷鍵", "關於"];
 /// 「快捷鍵」頁在 [`SETTINGS_TABS`] 裡的索引。
 const SHORTCUTS_TAB: usize = 6;
+/// 「關於」頁在 [`SETTINGS_TABS`] 裡的索引。
+const ABOUT_TAB: usize = 7;
 
 /// 巨集說明文件在 GitHub 上的網址（介面是英文就開英文版）。
 fn macro_docs_url(english: bool) -> String {
@@ -3100,6 +3105,110 @@ impl App {
         let mut action = None;
         ui.horizontal(|ui| {
             tight_buttons(ui);
+            // 設定鈕和三顆視窗按鈕固定靠右；其他群組依序排在圖示後面，
+            // 放不下時從最後一組開始收進「更多」的下拉清單
+            let full_clip = ui.clip_rect();
+            let toolbar_rect = ui.max_rect();
+            let separator_width = if window_chrome::CUSTOM { 9.0 } else { 0.0 };
+            let left_limit = toolbar_rect.right() - window_chrome::RIGHT_WIDTH - separator_width - icons::BUTTON_HEIGHT;
+            ui.set_clip_rect(full_clip.intersect(egui::Rect::everything_left_of(left_limit)));
+            // 自繪標題列：整條工具列可以拖曳視窗（先登記，按鈕才會蓋在它上面），最左邊是應用程式圖示
+            if window_chrome::CUSTOM {
+                let bar = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), icons::BUTTON_HEIGHT));
+                window_chrome::drag_area(ui, bar);
+                window_chrome::app_icon(ui);
+            }
+
+            // 各群組的寬度記在上一個畫面：量過之後才知道放不放得下（第一個畫面全部照畫，下一個畫面就會收進「更多」）
+            let groups = Self::TOOLBAR_GROUPS;
+            let widths_id = ui.make_persistent_id("toolbar_group_widths");
+            let known: Vec<f32> = ui.data(|d| d.get_temp(widths_id)).unwrap_or_else(|| vec![0.0; groups]);
+            let spacing = ui.spacing().item_spacing.x;
+            let separator = 1.0 + spacing; // 群組之間的分隔線（前一個元件後面的間距已經算在群組寬度裡）
+            let available = left_limit - ui.cursor().min.x;
+            let total = |n: usize| known[..n].iter().sum::<f32>() + n.saturating_sub(1) as f32 * separator;
+            let mut visible = groups;
+            if known.iter().all(|w| *w > 0.0) && total(groups) > available {
+                let reserve = separator + icons::BUTTON_HEIGHT + spacing; // 分隔線與「更多」鈕
+                visible = (0..groups).rev().find(|&n| total(n) + reserve <= available).unwrap_or(0);
+            }
+            let mut measured = known.clone();
+            for group in 0..visible {
+                if group > 0 {
+                    group_separator(ui);
+                }
+                let x0 = ui.cursor().min.x;
+                if let Some(a) = self.toolbar_group(ui, group) {
+                    action = Some(a);
+                }
+                measured[group] = ui.cursor().min.x - x0;
+            }
+            if measured.iter().zip(&known).any(|(a, b)| (a - b).abs() > 0.5) {
+                ui.ctx().request_repaint();
+            }
+            ui.data_mut(|d| d.insert_temp(widths_id, measured));
+
+            if visible < groups {
+                if visible > 0 {
+                    group_separator(ui);
+                }
+                let overflow = icons::button(ui, Icon::Overflow, t("更多工具"), true);
+                let settings_before = self.settings_open;
+                // 點到清單裡的按鈕不會自動關閉（裡面有自己的下拉選單，點下拉不能把整份清單關掉），
+                // 所以有動作或展開了設定面板時自己關
+                egui::Popup::menu(&overflow).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                    tight_buttons(ui);
+                    for group in visible..groups {
+                        let mut group_action = None;
+                        ui.horizontal(|ui| group_action = self.toolbar_group(ui, group));
+                        if group_action.is_some() || self.settings_open != settings_before {
+                            ui.close();
+                        }
+                        if group_action.is_some() {
+                            action = group_action;
+                        }
+                    }
+                });
+                // 收進「更多」的巨集鈕：巨集面板展開在「更多」鈕下面
+                if visible <= Self::TOOLBAR_MACRO_GROUP {
+                    self.macro_anchor = Some(overflow.rect);
+                }
+            }
+
+            // 固定在最右邊：設定鈕，再右邊是三顆視窗按鈕（由右往左排，所以先畫視窗按鈕）
+            ui.set_clip_rect(full_clip);
+            let right_rect = egui::Rect::from_min_max(
+                egui::pos2(left_limit, toolbar_rect.top()),
+                egui::pos2(toolbar_rect.right(), toolbar_rect.top() + icons::BUTTON_HEIGHT),
+            );
+            let right_builder = egui::UiBuilder::new()
+                .max_rect(right_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center));
+            ui.scope_builder(right_builder, |ui| {
+                if window_chrome::CUSTOM {
+                    window_chrome::buttons(ui);
+                    group_separator(ui);
+                }
+                if let Some(a) = self.toolbar_group(ui, Self::TOOLBAR_SETTINGS_GROUP) {
+                    action = Some(a);
+                }
+            });
+        });
+        action
+    }
+
+    /// 會依序排、放不下會收進「更多」的群組數：檔案、格式、尋找、終端機、預覽、巨集。
+    const TOOLBAR_GROUPS: usize = 6;
+    const TOOLBAR_MACRO_GROUP: usize = 5;
+    /// 設定不在上面那些群組裡：固定畫在工具列最右邊（視窗按鈕的左邊），永遠不收進「更多」。
+    const TOOLBAR_SETTINGS_GROUP: usize = 6;
+
+    /// 畫工具列的第 `group` 組按鈕（索引見 [`Self::TOOLBAR_GROUPS`]），回傳按下去的動作。
+    /// 放不下時整組改畫在「更多」的清單裡，所以每一組都要能獨立畫。
+    fn toolbar_group(&mut self, ui: &mut egui::Ui, group: usize) -> Option<Action> {
+        let mut action = None;
+        match group {
+        0 => {
             // 所有按鈕只顯示圖示，文字說明放在 tooltip
             if icons::button(ui, Icon::New, t("新增空白文件 (Ctrl+N)"), true).clicked() {
                 action = Some(Action::New);
@@ -3138,9 +3247,8 @@ impl App {
             if icons::button(ui, Icon::SaveAs, t("另存新檔 (Ctrl+Shift+S)"), true).clicked() {
                 action = Some(Action::SaveAs);
             }
-
-            group_separator(ui);
-
+        }
+        1 => {
             // 轉換縮排：有選取只轉選到的行，沒有就轉整份文件；欄寬用這份文件的檔案類型的 Tab 欄數
             let editable = self.doc.terminal.is_none();
             if icons::button(ui, Icon::TabsToSpaces, t("把 Tab 換成空白（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"), editable).clicked() {
@@ -3176,10 +3284,9 @@ impl App {
                     ui.close();
                 }
             });
-
-            group_separator(ui);
-
-            let find_tip = t("尋找與取代 (Ctrl+F，取代 Ctrl+H，在資料夾中尋找 Ctrl+Shift+F)");
+        }
+        2 => {
+            let find_tip =t("尋找與取代 (Ctrl+F，取代 Ctrl+H，在資料夾中尋找 Ctrl+Shift+F)");
             if icons::toggle(ui, Icon::Search, find_tip, self.folder.open).clicked() {
                 action = Some(if self.folder.open {
                     Action::CloseFind
@@ -3187,9 +3294,8 @@ impl App {
                     Action::Find { replace: false }
                 });
             }
-
-            group_separator(ui);
-
+        }
+        3 => {
             // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式；
             // 按下去用設定裡的預設終端機，旁邊的下拉清單可以改選別的 shell 來新增
             // 主按鈕和下拉箭頭之間不留縫（間距是放在每個元件「後面」的，所以主按鈕放之前先設成 0、
@@ -3261,17 +3367,15 @@ impl App {
                     }
                 });
             });
-
-            group_separator(ui);
-
+        }
+        4 => {
             let preview_on = self.preview_id().is_some();
             if icons::toggle(ui, Icon::Preview, t("預覽 (Ctrl+Shift+P)"), preview_on).clicked() {
                 action = Some(Action::TogglePreview);
             }
-
-            group_separator(ui);
-
-            let run = icons::toggle(ui, Icon::Run, t("巨集：執行、設快捷鍵、編輯"), self.macro_open);
+        }
+        5 => {
+            let run =icons::toggle(ui, Icon::Run, t("巨集：執行、設快捷鍵、編輯"), self.macro_open);
             self.macro_anchor = Some(run.rect);
             if run.clicked() {
                 action = Some(Action::ToggleMacroMenu);
@@ -3289,31 +3393,25 @@ impl App {
             if icons::toggle(ui, icon, tip, recording).clicked() {
                 action = Some(Action::ToggleRecord);
             }
-
-            // 最右邊、單獨一組：設定。按下後展開設定面板（配色、字型、字級）。
+        }
+        _ => {
+            // 設定：固定在工具列最右邊。按下後展開設定面板（配色、字型、字級）。
             // 面板不用 egui 的 Popup：Popup 與下拉選單共用「同一時間只開一個」的狀態，
             // 面板裡一打開字型下拉，整個面板就被關掉了。所以面板用 Area 畫，自己決定何時關閉。
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let more = icons::toggle(
-                    ui,
-                    Icon::More,
-                    t("設定（配色、字型、字級）"),
-                    self.settings_open,
-                );
-                group_separator(ui);
-                self.settings_anchor = Some(more.rect);
-                if more.clicked() {
-                    self.settings_open = !self.settings_open;
-                    if self.settings_open {
-                        // 使用者可能剛在 themes 資料夾放了新的配色檔
-                        self.refresh_schemes();
-                        self.refresh_preview_plugins();
-                        self.shells = terminal::detect_shells(); // 使用者可能剛裝了新的 shell
-                        self.apply_schemes(ui.ctx());
-                    }
+            let more = icons::toggle(ui, Icon::More, t("設定（配色、字型、字級）"), self.settings_open);
+            self.settings_anchor = Some(more.rect);
+            if more.clicked() {
+                self.settings_open = !self.settings_open;
+                if self.settings_open {
+                    // 使用者可能剛在 themes 資料夾放了新的配色檔
+                    self.refresh_schemes();
+                    self.refresh_preview_plugins();
+                    self.shells = terminal::detect_shells(); // 使用者可能剛裝了新的 shell
+                    self.apply_schemes(ui.ctx());
                 }
-            });
-        });
+            }
+        }
+        }
         action
     }
 
@@ -3774,9 +3872,9 @@ impl App {
     /// 巨集面板：執行、設快捷鍵、編輯、刪除。
     fn macro_panel(&self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
-        ui.set_min_width(380.0);
         no_hover_outline(ui);
         if self.macros.is_empty() {
+            ui.set_min_width(380.0);
             ui.label(
                 egui::RichText::new(t("還沒有巨集。按工具列的錄製鈕錄一個，或把 .js 檔放進巨集資料夾。"))
                     .color(ui.visuals().weak_text_color()),
@@ -3795,6 +3893,15 @@ impl App {
             .map(|s| text_width(&s))
             .fold(0.0, f32::max)
             + 2.0;
+        // 面板寬度：由內容決定，不讓每一列的靠右排列撐滿到畫面邊緣（名稱和下拉清單之間會空出一大段）。
+        // 一列 = 執行鈕 + 名稱 + 檔案類型下拉 + 快捷鍵欄 + 四個小圖示（含間距與「其他檔案類型」的縮排）；
+        // 下面那排按鈕也要放得下
+        let names_width = self.macros.iter().map(|m| text_width(&m.name)).fold(0.0, f32::max);
+        let rows_width = names_width + shortcut_width + MACRO_TYPES_WIDTH + 174.0;
+        let padding = ui.spacing().button_padding.x * 2.0;
+        let footer_labels = [t("從檔案執行…"), t("開啟巨集資料夾"), t("查看快捷鍵"), t("巨集說明文件")];
+        let footer_width = footer_labels.iter().map(|s| text_width(s) + padding).sum::<f32>() + ui.spacing().item_spacing.x * 3.0;
+        ui.set_width(rows_width.max(footer_width).max(260.0));
         let lang = self.doc_lang();
         let (here, elsewhere): (Vec<usize>, Vec<usize>) = (0..self.macros.len()).partition(|&i| self.macros[i].applies_to(lang));
         for i in here {
@@ -4628,6 +4735,18 @@ impl App {
                     }))
                     .response
                     .on_hover_text(t("狀態列「行、欄」的欄號算法：1 是一個字一欄（多數編輯器），2 是和畫面寬度一致"));
+            });
+        });
+        }
+        if tab == ABOUT_TAB {
+        // ── 關於：視窗標題列不顯示版本，看版本到這裡 ──
+        group_title(ui, t("關於"));
+        settings_grid(ui, "settings_about", |ui| {
+            form_row(ui, t("應用程式"), |ui| {
+                ui.label("FEditor");
+            });
+            form_row(ui, t("版本"), |ui| {
+                ui.label(env!("CARGO_PKG_VERSION"));
             });
         });
         }
@@ -6006,12 +6125,8 @@ impl eframe::App for App {
             }
         }
 
-        let title = format!(
-            "{}{} - FEditor {}",
-            self.doc.name(),
-            if self.doc.dirty { " ●" } else { "" },
-            env!("CARGO_PKG_VERSION")
-        );
+        // 視窗標題只給工作列、Alt+Tab 用（自繪標題列不畫出來），版本放在設定面板
+        let title = format!("{}{} - FEditor", self.doc.name(), if self.doc.dirty { " ●" } else { "" });
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.last_title = title;
@@ -8154,6 +8269,30 @@ mod tests {
     }
 
     #[test]
+    fn macro_panel_is_only_as_wide_as_its_content_even_with_a_lot_of_room() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Settings::default());
+        app.macros = vec![
+            macro_file(dir.path(), "a.js", "// @name 中標\n// @shortcut Alt+M\n"),
+            macro_file(dir.path(), "b.js", "// @name 小標\n// @shortcut Alt+S\n"),
+        ];
+        let ctx = egui::Context::default();
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 700.0)));
+        let mut width = 0.0;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(raw.clone(), |ui| {
+                let shown = egui::Area::new(egui::Id::unique("macro_area_test")).fixed_pos(egui::pos2(100.0, 50.0)).show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| app.macro_panel(ui))
+                });
+                width = shown.response.rect.width();
+            });
+            output.textures_delta.clear();
+        }
+        assert!(width < 480.0, "名稱很短時面板不該被撐寬：{width}");
+    }
+
+    #[test]
     fn the_wrap_tool_surrounds_the_selection_and_hands_the_focus_back_without_clearing_it() {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
@@ -9108,7 +9247,11 @@ fn main() -> eframe::Result {
     let icon_png: &[u8] = include_bytes!("../assets/icon.png");
     let icon = eframe::icon_data::from_png_bytes(icon_png).expect("內建圖示損毀");
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_icon(icon),
+        // 最小寬度要放得下整條工具列（左邊的功能鈕加上右邊的設定與視窗按鈕），否則左右兩段會疊在一起
+        viewport: egui::ViewportBuilder::default()
+            .with_icon(icon)
+            .with_decorations(!window_chrome::CUSTOM)
+            .with_min_inner_size([window_chrome::MIN_WINDOW_WIDTH, 300.0]),
         ..Default::default()
     };
 
@@ -9147,6 +9290,8 @@ fn main() -> eframe::Result {
                     && let RawWindowHandle::Win32(h) = handle.as_raw()
                 {
                     text_drop::install(h.hwnd.get(), cc.egui_ctx.clone());
+                    // 自繪標題列：視窗邊緣縮放與最大化鈕的貼齊版面選單
+                    win_frame::install(h.hwnd.get(), cc.egui_ctx.clone());
                 }
             }
             app.sync_shell_menu();

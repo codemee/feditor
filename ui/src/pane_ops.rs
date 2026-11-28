@@ -929,7 +929,8 @@ impl App {
             }
 
             let mut bar_h = 0.0;
-            if multi || self.pane_tab_count(id) > 1 {
+            {
+                // 分頁列一律顯示（只剩一個窗格、一個分頁也一樣）：終端機要靠雙按分頁改名，版面也不會跳動
                 // 最左邊的分頁對齊編輯區的文字區（行號區的右邊），不是壓在行號區上
                 let left = (CARD_INSET + self.gutter_width(&ctx, id)).round().clamp(8.0, 120.0) as i8;
                 let framed = egui::Frame::new()
