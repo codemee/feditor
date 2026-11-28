@@ -1,7 +1,9 @@
 //! Windows：自繪標題列需要的原生視窗行為（見 `window_chrome`）。
 //!
 //! 系統標題列拿掉之後，winit 的無框視窗只有最上緣能拖曳縮放，也沒有 Windows 11 的「貼齊版面」選單。
-//! 這裡掛一個自己的視窗程序，攔下 `WM_NCHITTEST` 回報：
+//! 這裡掛一個自己的視窗程序，以 `WM_NCCALCSIZE` 保留原生側邊與下邊框，只移除標題列；
+//! 不能把整個非客戶區清空，否則即使回報 `HTMAXBUTTON`，Windows 11 仍不會顯示貼齊版面。
+//! 再攔下 `WM_NCHITTEST` 回報：
 //!
 //! - 視窗四邊四角：縮放區，游標形狀、拖曳縮放都由系統處理；
 //! - 自繪的最大化鈕：`HTMAXBUTTON`，滑鼠停上去系統就會跳出貼齊版面選單。
@@ -12,11 +14,13 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
-use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, GWLP_WNDPROC, GetCursorPos, GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTMAXBUTTON, HTRIGHT, HTTOP,
-    HTTOPLEFT, HTTOPRIGHT, IsZoomed, PostMessageW, SC_MAXIMIZE, SC_RESTORE, SetWindowLongPtrW, WM_MOUSEMOVE, WM_NCHITTEST,
-    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_SYSCOMMAND,
+    CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetCursorPos, GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT,
+    HTMAXBUTTON, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, NCCALCSIZE_PARAMS, PostMessageW, SC_MAXIMIZE, SC_RESTORE,
+    SM_CXPADDEDBORDER, SM_CYSIZEFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW,
+    SetWindowPos, WM_MOUSEMOVE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
+    WM_SYSCOMMAND,
 };
 
 /// 縮放區的寬度（96 DPI 的像素，實際用的會依螢幕縮放放大）。
@@ -41,6 +45,13 @@ pub fn install(hwnd: isize, ctx: egui::Context) {
     // SAFETY: hwnd 是 eframe 剛建好、屬於這個行程的視窗；新的視窗程序簽章和系統要求的一致
     let previous = unsafe { SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, frame_proc as *const () as isize) };
     ORIGINAL.store(previous, Ordering::Relaxed);
+    if previous != 0 {
+        let flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
+        // SAFETY: hwnd 屬於這個執行緒；重新計算邊框，不移動、縮放或啟用視窗。
+        unsafe {
+            SetWindowPos(hwnd as HWND, std::ptr::null_mut(), 0, 0, 0, 0, flags);
+        }
+    }
 }
 
 /// 每個畫面都告訴這裡最大化鈕現在在哪（以 egui 的點為單位，客戶區座標）。
@@ -131,6 +142,29 @@ unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
     unsafe {
         let is_max_button = wparam == HTMAXBUTTON as usize;
         match msg {
+            WM_NCCALCSIZE => {
+                if wparam == 0 {
+                    return 0;
+                }
+                // 依 Windows Terminal 的 _OnNcCalcSize，先讓系統計算原生邊框，
+                // 保留左右及下邊框，只把標題列收回客戶區供 egui 繪製。
+                // https://github.com/microsoft/terminal/blob/main/src/cascadia/WindowsTerminal/NonClientIslandWindow.cpp
+                let params = lparam as *mut NCCALCSIZE_PARAMS;
+                let top = (*params).rgrc[0].top;
+                let result = DefWindowProcW(hwnd, msg, wparam, lparam);
+                if result != 0 {
+                    return result;
+                }
+                let border = if IsZoomed(hwnd) != 0 {
+                    // 最大化時原生縮放邊框會落在螢幕外，頂部也要扣掉，避免內容被裁切。
+                    let dpi = GetDpiForWindow(hwnd);
+                    GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+                } else {
+                    0
+                };
+                (*params).rgrc[0].top = top + border;
+                return 0;
+            }
             WM_NCHITTEST => {
                 // lParam 低 16 位是 x、高 16 位是 y（有號：多螢幕時座標可能是負的）
                 let x = (lparam & 0xFFFF) as i16 as i32;
@@ -143,10 +177,13 @@ unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
                 if over_max_button(hwnd, x, y) {
                     return HTMAXBUTTON as LRESULT;
                 }
+                // 標題列已由 egui 接管，不讓系統命中原生標題列或隱藏的按鈕。
+                return HTCLIENT as LRESULT;
             }
-            // 懸停追蹤（TrackMouseEvent）是系統自己在做：Snap 選單就是靠它觸發的，這裡不能插手，
-            // 訊息照樣交給原本的視窗程序。滑鼠離開靠 `max_button_hovered` 輪詢游標位置
-            WM_NCMOUSEMOVE if is_max_button => set_hover(true),
+            WM_NCMOUSEMOVE if is_max_button => {
+                // 由系統追蹤 hover；繼續轉送非客戶區訊息，讓 Windows 顯示貼齊面板。
+                set_hover(true);
+            }
             WM_NCMOUSELEAVE | WM_MOUSEMOVE => set_hover(false),
             // 自己處理按下與放開：按下時不交給系統（它會去畫不存在的標題列按鈕），放開時送出最大化或還原
             WM_NCLBUTTONDOWN if is_max_button => return 0,
