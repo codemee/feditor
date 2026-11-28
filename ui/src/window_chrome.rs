@@ -1,25 +1,32 @@
-//! 自繪的視窗標題列（Windows、Linux）：系統標題列拿掉，改由主工具列兼任。
+//! 自繪的視窗標題列（目前只有 Windows）：系統標題列拿掉，改由主工具列兼任。
 //!
 //! - 最左邊是應用程式圖示，最右邊是最小化、最大化（還原）、關閉三顆鈕；
 //! - 工具列的空白處可以拖曳視窗，雙按切換最大化。
 //!
 //! 視窗標題（工作列、Alt+Tab 看到的檔名）仍然照常設定，只是不畫在視窗裡。
-//! macOS 保留系統的紅綠燈鈕，不使用這裡的東西。
+//! macOS、Linux 保留系統標題列，不使用這裡的東西：自繪之後要自己處理視窗邊緣縮放，
+//! 目前只有 Windows 做了（見 `win_frame`）。技術細節見 `docs/windows-titlebar.md`。
 
-use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Response, Sense, Stroke, Ui, ViewportCommand, vec2};
+use eframe::egui::{
+    self, Color32, CornerRadius, Pos2, Rect, Response, Sense, Stroke, Ui, ViewportCommand, vec2,
+};
 
 use crate::icons::BUTTON_HEIGHT;
 use feditor_core::i18n::t;
 
 /// 這個平台是否使用自繪標題列。
-pub const CUSTOM: bool = cfg!(not(target_os = "macos"));
+pub const CUSTOM: bool = cfg!(windows);
 
 /// 視窗的最小寬度：放得下應用程式圖示、「更多」鈕、一點可拖曳的空白和三顆視窗按鈕。
 /// 工具列放不下的按鈕會收進「更多」，所以不必寬到放下全部。
 pub const MIN_WINDOW_WIDTH: f32 = 480.0;
 
 /// 工具列右邊固定留給三顆視窗按鈕的寬度（只有自繪標題列才有）。
-pub const RIGHT_WIDTH: f32 = if CUSTOM { 3.0 * BUTTON_WIDTH + 12.0 } else { 0.0 };
+pub const RIGHT_WIDTH: f32 = if CUSTOM {
+    3.0 * BUTTON_WIDTH + 12.0
+} else {
+    0.0
+};
 
 /// 視窗按鈕的寬度（高度和工具列按鈕一樣）。
 const BUTTON_WIDTH: f32 = 40.0;
@@ -45,14 +52,21 @@ pub fn app_icon(ui: &mut Ui) {
     };
     let snap = |v: f32| (v * ppp).round() / ppp;
     let size = wanted / ppp;
-    let min = Pos2::new(snap(slot.center().x - size / 2.0), snap(slot.center().y - size / 2.0));
+    let min = Pos2::new(
+        snap(slot.center().x - size / 2.0),
+        snap(slot.center().y - size / 2.0),
+    );
     egui::Image::new(source).paint_at(ui, Rect::from_min_size(min, vec2(size, size)));
 }
 
 /// 把 `rect`（整條工具列）登記成拖曳視窗的區域。要在工具列的其他元件**之前**呼叫，
 /// 這樣按鈕在它上面，點到按鈕不會變成拖曳視窗。
 pub fn drag_area(ui: &mut Ui, rect: Rect) {
-    let response = ui.interact(rect, ui.make_persistent_id("window_drag"), Sense::click_and_drag());
+    let response = ui.interact(
+        rect,
+        ui.make_persistent_id("window_drag"),
+        Sense::click_and_drag(),
+    );
     let ctx = ui.ctx();
     if response.drag_started_by(egui::PointerButton::Primary) {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
@@ -81,9 +95,14 @@ pub fn buttons(ui: &mut Ui) {
         // 走一般的關閉流程：有未儲存的修改會先詢問
         ui.ctx().send_viewport_cmd(ViewportCommand::Close);
     }
-    let (kind, tip) = if maximized { (Kind::Restore, t("還原視窗")) } else { (Kind::Maximize, t("最大化視窗")) };
+    let (kind, tip) = if maximized {
+        (Kind::Restore, t("還原視窗"))
+    } else {
+        (Kind::Maximize, t("最大化視窗"))
+    };
     if caption_button(ui, kind, tip).clicked() {
-        ui.ctx().send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+        ui.ctx()
+            .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
     }
     if caption_button(ui, Kind::Minimize, t("最小化視窗")).clicked() {
         ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
@@ -91,7 +110,8 @@ pub fn buttons(ui: &mut Ui) {
 }
 
 fn caption_button(ui: &mut Ui, kind: Kind, tip: &str) -> Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(BUTTON_WIDTH, BUTTON_HEIGHT), Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(BUTTON_WIDTH, BUTTON_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
@@ -110,10 +130,19 @@ fn caption_button(ui: &mut Ui, kind: Kind, tip: &str) -> Response {
         let hot = response.hovered() || response.is_pointer_button_down_on() || native_hover;
         let close_hot = kind == Kind::Close && hot;
         if hot {
-            let fill = if close_hot { CLOSE_HOVER } else { visuals.weak_bg_fill };
-            ui.painter().rect_filled(rect.shrink(1.0), CornerRadius::same(4), fill);
+            let fill = if close_hot {
+                CLOSE_HOVER
+            } else {
+                visuals.weak_bg_fill
+            };
+            ui.painter()
+                .rect_filled(rect.shrink(1.0), CornerRadius::same(4), fill);
         }
-        let color = if close_hot { Color32::WHITE } else { visuals.fg_stroke.color };
+        let color = if close_hot {
+            Color32::WHITE
+        } else {
+            visuals.fg_stroke.color
+        };
         draw_glyph(ui, kind, rect.center(), Stroke::new(1.0, color));
     }
     response.on_hover_text(tip)
@@ -129,7 +158,12 @@ fn draw_glyph(ui: &Ui, kind: Kind, c: Pos2, stroke: Stroke) {
             painter.line_segment([p(-5.0, 0.0), p(5.0, 0.0)], stroke);
         }
         Kind::Maximize => {
-            painter.rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), CornerRadius::ZERO, stroke, egui::StrokeKind::Middle);
+            painter.rect_stroke(
+                Rect::from_center_size(c, vec2(10.0, 10.0)),
+                CornerRadius::ZERO,
+                stroke,
+                egui::StrokeKind::Middle,
+            );
         }
         Kind::Restore => {
             // 前面的方框，加上藏在它後面、露出右上角的那一個
@@ -139,7 +173,16 @@ fn draw_glyph(ui: &Ui, kind: Kind, c: Pos2, stroke: Stroke) {
                 stroke,
                 egui::StrokeKind::Middle,
             );
-            painter.line(vec![p(-3.0, -3.0), p(-3.0, -5.0), p(5.0, -5.0), p(5.0, 3.0), p(3.0, 3.0)], stroke);
+            painter.line(
+                vec![
+                    p(-3.0, -3.0),
+                    p(-3.0, -5.0),
+                    p(5.0, -5.0),
+                    p(5.0, 3.0),
+                    p(3.0, 3.0),
+                ],
+                stroke,
+            );
         }
         Kind::Close => {
             painter.line_segment([p(-5.0, -5.0), p(5.0, 5.0)], stroke);

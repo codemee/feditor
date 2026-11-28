@@ -56,15 +56,29 @@ Operations are driven by **toolbar buttons**; there are no menus. Buttons show o
 | Preview (eye) | Ctrl+Shift+P | Toggles the preview pane (see below) |
 | Macro panel / rerun | F5 (rerun) | Run, set a shortcut for, edit and delete macros; a failed macro rolls back all changes |
 | Record macro | | Starts / stops recording keys and input and saves them as a macro |
-| Settings (⋯, far right) | | Interface language, appearance, color scheme, font, font size, display options |
+| Settings (⋯, left of the window buttons) | | Interface language, appearance, color scheme, font, font size, display options; the "About" page shows the version |
 | Font size | Ctrl +/-, Ctrl+wheel, Ctrl+0 | Adjusts the font size; when the preview pane has the focus it adjusts the preview's font size |
 | Tabs | Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab switch | See below |
+
+**On Windows there is no system title bar; the toolbar doubles as the title bar**:
+
+![The toolbar in a wide window](docs/images/titlebar-wide.png)
+
+- The app icon is on the far left; minimize, maximize (restore) and close are on the far right. Empty toolbar space **drags the window** and a **double-click** maximizes or restores it; hovering over the maximize button shows the Windows 11 Snap Layouts flyout.
+- The window can be resized by dragging any edge or corner.
+- When the window is narrow and the toolbar does not fit, button groups move into the `»` drop-down starting from the right; settings and the window buttons stay pinned to the right and are never hidden.
+
+  ![The toolbar in a narrow window](docs/images/titlebar-narrow.png)
+
+- The taskbar and Alt+Tab still show "file name - FEditor"; the version number is on the "About" page of the settings panel.
+- macOS and Linux still use the system title bar for now. For the technical details see [Custom title bar and Windows 11 Snap Layouts](docs/windows-titlebar.en.md).
 
 The left of the status bar shows the file path; the right shows this file's format settings: **language** (syntax highlighting), **encoding** (with BOM), **line ending**, and **reload** (re-read the file with a chosen encoding when auto-detection got it wrong), plus the caret position "Line X, Col Y" (whether a full-width character counts as 1 or 2 columns is a setting). Above the status bar is the **output panel** for messages about opened files, warnings, errors and macro output; it is collapsed to one line by default and pops open temporarily when an error appears.
 
 ## Tabs and panes
 
 - Each opened file is a tab with its own caret, selection and undo history. Opening a file that is already open switches to it instead of duplicating it. Unsaved tabs show a small red dot at the far right of the tab (replaced by × on hover).
+- **The tab bar is always shown**, even with a single pane and a single tab: the layout doesn't jump as the number of panes changes, and a terminal can always be renamed by double-clicking its tab.
 - **Double-click a tab to rename the file**: only the base name is selected at first, and pressing Enter really renames the file on disk. An invalid name, an existing file with that name, or another tab already showing that file is explained in the dialog and nothing is overwritten. For a tab that was never saved, double-clicking opens "Save As".
 - **Split panes**: drag a tab to the left, right or bottom of the editor area to split off a new pane in that direction (the area is previewed while dragging); drop it in the middle of another pane to add it to that pane's tab bar. Panes can be split again and again in any combination, the gaps can be dragged to resize, and a pane never gets smaller than 240×140 points. Press Esc while dragging to cancel.
 - **Switch panes with the keyboard**: `Alt+Arrow` moves the input focus to the nearest pane in that direction (the preview pane and terminals count too); when several panes lie in that direction, the one directly facing the current pane wins, then the upper and the left ones. When there is no pane that way the keys go to the editor as usual (`Alt+Up/Down` move the line). The modifier can be changed on the "Shortcuts" page of the settings panel to `Ctrl+Alt`, `Ctrl+Shift` or `Alt+Shift`, or turned off.
@@ -127,7 +141,7 @@ The `>_` toolbar button (Ctrl+Shift+`) adds a terminal running the system's defa
 
 ## Appearance and settings
 
-The "⋯" at the far right of the toolbar is the **settings** panel:
+The "⋯" on the right of the toolbar (left of the window buttons) is the **settings** panel; its last page, "About", shows the version:
 
 - **Interface language**: a three-state button (follow system / Chinese / English), effective immediately.
 - **Appearance**: a three-state button (follow system / light / dark).
@@ -196,6 +210,7 @@ The full API and the header markers are in [Macros](docs/macros.en.md); examples
 - [Preview plugins](docs/preview-plugins.en.md): write plugins to preview more file types.
 - [Customization and settings file](docs/customization.en.md): custom color schemes, custom syntax, the settings file format, font details.
 - [How the editor works](docs/internals.en.md): design and implementation details of the editor area, IME, file watching, sessions, the terminal and more.
+- [Custom title bar and Windows 11 Snap Layouts](docs/windows-titlebar.en.md): folding the title bar into the toolbar, resizing from the window edges, and what it took to make the Snap Layouts flyout appear.
 - [Development guide](docs/development.en.md): project layout, design decisions, building, testing, releasing.
 - [Changelog](CHANGELOG.en.md).
 - [Third-party notices](THIRD-PARTY-NOTICES.md).

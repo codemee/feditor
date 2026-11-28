@@ -11,7 +11,7 @@
 | `core/` | `feditor-core`：文字緩衝區（ropey）、undo／redo、檔案編碼、搜尋、折行、跨檔搜尋、介面語言（中英文對照表）。與 UI、巨集引擎無關 |
 | `script/` | `feditor-script`：與語言無關的巨集 API（`EditorApi`、`ScriptEngine`） |
 | `script-js/` | `feditor-script-js`：JavaScript 巨集引擎（QuickJS，經由 rquickjs） |
-| `ui/` | `feditor`：egui 前端，含自繪的編輯區（`ui/src/editor/`）、分頁與分割窗格（`panes.rs`、`pane_ops.rs`）、預覽（`preview*.rs`）、終端機（`terminal*.rs`）、檔案監看（`watcher.rs`）、巨集庫、語法上色、工作階段 |
+| `ui/` | `feditor`：egui 前端，含自繪的編輯區（`ui/src/editor/`）、分頁與分割窗格（`panes.rs`、`pane_ops.rs`）、預覽（`preview*.rs`）、終端機（`terminal*.rs`）、檔案監看（`watcher.rs`）、自繪標題列（`window_chrome.rs`、Windows 專用的 `win_frame.rs`，見[自繪標題列與 Windows 11 貼齊版面](windows-titlebar.md)）、巨集庫、語法上色、工作階段 |
 | `examples/` | 範例巨集（`macros/`）與不同編碼的測試檔（`files/`） |
 | `proto/` | 獨立的 IME 驗證原型（egui、iced、Slint），不屬於主 workspace |
 

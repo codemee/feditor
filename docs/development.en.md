@@ -11,7 +11,7 @@
 | `core/` | `feditor-core`: text buffer (ropey) with undo/redo, file encodings, search, line wrapping, search in files, and the interface language (Chinese/English table). Independent of the UI and macro engines |
 | `script/` | `feditor-script`: language-agnostic macro API (`EditorApi`, `ScriptEngine`) |
 | `script-js/` | `feditor-script-js`: JavaScript macro engine (QuickJS via rquickjs) |
-| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs and split panes (`panes.rs`, `pane_ops.rs`), preview (`preview*.rs`), terminals (`terminal*.rs`), file watching (`watcher.rs`), macro library, syntax highlighting, and session restore |
+| `ui/` | `feditor`: egui front end, including the custom-drawn editor area (`ui/src/editor/`), tabs and split panes (`panes.rs`, `pane_ops.rs`), preview (`preview*.rs`), terminals (`terminal*.rs`), file watching (`watcher.rs`), the custom title bar (`window_chrome.rs`, and the Windows-only `win_frame.rs`; see [Custom title bar and Windows 11 Snap Layouts](windows-titlebar.en.md)), macro library, syntax highlighting, and session restore |
 | `examples/` | Example macros (`macros/`) and test files in various encodings (`files/`) |
 | `proto/` | Standalone IME verification prototypes (egui, iced, Slint); not part of the main workspace |
 

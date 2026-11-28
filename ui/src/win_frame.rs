@@ -16,11 +16,12 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM}
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetCursorPos, GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT,
-    HTMAXBUTTON, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, NCCALCSIZE_PARAMS, PostMessageW, SC_MAXIMIZE, SC_RESTORE,
-    SM_CXPADDEDBORDER, SM_CYSIZEFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW,
-    SetWindowPos, WM_MOUSEMOVE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
-    WM_SYSCOMMAND,
+    CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetCursorPos, GetWindowRect, HTBOTTOM,
+    HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTMAXBUTTON, HTRIGHT, HTTOP, HTTOPLEFT,
+    HTTOPRIGHT, IsZoomed, NCCALCSIZE_PARAMS, PostMessageW, SC_MAXIMIZE, SC_RESTORE,
+    SM_CXPADDEDBORDER, SM_CYSIZEFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WM_MOUSEMOVE, WM_NCCALCSIZE, WM_NCHITTEST,
+    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_SYSCOMMAND,
 };
 
 /// 縮放區的寬度（96 DPI 的像素，實際用的會依螢幕縮放放大）。
@@ -30,7 +31,12 @@ const RESIZE_BORDER: i32 = 6;
 static ORIGINAL: AtomicIsize = AtomicIsize::new(0);
 static CONTEXT: OnceLock<egui::Context> = OnceLock::new();
 /// 最大化鈕在視窗客戶區裡的位置（實體像素）：左、上、右、下。全 0 代表還沒畫出來。
-static MAX_BUTTON: [AtomicI32; 4] = [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
+static MAX_BUTTON: [AtomicI32; 4] = [
+    AtomicI32::new(0),
+    AtomicI32::new(0),
+    AtomicI32::new(0),
+    AtomicI32::new(0),
+];
 static MAX_HOVER: AtomicBool = AtomicBool::new(false);
 /// 掛了視窗程序的視窗。
 static HWND_STORED: AtomicIsize = AtomicIsize::new(0);
@@ -43,7 +49,8 @@ pub fn install(hwnd: isize, ctx: egui::Context) {
     let _ = CONTEXT.set(ctx);
     HWND_STORED.store(hwnd, Ordering::Relaxed);
     // SAFETY: hwnd 是 eframe 剛建好、屬於這個行程的視窗；新的視窗程序簽章和系統要求的一致
-    let previous = unsafe { SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, frame_proc as *const () as isize) };
+    let previous =
+        unsafe { SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, frame_proc as *const () as isize) };
     ORIGINAL.store(previous, Ordering::Relaxed);
     if previous != 0 {
         let flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
@@ -57,7 +64,12 @@ pub fn install(hwnd: isize, ctx: egui::Context) {
 /// 每個畫面都告訴這裡最大化鈕現在在哪（以 egui 的點為單位，客戶區座標）。
 pub fn set_max_button(rect: egui::Rect, pixels_per_point: f32) {
     let px = |v: f32| (v * pixels_per_point).round() as i32;
-    for (slot, value) in MAX_BUTTON.iter().zip([px(rect.left()), px(rect.top()), px(rect.right()), px(rect.bottom())]) {
+    for (slot, value) in MAX_BUTTON.iter().zip([
+        px(rect.left()),
+        px(rect.top()),
+        px(rect.right()),
+        px(rect.bottom()),
+    ]) {
         slot.store(value, Ordering::Relaxed);
     }
 }
@@ -71,7 +83,8 @@ pub fn max_button_hovered() -> bool {
     let mut cursor = POINT { x: 0, y: 0 };
     let hwnd = HWND_STORED.load(Ordering::Relaxed) as HWND;
     // SAFETY: cursor 是有效的輸出位置
-    let over = unsafe { GetCursorPos(&mut cursor) } != 0 && over_max_button(hwnd, cursor.x, cursor.y);
+    let over =
+        unsafe { GetCursorPos(&mut cursor) } != 0 && over_max_button(hwnd, cursor.x, cursor.y);
     if over {
         if let Some(ctx) = CONTEXT.get() {
             ctx.request_repaint_after(std::time::Duration::from_millis(60)); // 繼續盯著，直到滑鼠離開
@@ -92,7 +105,12 @@ fn set_hover(hovered: bool) {
 
 /// 螢幕座標 (x, y) 落在視窗哪個縮放區；不在縮放區回傳 None。
 fn resize_hit(hwnd: HWND, x: i32, y: i32) -> Option<u32> {
-    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     // SAFETY: hwnd 是有效的視窗；rect 是有效的輸出位置
     let (ok, dpi) = unsafe { (GetWindowRect(hwnd, &mut rect), GetDpiForWindow(hwnd)) };
     if ok == 0 {
@@ -137,7 +155,12 @@ fn over_max_button(hwnd: HWND, x: i32, y: i32) -> bool {
     point.x >= left && point.x < right && point.y >= top && point.y < bottom
 }
 
-unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn frame_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     // SAFETY: 這個函式只會被系統當視窗程序呼叫，hwnd 有效；ORIGINAL 是 install 存下的原本的視窗程序
     unsafe {
         let is_max_button = wparam == HTMAXBUTTON as usize;
@@ -158,7 +181,8 @@ unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
                 let border = if IsZoomed(hwnd) != 0 {
                     // 最大化時原生縮放邊框會落在螢幕外，頂部也要扣掉，避免內容被裁切。
                     let dpi = GetDpiForWindow(hwnd);
-                    GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+                    GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
+                        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
                 } else {
                     0
                 };
@@ -188,7 +212,11 @@ unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
             // 自己處理按下與放開：按下時不交給系統（它會去畫不存在的標題列按鈕），放開時送出最大化或還原
             WM_NCLBUTTONDOWN if is_max_button => return 0,
             WM_NCLBUTTONUP if is_max_button => {
-                let command = if IsZoomed(hwnd) != 0 { SC_RESTORE } else { SC_MAXIMIZE };
+                let command = if IsZoomed(hwnd) != 0 {
+                    SC_RESTORE
+                } else {
+                    SC_MAXIMIZE
+                };
                 PostMessageW(hwnd, WM_SYSCOMMAND, command as usize, 0);
                 return 0;
             }
@@ -196,7 +224,8 @@ unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
         }
         let original: isize = ORIGINAL.load(Ordering::Relaxed);
         // SAFETY: original 是 SetWindowLongPtrW 回傳的原視窗程序
-        let original: windows_sys::Win32::UI::WindowsAndMessaging::WNDPROC = std::mem::transmute(original);
+        let original: windows_sys::Win32::UI::WindowsAndMessaging::WNDPROC =
+            std::mem::transmute(original);
         CallWindowProcW(original, hwnd, msg, wparam, lparam)
     }
 }
