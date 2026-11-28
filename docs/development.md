@@ -27,10 +27,13 @@
 ```powershell
 cargo test --workspace                          # 全部單元測試
 cargo run --release -p feditor                  # 啟動編輯器
+cargo fmt --all                                 # 統一排版（提交前執行）
 ```
 
+- **排版**：全部程式碼用 rustfmt 的預設設定排版，提交前執行 `cargo fmt --all`（`cargo fmt --all --check` 可以只檢查不修改）。
+
 - **需要的工具**：Rust（stable）。Windows 需要 MSVC 工具集與 Windows SDK（安裝「Build Tools for Visual Studio」的 C++ 工作負載即可）；Linux 需要的系統套件列在 `.github/workflows/ci.yml` 裡，其他發行版可能要調整。
-- **測試**：UI 的測試包含用無頭的 egui 驅動整個 `App`（分頁、窗格、拖放、工作階段、預覽、終端機…）；終端機有一個測試會真的開 shell。測試會掃描原始碼確認翻譯齊全（見[編輯器內部運作](internals.md)）。
+- **測試**：UI 的測試包含用無頭的 egui 驅動整個 `App`（分頁、窗格、拖放、工作階段、預覽、終端機…）；終端機有幾個測試會真的開 shell，電腦忙碌時平行執行偶爾會逾時失敗，單獨重跑那幾個測試通常就過了。測試會掃描原始碼確認翻譯齊全（見[編輯器內部運作](internals.md)）。
 - **除錯：終端機輸出的記錄**：設定環境變數 `FEDITOR_PTY_DUMP=檔名前綴` 再啟動 FEditor，每個終端機會存一份 shell 送來的原始位元組（`.bin`）與帶時間的記錄（`.log`）；畫面出問題時，把 `.bin` 重播進終端機模擬器就能重現。實作在 `ui/src/pty_tap.rs`（`DumpLog`）。
 - **雙語文件**：文件（README、CHANGELOG、docs 下的檔案）一律同時提供繁體中文與英文兩個版本，英文版加 `.en` 後綴，兩份檔案開頭放語言切換連結，修改其中一份要同步另一份。
 - **應用程式圖示**（文字文件加終端機）由 `ui/assets/make_icon.py` 產生：`uv run ui/assets/make_icon.py`。

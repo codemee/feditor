@@ -2,6 +2,25 @@
 
 # Changelog
 
+## [0.13.28] - 2026-11-28
+
+### Added
+- **Windows: the toolbar doubles as the title bar**: the system title bar is gone; the app icon is on the far left, and minimize, maximize (restore) and close are on the far right. Empty toolbar space drags the window and a double-click maximizes or restores it. The taskbar and Alt+Tab still show "file name - FEditor". macOS and Linux still use the system title bar for now.
+- **Windows: the window can be resized from all four edges and corners**, with the usual resize cursor.
+- **Windows 11: hovering over the maximize button shows the Snap Layouts flyout**. The key was intercepting `WM_NCCALCSIZE` to keep the system's left, right and bottom frame and take back only the title bar to draw it ourselves; reporting `HTMAXBUTTON` alone is not enough. The approach and the things that were tried and did not work are described in [Custom title bar and Windows 11 Snap Layouts](docs/windows-titlebar.en.md).
+- **When the window is narrow, toolbar buttons that do not fit move into a `»` drop-down**: a group moves as a whole, starting from the rightmost group; settings and the window buttons stay pinned to the right. The window can be no narrower than 480 points.
+- **The settings panel has a new "About" page** that shows the version.
+
+### Changed
+- **The tab bar is always shown**: also with a single pane and a single tab, so a terminal can always be renamed by double-clicking its tab and the layout no longer jumps when the number of panes changes.
+- **The window title no longer contains the version number** (it moved to the "About" page in the settings).
+- **The macro panel is only as wide as its content**: every row used to stretch to the widest the panel could be, leaving a large gap between the name and the file type drop-down.
+- **The app icon at the far left of the toolbar uses the hand-tuned small sizes** (24, 32 and 48 pixels) instead of shrinking the 256-pixel image, so thin lines don't blur.
+
+### Documentation
+- New [Custom title bar and Windows 11 Snap Layouts](docs/windows-titlebar.en.md): folding the title bar into the toolbar, resizing from the window edges, and the root cause and fix for the Snap Layouts flyout.
+- The whole project is now formatted with rustfmt's default settings (no behavior change); the development guide says to run `cargo fmt --all` before committing.
+
 ## [0.13.27] - 2026-11-28
 
 ### Added
