@@ -52,6 +52,8 @@ struct Shared {
     bells: std::sync::atomic::AtomicUsize,
     /// 目前畫面用的配色，程式用 OSC 4／10／11／12 問顏色時照它回答；窗格每一幀更新（見 [`Terminal::set_theme_colors`]）。
     theme: parking_lot_free::Mutex<Option<ThemeColors>>,
+    /// 目前的視窗大小（格數與每格的像素），程式用 `CSI 14 t` 問視窗的像素大小時照它回答（見 [`Terminal::resize`]）。
+    window: parking_lot_free::Mutex<Option<WindowSize>>,
     /// 除錯記錄（`FEDITOR_PTY_DUMP`），平常是 `None`。
     log: parking_lot_free::Mutex<Option<Arc<crate::pty_tap::DumpLog>>>,
 }
@@ -264,6 +266,15 @@ impl EventListener for Listener {
                 let theme = *self.shared.theme.lock();
                 if let (Some(theme), Some(tx)) = (theme, self.shared.sender.lock().as_ref()) {
                     let _ = tx.send(Msg::Input(format(theme.color(index)).into_bytes().into()));
+                }
+            }
+            // 程式問視窗的像素大小（`CSI 14 t`，顯示圖片的程式用它算每格多大）。字元數（`CSI 18 t`）`alacritty_terminal` 自己回答
+            Event::TextAreaSizeRequest(format) => {
+                let window = *self.shared.window.lock();
+                if let (Some(window), Some(tx)) = (window, self.shared.sender.lock().as_ref()) {
+                    let reply = format(window);
+                    self.shared.note(&format!("reply to program: {reply:?}"));
+                    let _ = tx.send(Msg::Input(reply.into_bytes().into()));
                 }
             }
             _ => {}
@@ -673,6 +684,7 @@ impl Terminal {
         #[cfg(windows)]
         let pid = pty.child_watcher().pid().map_or(0, |p| p.get());
         let shared = Arc::new(Shared::default());
+        *shared.window.lock() = Some(window);
         let listener = Listener { ctx: ctx.clone(), shared: shared.clone() };
         // kitty 鍵盤協定預設是關的（關著就不回應程式的 `CSI ? u` 查詢）。Claude Code 靠它才分得出 Shift+Enter
         let config = Config { kitty_keyboard: true, ..Config::default() };
@@ -701,7 +713,12 @@ impl Terminal {
 
     /// 視窗大小變了。格數沒變就什麼都不做。
     pub fn resize(&mut self, size: GridSize, cell: (u16, u16)) {
-        if size == self.size || size.cols == 0 || size.lines == 0 {
+        if size.cols == 0 || size.lines == 0 {
+            return;
+        }
+        // 格子的像素大小變了但格數沒變（字級微調）時，也要讓 `CSI 14 t` 的答案跟著變
+        *self.shared.window.lock() = Some(window_size(size, cell));
+        if size == self.size {
             return;
         }
         self.size = size;
@@ -1161,6 +1178,31 @@ mod tests {
                 "\x1b]4;1;rgb:0101/0000/0000\x07".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn window_size_in_pixels_is_answered_from_the_cell_size() {
+        use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+        let size = GridSize { cols: 20, lines: 3 };
+        let window = window_size(size, (9, 18));
+        #[derive(Clone)]
+        struct Asked(Arc<std::sync::Mutex<Vec<String>>>, WindowSize);
+        impl EventListener for Asked {
+            fn send_event(&self, event: Event) {
+                match event {
+                    Event::TextAreaSizeRequest(format) => self.0.lock().unwrap().push(format(self.1)),
+                    Event::PtyWrite(text) => self.0.lock().unwrap().push(text),
+                    _ => {}
+                }
+            }
+        }
+        let asked = Asked(Arc::default(), window);
+        let mut term = Term::new(Config::default(), &size, asked.clone());
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+        // `CSI 14 t` 問像素大小（高;寬）、`CSI 18 t` 問字元數（行;列）
+        parser.advance(&mut term, b"\x1b[14t\x1b[18t");
+        let answers = asked.0.lock().unwrap().clone();
+        assert_eq!(answers, vec!["\x1b[4;54;180t".to_owned(), "\x1b[8;3;20t".to_owned()]);
     }
 
     use egui::{Key, Modifiers};

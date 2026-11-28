@@ -11,9 +11,9 @@ eframe = "0.37.0"
 raw-window-handle = "0.6"
 egui_extras = { version = "0.37", features = ["svg", "image"] }
 encoding_rs = "0.8.44"
-feditor-core = { version = "0.13.25", path = "../core" }
-feditor-script = { version = "0.13.25", path = "../script" }
-feditor-script-js = { version = "0.13.25", path = "../script-js" }
+feditor-core = { version = "0.13.26", path = "../core" }
+feditor-script = { version = "0.13.26", path = "../script" }
+feditor-script-js = { version = "0.13.26", path = "../script-js" }
 fontique = "0.11.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 notify = "8"

@@ -2,6 +2,11 @@
 
 # Changelog
 
+## [0.13.26] - 2026-11-28
+
+### Fixed
+- **A program asking for the terminal's size in pixels now gets an answer**: nothing used to reply to `CSI 14 t`, so programs that need the size of a cell (such as ones that show images) got nothing; it now replies with the current pixel size (cells times the pixels of one cell), and follows window and font size changes.
+
 ## [0.13.25] - 2026-11-28
 
 ### Fixed
