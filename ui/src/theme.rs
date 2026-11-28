@@ -7,18 +7,30 @@ use crate::scheme::{self, Scheme};
 use eframe::egui::{self, Color32, Theme};
 
 fn terminal_id(dark: bool) -> egui::Id {
-    egui::Id::unique(if dark { "terminal_colors_dark" } else { "terminal_colors_light" })
+    egui::Id::unique(if dark {
+        "terminal_colors_dark"
+    } else {
+        "terminal_colors_light"
+    })
 }
 
 fn syntax_id(dark: bool) -> egui::Id {
-    egui::Id::unique(if dark { "syntax_colors_dark" } else { "syntax_colors_light" })
+    egui::Id::unique(if dark {
+        "syntax_colors_dark"
+    } else {
+        "syntax_colors_light"
+    })
 }
 
 /// 套用配色：`light` 套到淺色主題、`dark` 套到深色主題，兩邊互不影響。
 /// 目前是哪個主題（含「跟隨系統」）由 egui 決定，這裡兩邊都先設好。
 pub fn apply(ctx: &egui::Context, light: &Scheme, dark: &Scheme) {
-    ctx.style_mut_of(Theme::Light, |style| style.visuals = scheme::visuals_for(light));
-    ctx.style_mut_of(Theme::Dark, |style| style.visuals = scheme::visuals_for(dark));
+    ctx.style_mut_of(Theme::Light, |style| {
+        style.visuals = scheme::visuals_for(light)
+    });
+    ctx.style_mut_of(Theme::Dark, |style| {
+        style.visuals = scheme::visuals_for(dark)
+    });
     ctx.data_mut(|d| {
         d.insert_temp(syntax_id(false), light.syntax_colors());
         d.insert_temp(syntax_id(true), dark.syntax_colors());
@@ -53,8 +65,14 @@ mod tests {
         let light = all.iter().find(|s| s.name == "GitHub Light").unwrap();
         let dark = all.iter().find(|s| s.name == "Dracula").unwrap();
         apply(&ctx, light, dark);
-        assert_eq!(ctx.style_of(Theme::Light).visuals.panel_fill, light.get(Role::PanelBg));
-        assert_eq!(ctx.style_of(Theme::Dark).visuals.panel_fill, dark.get(Role::PanelBg));
+        assert_eq!(
+            ctx.style_of(Theme::Light).visuals.panel_fill,
+            light.get(Role::PanelBg)
+        );
+        assert_eq!(
+            ctx.style_of(Theme::Dark).visuals.panel_fill,
+            dark.get(Role::PanelBg)
+        );
         assert_eq!(syntax_colors(&ctx, false), light.syntax_colors());
         assert_eq!(syntax_colors(&ctx, true), dark.syntax_colors());
         assert_eq!(terminal_colors(&ctx, false), light.terminal_colors());
@@ -62,14 +80,26 @@ mod tests {
         // 只換深色：淺色那一邊原封不動
         let other_dark = all.iter().find(|s| s.name == "Nord").unwrap();
         apply(&ctx, light, other_dark);
-        assert_eq!(ctx.style_of(Theme::Light).visuals.panel_fill, light.get(Role::PanelBg));
-        assert_eq!(ctx.style_of(Theme::Dark).visuals.extreme_bg_color, other_dark.get(Role::EditorBg));
+        assert_eq!(
+            ctx.style_of(Theme::Light).visuals.panel_fill,
+            light.get(Role::PanelBg)
+        );
+        assert_eq!(
+            ctx.style_of(Theme::Dark).visuals.extreme_bg_color,
+            other_dark.get(Role::EditorBg)
+        );
     }
 
     #[test]
     fn syntax_colors_fall_back_to_the_defaults_before_anything_is_applied() {
         let ctx = egui::Context::default();
-        assert_eq!(syntax_colors(&ctx, true), scheme::default_for(true).syntax_colors());
-        assert_eq!(syntax_colors(&ctx, false), scheme::default_for(false).syntax_colors());
+        assert_eq!(
+            syntax_colors(&ctx, true),
+            scheme::default_for(true).syntax_colors()
+        );
+        assert_eq!(
+            syntax_colors(&ctx, false),
+            scheme::default_for(false).syntax_colors()
+        );
     }
 }

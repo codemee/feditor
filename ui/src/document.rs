@@ -1,9 +1,9 @@
 //! 文件狀態與開／存檔規則：與 egui 無關，方便單元測試。
 
 use feditor_core::Buffer;
+use feditor_core::fileio::{self, FileFormat, LineEnding, SaveError};
 use feditor_core::i18n::t;
 use feditor_core::tf;
-use feditor_core::fileio::{self, FileFormat, LineEnding, SaveError};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -90,8 +90,15 @@ pub fn validate_file_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err(t("檔名不能是空的").to_owned());
     }
-    if let Some(bad) = name.chars().find(|c| c.is_control() || "\\/:*?\"<>|".contains(*c)) {
-        let shown = if bad.is_control() { t("控制字元").to_owned() } else { tf!("「{bad}」", bad = bad) };
+    if let Some(bad) = name
+        .chars()
+        .find(|c| c.is_control() || "\\/:*?\"<>|".contains(*c))
+    {
+        let shown = if bad.is_control() {
+            t("控制字元").to_owned()
+        } else {
+            tf!("「{bad}」", bad = bad)
+        };
         return Err(tf!("檔名不能含有 {shown}", shown = shown));
     }
     if name == "." || name == ".." || name.ends_with('.') || name.ends_with(' ') {
@@ -137,7 +144,11 @@ impl Document {
     /// 還不存在的檔案：空白的文件，但已經有路徑（分頁用這個檔名）、標成尚未儲存；
     /// 存檔時才真的建立檔案。在那之前磁碟上沒有檔案不算「被刪除」，內容改回空白也還是未儲存。
     pub fn new_with_path(path: PathBuf) -> Self {
-        Self { path: Some(path), dirty: true, ..Self::default() }
+        Self {
+            path: Some(path),
+            dirty: true,
+            ..Self::default()
+        }
     }
 
     /// 有路徑、但還沒存過（見 [`Document::new_with_path`]）。
@@ -189,7 +200,9 @@ impl Document {
         if self.is_pending_new_file() {
             return DiskChange::None;
         }
-        let Some(path) = &self.path else { return DiskChange::None };
+        let Some(path) = &self.path else {
+            return DiskChange::None;
+        };
         match std::fs::metadata(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 if self.disk_state == DiskState::Missing {
@@ -257,7 +270,12 @@ impl Document {
 
     /// 終端機分頁：`number` 是標題上的編號，`dir` 是 shell 的起始資料夾，`shell` 是要執行的程式與參數（空字串是系統預設）。
     pub fn new_terminal(number: usize, dir: Option<PathBuf>, shell: String) -> Self {
-        Self { terminal: Some(Box::new(crate::terminal_pane::TerminalPane::new(dir, number, shell))), ..Default::default() }
+        Self {
+            terminal: Some(Box::new(crate::terminal_pane::TerminalPane::new(
+                dir, number, shell,
+            ))),
+            ..Default::default()
+        }
     }
 
     /// 開啟檔案，回傳文件與需要告知使用者的警告。
@@ -272,7 +290,10 @@ impl Document {
         encoding: &'static encoding_rs::Encoding,
     ) -> std::io::Result<Vec<String>> {
         let path = self.path.clone().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, t("文件尚未儲存，沒有可重新載入的檔案"))
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                t("文件尚未儲存，沒有可重新載入的檔案"),
+            )
         })?;
         let bytes = std::fs::read(&path)?;
         let (doc, warnings) = Self::from_decoded(&path, fileio::decode_with(&bytes, encoding));
@@ -369,7 +390,9 @@ impl Document {
         if new == old {
             return Ok(new);
         }
-        let case_only = old.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase());
+        let case_only = old
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase());
         if new.exists() && !case_only {
             return Err(tf!("這個資料夾裡已經有「{new_name}」", new_name = new_name));
         }
@@ -495,7 +518,11 @@ mod tests {
         doc.reload_with(BIG5).unwrap();
         assert_eq!(doc.text(), "你好，世界");
         assert!(!doc.dirty);
-        assert_eq!(doc.lang, crate::syntax::LangChoice::Plain, "重新載入要保留語言選擇");
+        assert_eq!(
+            doc.lang,
+            crate::syntax::LangChoice::Plain,
+            "重新載入要保留語言選擇"
+        );
     }
 
     #[test]
@@ -506,7 +533,12 @@ mod tests {
         assert_eq!(doc.poll_disk(), DiskChange::None);
         // 被改過：一直回報到使用者處理
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        std::fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         assert_eq!(doc.poll_disk(), DiskChange::Changed);
         assert_eq!(doc.poll_disk(), DiskChange::Changed);
         doc.accept_disk_version();
@@ -520,7 +552,12 @@ mod tests {
         // 又出現（內容不同、時間也不同）：狀態恢復、回報為被改過
         std::fs::write(&p, "two").unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(20);
-        std::fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         assert_eq!(doc.poll_disk(), DiskChange::Changed);
         assert_eq!(doc.disk_state, DiskState::Synced);
         // 存檔會把狀態清乾淨
@@ -533,10 +570,20 @@ mod tests {
 
     #[test]
     fn file_names_are_validated() {
-        for ok in ["a.txt", "報告 2026.md", ".gitignore", "no-extension", "console.log", "コン.txt"] {
+        for ok in [
+            "a.txt",
+            "報告 2026.md",
+            ".gitignore",
+            "no-extension",
+            "console.log",
+            "コン.txt",
+        ] {
             assert!(validate_file_name(ok).is_ok(), "{ok}");
         }
-        for bad in ["", "   ", "a/b", "a\\b", "a:b", "a*", "q?", "\"x\"", "<a>", "a|b", ".", "..", "x.", "x ", "con", "CON.txt", "lpt1", "a\nb"] {
+        for bad in [
+            "", "   ", "a/b", "a\\b", "a:b", "a*", "q?", "\"x\"", "<a>", "a|b", ".", "..", "x.",
+            "x ", "con", "CON.txt", "lpt1", "a\nb",
+        ] {
             assert!(validate_file_name(bad).is_err(), "{bad:?}");
         }
     }
@@ -603,7 +650,9 @@ mod tests {
     /// 比一個 rope 區塊還長的檔案：編輯再復原之後，rope 的切法和剛載入時不同，內容一樣就不該算有修改。
     #[test]
     fn a_long_file_is_clean_again_after_edit_and_undo_whatever_way_its_rope_is_split() {
-        let text: String = (0..4000).map(|i| format!("line {i} of a long file with some words in it\n")).collect();
+        let text: String = (0..4000)
+            .map(|i| format!("line {i} of a long file with some words in it\n"))
+            .collect();
         let dir = tempfile::tempdir().unwrap();
         let p = write(&dir, "long.txt", text.as_bytes());
         let (mut doc, _) = Document::open(&p).unwrap();
@@ -625,7 +674,10 @@ mod tests {
 
     #[test]
     fn undoing_back_to_the_loaded_text_clears_dirty_for_every_kind_of_file() {
-        let big5: Vec<u8> = encoding_rs::BIG5.encode("中文測試\n第二行\n").0.into_owned();
+        let big5: Vec<u8> = encoding_rs::BIG5
+            .encode("中文測試\n第二行\n")
+            .0
+            .into_owned();
         let cases: Vec<(&str, Vec<u8>)> = vec![
             ("crlf", b"one\r\ntwo\r\nthree\r\n".to_vec()),
             ("bom", b"\xEF\xBB\xBFhello\nworld\n".to_vec()),
@@ -636,14 +688,27 @@ mod tests {
             ("mixed endings", b"a\r\nb\nc\r\n".to_vec()),
             ("lone cr", b"a\rb\rc".to_vec()),
             ("empty", Vec::new()),
-            ("utf16", [&[0xFF, 0xFE][..], &"hi\r\nthere\r\n".encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>()[..]].concat()),
+            (
+                "utf16",
+                [
+                    &[0xFF, 0xFE][..],
+                    &"hi\r\nthere\r\n"
+                        .encode_utf16()
+                        .flat_map(|u| u.to_le_bytes())
+                        .collect::<Vec<u8>>()[..],
+                ]
+                .concat(),
+            ),
         ];
         for (name, bytes) in cases {
             let dir = tempfile::tempdir().unwrap();
             let p = write(&dir, "f.txt", &bytes);
             let (mut doc, _) = Document::open(&p).unwrap();
             assert!(!doc.dirty, "{name}: 剛開啟");
-            assert!(!doc.sync() || !doc.dirty, "{name}: 開啟後第一次同步不該標成未儲存");
+            assert!(
+                !doc.sync() || !doc.dirty,
+                "{name}: 開啟後第一次同步不該標成未儲存"
+            );
             doc.buffer.insert(0, "x");
             assert!(doc.sync() && doc.dirty, "{name}: 改了就是未儲存");
             doc.buffer.undo();
@@ -713,7 +778,12 @@ mod tests {
         // 改寫檔案並把修改時間往後推，避免檔案系統時間精度造成誤判
         std::fs::write(&p, "two").unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        std::fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         assert!(doc.changed_on_disk());
         doc.accept_disk_version();
         assert!(!doc.changed_on_disk());

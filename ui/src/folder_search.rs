@@ -119,7 +119,13 @@ impl Default for FolderSearch {
 
 impl FolderSearch {
     fn conditions_for(&self, query: &str, search: SearchOptions) -> Conditions {
-        (query.to_owned(), (search.case_sensitive, search.whole_word, search.regex), self.dir.trim().to_owned(), self.filter.clone(), self.recursive)
+        (
+            query.to_owned(),
+            (search.case_sensitive, search.whole_word, search.regex),
+            self.dir.trim().to_owned(),
+            self.filter.clone(),
+            self.recursive,
+        )
     }
 
     /// 現在的搜尋條件和上一次資料夾搜尋用的一樣（結果還是對得上的）。
@@ -164,7 +170,9 @@ impl FolderSearch {
             ..GrepOptions::default()
         };
         let (root, query) = (self.root.clone(), query.to_owned());
-        self.run(ctx, move |cancel, on_hit| grep::search_dir(&root, &query, &opts, cancel, on_hit));
+        self.run(ctx, move |cancel, on_hit| {
+            grep::search_dir(&root, &query, &opts, cancel, on_hit)
+        });
     }
 
     /// 開始在目前文件的內容裡搜尋（背景執行緒）。`path` 是文件的檔案（沒存過檔就是空路徑），
@@ -192,7 +200,9 @@ impl FolderSearch {
     fn run(
         &mut self,
         ctx: &egui::Context,
-        job: impl FnOnce(&AtomicBool, &mut dyn FnMut(Hit)) -> Result<Summary, SearchError> + Send + 'static,
+        job: impl FnOnce(&AtomicBool, &mut dyn FnMut(Hit)) -> Result<Summary, SearchError>
+        + Send
+        + 'static,
     ) {
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -239,7 +249,10 @@ impl FolderSearch {
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    finished = Some(Ok(Summary { cancelled: true, ..Summary::default() }));
+                    finished = Some(Ok(Summary {
+                        cancelled: true,
+                        ..Summary::default()
+                    }));
                     break;
                 }
             }
@@ -323,7 +336,16 @@ impl FolderSearch {
         let first = self.hits.iter().position(|h| h.path == path);
         self.hits.retain(|h| h.path != path);
         let mut fresh = Vec::new();
-        let _ = grep::search_text(path, text, query, search, usize::MAX, None, &AtomicBool::new(false), |h| fresh.push(h));
+        let _ = grep::search_text(
+            path,
+            text,
+            query,
+            search,
+            usize::MAX,
+            None,
+            &AtomicBool::new(false),
+            |h| fresh.push(h),
+        );
         let at = first.unwrap_or(self.hits.len()).min(self.hits.len());
         self.hits.splice(at..at, fresh);
         if let Some(sel) = self.selected {
@@ -334,11 +356,17 @@ impl FolderSearch {
 
 fn describe(s: &Summary, text_scope: bool) -> String {
     if text_scope && !s.cancelled {
-        return if s.hits == 0 { t("找不到").to_owned() } else { tf!("{n} 筆", n = s.hits) };
+        return if s.hits == 0 {
+            t("找不到").to_owned()
+        } else {
+            tf!("{n} 筆", n = s.hits)
+        };
     }
     let base = tf!(
         "{} 筆，分布在 {} 個檔案（共搜尋 {} 個檔案）",
-        s.hits, s.files_with_hits, s.files_searched
+        s.hits,
+        s.files_with_hits,
+        s.files_searched
     );
     if s.cancelled {
         tf!("已取消：{base}", base = base)
@@ -403,10 +431,21 @@ mod tests {
         go(&mut fs, "foo");
         assert!(fs.status.contains("找不到資料夾"));
         let (_d2, mut fs) = setup(&[("a.txt", "foo")]);
-        fs.start(&egui::Context::default(), "(", SearchOptions { regex: true, ..Default::default() });
+        fs.start(
+            &egui::Context::default(),
+            "(",
+            SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+        );
         wait_done(&mut fs);
         assert!(fs.hits.is_empty());
-        assert!(!fs.status.is_empty() && !fs.status.contains("筆"), "{}", fs.status);
+        assert!(
+            !fs.status.is_empty() && !fs.status.contains("筆"),
+            "{}",
+            fs.status
+        );
     }
 
     #[test]
@@ -435,7 +474,10 @@ mod tests {
         fs.recursive = true;
         go(&mut fs, "foo");
         assert_eq!(fs.hits.len(), 2);
-        assert_eq!(fs.display_path(&fs.hits[1]), format!("sub{}b.txt", std::path::MAIN_SEPARATOR));
+        assert_eq!(
+            fs.display_path(&fs.hits[1]),
+            format!("sub{}b.txt", std::path::MAIN_SEPARATOR)
+        );
     }
 
     #[test]
@@ -451,9 +493,16 @@ mod tests {
             None,
         );
         wait_done(&mut fs);
-        assert_eq!(fs.hits.iter().map(|h| h.line).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(
+            fs.hits.iter().map(|h| h.line).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
         assert_eq!(fs.display_path(&fs.hits[0]), "筆記.txt");
-        assert!(fs.status.contains("2 筆") && !fs.status.contains("檔案"), "{}", fs.status);
+        assert!(
+            fs.status.contains("2 筆") && !fs.status.contains("檔案"),
+            "{}",
+            fs.status
+        );
     }
 
     #[test]
@@ -479,7 +528,16 @@ mod tests {
         go(&mut fs, "foo");
         assert!(fs.is_current("foo", opts));
         assert!(!fs.is_current("fo", opts), "改了搜尋字串");
-        assert!(!fs.is_current("foo", SearchOptions { regex: true, ..opts }), "改了選項");
+        assert!(
+            !fs.is_current(
+                "foo",
+                SearchOptions {
+                    regex: true,
+                    ..opts
+                }
+            ),
+            "改了選項"
+        );
         fs.filter = "*.rs".into();
         assert!(!fs.is_current("foo", opts), "改了檔名過濾");
         fs.filter.clear();
@@ -493,7 +551,10 @@ mod tests {
         go(&mut fs, "foo");
         assert_eq!(
             fs.file_groups(),
-            vec![FileGroup { start: 0, count: 2 }, FileGroup { start: 2, count: 1 }]
+            vec![
+                FileGroup { start: 0, count: 2 },
+                FileGroup { start: 2, count: 1 }
+            ]
         );
         fs.clear();
         assert!(fs.file_groups().is_empty());

@@ -26,10 +26,14 @@ use crate::terminal_text::{self, Glyph, Segment};
 use crate::{App, LogKind};
 
 /// 在編輯區與各個終端機之間切換焦點（沒有終端機就開一個）。不用 Ctrl+C／V／D 等 shell 要用的鍵。
-pub const TOGGLE_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Backtick);
+pub const TOGGLE_TERMINAL: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Backtick);
 /// 新增一個終端機。
 pub const NEW_TERMINAL: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
-    egui::Modifiers { shift: true, ..egui::Modifiers::COMMAND },
+    egui::Modifiers {
+        shift: true,
+        ..egui::Modifiers::COMMAND
+    },
     egui::Key::Backtick,
 );
 
@@ -44,7 +48,10 @@ pub struct TerminalOptions {
 
 impl TerminalOptions {
     pub fn from_settings(s: &crate::settings::Settings) -> Self {
-        Self { font_size: s.terminal_font_size, min_contrast: s.terminal_min_contrast }
+        Self {
+            font_size: s.terminal_font_size,
+            min_contrast: s.terminal_min_contrast,
+        }
     }
 }
 
@@ -114,7 +121,15 @@ struct Search {
 
 impl Default for Search {
     fn default() -> Self {
-        Self { query: String::new(), matches: Vec::new(), current: None, scanned_query: String::new(), scanned_at: None, focus_input: true, jump: false }
+        Self {
+            query: String::new(),
+            matches: Vec::new(),
+            current: None,
+            scanned_query: String::new(),
+            scanned_at: None,
+            focus_input: true,
+            jump: false,
+        }
     }
 }
 
@@ -143,7 +158,12 @@ const IME_ANCHOR_SECS: f64 = 1.0;
 /// 輸入法（組字的字、候選視窗）該放的位置：（行, 欄）。游標顯示時就是游標；隱藏時沿用最後一次顯示的位置
 /// （重繪到一半的游標位置沒有意義），隱藏超過 [`IME_ANCHOR_SECS`] 或從來沒顯示過就用游標目前的位置。
 /// 回傳（要用的位置, 要記下來的「最後顯示的位置」）。
-fn ime_anchor(prev: Option<(i32, usize, f64)>, cursor: (i32, usize), visible: bool, now: f64) -> ((i32, usize), Option<(i32, usize, f64)>) {
+fn ime_anchor(
+    prev: Option<(i32, usize, f64)>,
+    cursor: (i32, usize),
+    visible: bool,
+    now: f64,
+) -> ((i32, usize), Option<(i32, usize, f64)>) {
     if visible {
         return (cursor, Some((cursor.0, cursor.1, now)));
     }
@@ -160,16 +180,27 @@ fn push_row(grid: &Grid<Cell>, line: i32, out: &mut Vec<Glyph>) {
     let row = &grid[Line(line)];
     for col in 0..grid.columns() {
         let cell = &row[Column(col)];
-        if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        {
             continue;
         }
-        out.push(Glyph { c: if cell.c == '\0' { ' ' } else { cell.c }, line, col, wide: cell.flags.contains(Flags::WIDE_CHAR) });
+        out.push(Glyph {
+            c: if cell.c == '\0' { ' ' } else { cell.c },
+            line,
+            col,
+            wide: cell.flags.contains(Flags::WIDE_CHAR),
+        });
     }
 }
 
 /// 這一列的行尾是不是折行（下一列接著它）。
 fn row_wraps(grid: &Grid<Cell>, line: i32) -> bool {
-    grid.columns() > 0 && grid[Line(line)][Column(grid.columns() - 1)].flags.contains(Flags::WRAPLINE)
+    grid.columns() > 0
+        && grid[Line(line)][Column(grid.columns() - 1)]
+            .flags
+            .contains(Flags::WRAPLINE)
 }
 
 /// 從第 `first` 列開始的邏輯行（沿著折行往下接），以及它之後下一列的列號。
@@ -221,7 +252,9 @@ fn search_input_id(uid: u64) -> egui::Id {
 
 impl std::fmt::Debug for TerminalPane {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TerminalPane").field("number", &self.number).finish_non_exhaustive()
+        f.debug_struct("TerminalPane")
+            .field("number", &self.number)
+            .finish_non_exhaustive()
     }
 }
 
@@ -247,11 +280,17 @@ impl TerminalPane {
 
     /// 終端機的名稱（分頁標籤最前面那段）：自己取的名字，沒有就是預設的「終端機 2」。
     pub fn name(&self) -> String {
-        self.custom_name.clone().unwrap_or_else(|| self.default_title())
+        self.custom_name
+            .clone()
+            .unwrap_or_else(|| self.default_title())
     }
 
     /// `feditor --send`：把文字與按鍵送給 shell（不改變焦點）。shell 還沒開起來就先收著，開好之後送出。
-    pub fn send_input(&mut self, items: &[crate::cli::SendItem], paste: bool) -> Result<(), String> {
+    pub fn send_input(
+        &mut self,
+        items: &[crate::cli::SendItem],
+        paste: bool,
+    ) -> Result<(), String> {
         let mode = self.term.as_ref().map_or(TermMode::NONE, |t| t.mode());
         let bytes = terminal::send_bytes(items, paste, mode)?;
         match &self.term {
@@ -296,12 +335,15 @@ impl TerminalPane {
     ///
     /// 回傳這一幀有沒有收到鈴聲。
     pub fn sync_focus(&mut self, focused: bool) -> bool {
-        let Some(term) = self.term.as_ref() else { return false };
+        let Some(term) = self.term.as_ref() else {
+            return false;
+        };
         let rang = term.take_bell();
         // Windows 上 PowerShell／cmd 的主控台（ConPTY）會把 `ESC[I`／`ESC[O` 轉成主控台的焦點事件，不經過 `?1004h`：
         // Codex CLI 在 Windows 上就是讀這種事件（它在 Windows 上還主動關掉 `?1004`），所以不能等程式要求才回報。
         // 轉換後程式的輸入裡不會多出任何字元，不要焦點事件的程式也不受影響。其他 shell（WSL、Git Bash…）仍然等程式要求。
-        let always = cfg!(windows) && terminal::shell_kind(&self.shell) != terminal::ShellKind::Posix;
+        let always =
+            cfg!(windows) && terminal::shell_kind(&self.shell) != terminal::ShellKind::Posix;
         if always || term.mode().contains(TermMode::FOCUS_IN_OUT) {
             if focused != self.app_thinks_focused {
                 term.write(terminal::focus_report(focused));
@@ -331,8 +373,15 @@ impl TerminalPane {
     /// 後面接有什麼明確的資訊可用：裡面的程式（Claude Code 這類）設了標題就用標題（「終端機 2 · ✳ Claude Code」），
     /// 否則 shell 有回報目前資料夾就用資料夾名稱（「伺服器 · feditor」）；兩者都沒有就只有名稱。
     pub fn title(&self) -> String {
-        let name = self.custom_name.clone().unwrap_or_else(|| self.default_title());
-        let detail = self.term.as_ref().and_then(Terminal::program_title).or_else(|| self.cwd().map(|dir| folder_label(&dir)));
+        let name = self
+            .custom_name
+            .clone()
+            .unwrap_or_else(|| self.default_title());
+        let detail = self
+            .term
+            .as_ref()
+            .and_then(Terminal::program_title)
+            .or_else(|| self.cwd().map(|dir| folder_label(&dir)));
         match detail {
             Some(detail) => format!("{name} · {detail}"),
             None => name,
@@ -383,7 +432,9 @@ impl TerminalPane {
 
     /// shell 底下有沒有正在執行的程式（shell 本身不算）。
     pub fn has_running_program(&self) -> bool {
-        self.term.as_ref().is_some_and(Terminal::has_running_program)
+        self.term
+            .as_ref()
+            .is_some_and(Terminal::has_running_program)
     }
 
     /// 下一個畫面把鍵盤焦點給這個終端機。
@@ -403,7 +454,10 @@ impl TerminalPane {
 
 /// 資料夾在分頁上顯示的名字：最後一層的名稱；磁碟機根目錄（沒有名稱）就顯示整個路徑。
 fn folder_label(dir: &std::path::Path) -> String {
-    dir.file_name().map_or_else(|| dir.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
+    dir.file_name().map_or_else(
+        || dir.to_string_lossy().into_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 fn widget_id(uid: u64) -> egui::Id {
@@ -421,7 +475,10 @@ fn lowest_free_number(used: impl IntoIterator<Item = usize>) -> usize {
 fn next_in_cycle<T: PartialEq + Copy>(order: &[T], current: Option<T>) -> Option<T> {
     match current {
         None => order.first().copied(),
-        Some(c) => order.iter().position(|x| *x == c).and_then(|i| order.get(i + 1).copied()),
+        Some(c) => order
+            .iter()
+            .position(|x| *x == c)
+            .and_then(|i| order.get(i + 1).copied()),
     }
 }
 
@@ -440,24 +497,49 @@ impl App {
 
     /// `pos` 所在的窗格，以及它目前顯示的分頁是不是終端機。不在任何窗格內就是 `None`。
     pub(crate) fn drop_target_at(&self, pos: egui::Pos2) -> Option<(PaneId, egui::Rect, bool)> {
-        let (id, rect) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, r)| (*id, *r))?;
-        let is_terminal = if id == self.layout.focus { self.doc.terminal.is_some() } else { self.layout.others.get(&id).is_some_and(|set| set.active_doc().terminal.is_some()) };
+        let (id, rect) = self
+            .pane_rects
+            .iter()
+            .find(|(_, r)| r.contains(pos))
+            .map(|(id, r)| (*id, *r))?;
+        let is_terminal = if id == self.layout.focus {
+            self.doc.terminal.is_some()
+        } else {
+            self.layout
+                .others
+                .get(&id)
+                .is_some_and(|set| set.active_doc().terminal.is_some())
+        };
         Some((id, rect, is_terminal))
     }
 
     /// 拖進視窗的檔案放在 `pos`：那裡是終端機窗格（作用中的分頁是終端機）就把路徑貼進去並給它焦點，回傳 `true`；
     /// 否則回傳 `false`，由呼叫端照一般方式開檔。
     pub(crate) fn drop_into_terminal(&mut self, pos: egui::Pos2, payload: DropPayload) -> bool {
-        let Some(id) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, _)| *id) else { return false };
+        let Some(id) = self
+            .pane_rects
+            .iter()
+            .find(|(_, r)| r.contains(pos))
+            .map(|(id, _)| *id)
+        else {
+            return false;
+        };
         let pane = if id == self.layout.focus {
             self.doc.terminal.as_deref_mut()
         } else {
-            self.layout.others.get_mut(&id).and_then(|set| set.active_slot_mut().0.terminal.as_deref_mut())
+            self.layout
+                .others
+                .get_mut(&id)
+                .and_then(|set| set.active_slot_mut().0.terminal.as_deref_mut())
         };
         let Some(pane) = pane else { return false };
-        let Some(term) = pane.term.as_ref() else { return false };
+        let Some(term) = pane.term.as_ref() else {
+            return false;
+        };
         let text = match payload {
-            DropPayload::Paths(paths) => terminal::dropped_paths_text(terminal::shell_kind(&pane.shell), paths),
+            DropPayload::Paths(paths) => {
+                terminal::dropped_paths_text(terminal::shell_kind(&pane.shell), paths)
+            }
             DropPayload::Text(text) => text.to_owned(),
         };
         term.write(terminal::paste_bytes(&text, term.mode()));
@@ -476,7 +558,14 @@ impl App {
         if self.drop_into_terminal(pos, DropPayload::Text(text)) {
             return;
         }
-        let Some(id) = self.pane_rects.iter().find(|(_, r)| r.contains(pos)).map(|(id, _)| *id) else { return };
+        let Some(id) = self
+            .pane_rects
+            .iter()
+            .find(|(_, r)| r.contains(pos))
+            .map(|(id, _)| *id)
+        else {
+            return;
+        };
         self.focus_pane(id);
         if self.doc.terminal.is_none() && id == self.layout.focus {
             self.editor.incoming_drop = Some((text.to_owned(), pos, ctx.cumulative_pass_nr()));
@@ -497,21 +586,42 @@ impl App {
     /// `feditor --send`：把 `items`（文字與按鍵）送進名稱是 `name` 的終端機；`name` 是 `None` 時用目前的終端機，
     /// 只有一個終端機時就是它。名稱比對分頁標籤最前面那段（自己取的名字，或預設的「終端機 2」，不分大小寫），
     /// 預設名稱也可以只寫編號。找不到或有好幾個符合時回傳錯誤訊息（附上現有的名稱）。不改變焦點與顯示的分頁。
-    pub(crate) fn send_to_terminal(&mut self, name: Option<&str>, items: &[crate::cli::SendItem], paste: bool) -> Result<(), String> {
+    pub(crate) fn send_to_terminal(
+        &mut self,
+        name: Option<&str>,
+        items: &[crate::cli::SendItem],
+        paste: bool,
+    ) -> Result<(), String> {
         let active_is_terminal = self.doc.terminal.is_some();
         let mut terminals = self.all_terminals_mut();
         let names: Vec<String> = terminals.iter().map(|t| t.name()).collect();
-        let list = || if names.is_empty() { "目前沒有終端機".to_owned() } else { format!("現有的終端機：{}", names.join("、")) };
+        let list = || {
+            if names.is_empty() {
+                "目前沒有終端機".to_owned()
+            } else {
+                format!("現有的終端機：{}", names.join("、"))
+            }
+        };
         let index = match name.map(str::trim).filter(|n| !n.is_empty()) {
             Some(wanted) => {
                 let number: Option<usize> = wanted.parse().ok();
                 let matches: Vec<usize> = (0..terminals.len())
-                    .filter(|&i| names[i].eq_ignore_ascii_case(wanted) || terminals[i].title().eq_ignore_ascii_case(wanted) || (number == Some(terminals[i].number()) && terminals[i].custom_name().is_none()))
+                    .filter(|&i| {
+                        names[i].eq_ignore_ascii_case(wanted)
+                            || terminals[i].title().eq_ignore_ascii_case(wanted)
+                            || (number == Some(terminals[i].number())
+                                && terminals[i].custom_name().is_none())
+                    })
                     .collect();
                 match matches.as_slice() {
                     [one] => *one,
                     [] => return Err(format!("找不到終端機「{wanted}」。{}", list())),
-                    _ => return Err(format!("有好幾個終端機叫「{wanted}」，沒辦法決定要送給哪一個。{}", list())),
+                    _ => {
+                        return Err(format!(
+                            "有好幾個終端機叫「{wanted}」，沒辦法決定要送給哪一個。{}",
+                            list()
+                        ));
+                    }
                 }
             }
             None if terminals.len() == 1 => 0,
@@ -526,7 +636,10 @@ impl App {
     fn find_terminal_by_uid(&self, uid: u64) -> Option<(PaneId, usize)> {
         for id in self.layout.root.leaves() {
             let live = (id == self.layout.focus).then_some(&self.doc);
-            if let Some((i, _)) = self.set_ref(id).and_then(|s| s.terminal_uids(live).into_iter().find(|(_, u)| *u == uid)) {
+            if let Some((i, _)) = self
+                .set_ref(id)
+                .and_then(|s| s.terminal_uids(live).into_iter().find(|(_, u)| *u == uid))
+            {
                 return Some((id, i));
             }
         }
@@ -535,26 +648,61 @@ impl App {
 
     /// 在終端機執行 `program args… file extra_args`（`extra_args` 是使用者寫的命令列參數，原樣交給 shell）：用上次「執行」用的那個終端機（還在的話），沒有就開一個新的。
     /// 重用時先送 Ctrl+C 中斷上次還沒跑完的程式、再切到檔案所在的資料夾。
-    pub(crate) fn run_in_terminal(&mut self, program: &str, args: &[String], file: &std::path::Path, extra_args: &str) {
-        let (program, args, file_text, extra) = (program.to_owned(), args.to_vec(), file.to_string_lossy().into_owned(), extra_args.to_owned());
-        self.run_line_in_terminal(file.parent(), false, move |kind| kind.run_line(&program, &args, &file_text, &extra));
+    pub(crate) fn run_in_terminal(
+        &mut self,
+        program: &str,
+        args: &[String],
+        file: &std::path::Path,
+        extra_args: &str,
+    ) {
+        let (program, args, file_text, extra) = (
+            program.to_owned(),
+            args.to_vec(),
+            file.to_string_lossy().into_owned(),
+            extra_args.to_owned(),
+        );
+        self.run_line_in_terminal(file.parent(), false, move |kind| {
+            kind.run_line(&program, &args, &file_text, &extra)
+        });
     }
 
     /// 在終端機執行專案命令（`cargo run`、`uv run 檔案`…）：資料夾是命令自己的（設定檔所在的資料夾），
     /// 和檔案所在的資料夾不同時先切過去；`takes_file` 的命令才在後面接目前的檔案。
-    pub(crate) fn run_project_command(&mut self, command: &crate::project_cmd::ProjectCommand, file: &std::path::Path, extra_args: &str) {
-        let (command, file_text, extra) = (command.clone(), file.to_string_lossy().into_owned(), extra_args.to_owned());
+    pub(crate) fn run_project_command(
+        &mut self,
+        command: &crate::project_cmd::ProjectCommand,
+        file: &std::path::Path,
+        extra_args: &str,
+    ) {
+        let (command, file_text, extra) = (
+            command.clone(),
+            file.to_string_lossy().into_owned(),
+            extra_args.to_owned(),
+        );
         let cwd = command.cwd.clone();
         let cd_always = file.parent() != Some(cwd.as_path());
         self.run_line_in_terminal(Some(&cwd), cd_always, move |kind| {
-            kind.command_line(&command.program.to_string_lossy(), &command.args, command.takes_file.then_some(file_text.as_str()), command.extra_sep, &extra)
+            kind.command_line(
+                &command.program.to_string_lossy(),
+                &command.args,
+                command.takes_file.then_some(file_text.as_str()),
+                command.extra_sep,
+                &extra,
+            )
         });
     }
 
     /// 開（或沿用上次「執行」用的）終端機、送出 `make_line` 算出的命令列。沿用時先中斷上次還沒跑完的程式並切到 `cwd`；
     /// 新開的終端機從目前檔案所在的資料夾開始，`cd_always` 為真時（命令要在別的資料夾執行）也先切過去。
-    fn run_line_in_terminal(&mut self, cwd: Option<&std::path::Path>, cd_always: bool, make_line: impl FnOnce(crate::terminal::ShellKind) -> String) {
-        let reused = self.run_terminal.and_then(|uid| self.find_terminal_by_uid(uid));
+    fn run_line_in_terminal(
+        &mut self,
+        cwd: Option<&std::path::Path>,
+        cd_always: bool,
+        make_line: impl FnOnce(crate::terminal::ShellKind) -> String,
+    ) {
+        let reused = self
+            .run_terminal
+            .and_then(|uid| self.find_terminal_by_uid(uid));
         match reused {
             Some((pane, idx)) => self.show_terminal_tab(pane, idx),
             None => {
@@ -597,9 +745,20 @@ impl App {
 
     /// 新增一個終端機，指定要執行的 shell（程式加參數）；`None` 用設定裡的預設終端機。
     pub(crate) fn new_terminal_with(&mut self, shell: Option<String>) {
-        let rect_of = |app: &App, id: PaneId| app.pane_rects.iter().find(|(p, _)| *p == id).map(|(_, r)| *r);
+        let rect_of = |app: &App, id: PaneId| {
+            app.pane_rects
+                .iter()
+                .find(|(p, _)| *p == id)
+                .map(|(_, r)| *r)
+        };
         let focus = self.layout.focus;
-        let mut others: Vec<PaneId> = self.layout.root.leaves().into_iter().filter(|id| *id != focus && !self.is_preview(*id)).collect();
+        let mut others: Vec<PaneId> = self
+            .layout
+            .root
+            .leaves()
+            .into_iter()
+            .filter(|id| *id != focus && !self.is_preview(*id))
+            .collect();
         others.sort_by(|a, b| {
             let area = |id: &PaneId| rect_of(self, *id).map_or(0.0, |r| r.width() * r.height());
             area(b).total_cmp(&area(a))
@@ -607,7 +766,9 @@ impl App {
         let mut candidates = vec![focus];
         candidates.extend(others);
         // 還沒畫過（沒有範圍資料）時照樣允許，之後畫面會依最小窗格大小調整
-        let target = candidates.into_iter().find(|id| rect_of(self, *id).is_none_or(|r| crate::panes::can_split(r, PaneSide::Bottom)));
+        let target = candidates.into_iter().find(|id| {
+            rect_of(self, *id).is_none_or(|r| crate::panes::can_split(r, PaneSide::Bottom))
+        });
         let Some(target) = target else {
             self.push(LogKind::Warn, t("窗格太小，放不下終端機"));
             return;
@@ -626,11 +787,23 @@ impl App {
             .as_ref()
             .and_then(|t| t.session_dir())
             .filter(|d| d.is_dir())
-            .or_else(|| self.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())));
+            .or_else(|| {
+                self.doc
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            });
         let shell = shell.unwrap_or_else(|| self.settings.terminal_shell.clone());
         let dir = dir.or_else(|| std::env::current_dir().ok());
         let doc = Document::new_terminal(lowest_free_number(numbers), dir, shell);
-        self.open_tab_in_new_pane(target, PaneSide::Bottom, Tab { doc, editor: EditorState::default() });
+        self.open_tab_in_new_pane(
+            target,
+            PaneSide::Bottom,
+            Tab {
+                doc,
+                editor: EditorState::default(),
+            },
+        );
     }
 
     /// 切到第 `idx` 個分頁（在窗格 `pane`）並把鍵盤焦點給它。
@@ -642,7 +815,9 @@ impl App {
 
     /// 繞完終端機之後，回到按 Ctrl+` 之前所在的分頁。
     fn return_from_terminals(&mut self) {
-        let Some((pane, idx)) = self.terminal_return.take() else { return };
+        let Some((pane, idx)) = self.terminal_return.take() else {
+            return;
+        };
         if !self.layout.root.contains(pane) || self.is_preview(pane) {
             return;
         }
@@ -661,7 +836,12 @@ impl App {
             self.new_terminal();
             return;
         }
-        let here = self.doc.terminal.as_ref().filter(|t| t.has_focus(ctx)).map(|_| (self.layout.focus, self.tabs.active()));
+        let here = self
+            .doc
+            .terminal
+            .as_ref()
+            .filter(|t| t.has_focus(ctx))
+            .map(|_| (self.layout.focus, self.tabs.active()));
         match next_in_cycle(&tabs, here) {
             Some((pane, idx)) => {
                 if here.is_none() {
@@ -692,7 +872,9 @@ impl App {
             }
         }
         if rang && !window_focused {
-            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
         }
     }
 
@@ -701,13 +883,19 @@ impl App {
         let mut done = None;
         for id in self.layout.root.leaves() {
             let live = (id == self.layout.focus).then_some(&self.doc);
-            if let Some(i) = self.set_ref(id).and_then(|s| s.exited_terminal_tabs(live).first().copied()) {
+            if let Some(i) = self
+                .set_ref(id)
+                .and_then(|s| s.exited_terminal_tabs(live).first().copied())
+            {
                 done = Some((id, i));
                 break;
             }
         }
         if let Some((pane, i)) = done {
-            self.handle(crate::Action::PaneTab(pane, crate::pane_ops::TabCmd::Close(i)), ctx);
+            self.handle(
+                crate::Action::PaneTab(pane, crate::pane_ops::TabCmd::Close(i)),
+                ctx,
+            );
         }
     }
 
@@ -716,25 +904,54 @@ impl App {
     pub(crate) fn terminal_input(&mut self, ctx: &egui::Context) {
         // 游標在搜尋框裡：Ctrl+F 回到搜尋框（不要變成編輯區的尋找）
         if let Some(pane) = self.doc.terminal.as_mut() {
-            if pane.search.is_some() && ctx.memory(|m| m.has_focus(search_input_id(pane.uid))) && ctx.input_mut(|i| i.consume_shortcut(&crate::FIND)) {
+            if pane.search.is_some()
+                && ctx.memory(|m| m.has_focus(search_input_id(pane.uid)))
+                && ctx.input_mut(|i| i.consume_shortcut(&crate::FIND))
+            {
                 pane.open_search();
             }
         }
         let ctrl_w_closes = self.settings.terminal_ctrl_w_closes;
-        let Some(pane) = self.doc.terminal.as_mut().filter(|t| t.has_focus(ctx)) else { return };
-        let Some(term) = pane.term.as_ref() else { return };
+        let Some(pane) = self.doc.terminal.as_mut().filter(|t| t.has_focus(ctx)) else {
+            return;
+        };
+        let Some(term) = pane.term.as_ref() else {
+            return;
+        };
         let mut taken: Vec<egui::Event> = Vec::new();
         ctx.input_mut(|i| {
             i.events.retain(|e| {
                 let mine = match e {
                     // 開關終端機的快捷鍵留給全域處理
-                    egui::Event::Key { key, modifiers, .. } if *key == TOGGLE_TERMINAL.logical_key && modifiers.command => false,
+                    egui::Event::Key { key, modifiers, .. }
+                        if *key == TOGGLE_TERMINAL.logical_key && modifiers.command =>
+                    {
+                        false
+                    }
                     // Ctrl+Tab、Ctrl+Shift+Tab 是切換分頁，也留給全域處理（終端機沒有對應的字元，送進去只會變成一般的 Tab）
-                    egui::Event::Key { key: egui::Key::Tab, modifiers, .. } if modifiers.ctrl || modifiers.command => false,
+                    egui::Event::Key {
+                        key: egui::Key::Tab,
+                        modifiers,
+                        ..
+                    } if modifiers.ctrl || modifiers.command => false,
                     // Ctrl+W 關閉分頁（設定可關掉；Shift、Alt 一起按的不算，照舊給 shell）
-                    egui::Event::Key { key: egui::Key::W, modifiers, .. }
-                        if ctrl_w_closes && modifiers.command && !modifiers.shift && !modifiers.alt => false,
-                    egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) | egui::Event::Ime(_) => true,
+                    egui::Event::Key {
+                        key: egui::Key::W,
+                        modifiers,
+                        ..
+                    } if ctrl_w_closes
+                        && modifiers.command
+                        && !modifiers.shift
+                        && !modifiers.alt =>
+                    {
+                        false
+                    }
+                    egui::Event::Key { .. }
+                    | egui::Event::Text(_)
+                    | egui::Event::Copy
+                    | egui::Event::Cut
+                    | egui::Event::Paste(_)
+                    | egui::Event::Ime(_) => true,
                     _ => false,
                 };
                 if mine {
@@ -766,7 +983,10 @@ impl App {
                     state = None;
                     preedit = Some(None);
                 }
-                egui::Event::Ime(egui::ImeEvent::Preedit { text, active_range_chars }) => {
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text,
+                    active_range_chars,
+                }) => {
                     state = if text.is_empty() {
                         None
                     } else {
@@ -775,27 +995,47 @@ impl App {
                             (None, Some(prev)) if prev.active.is_some() => Some(0..0),
                             (active, _) => active,
                         };
-                        let cursor = crate::editor::model::infer_cursor(state.as_ref(), &text, &active);
-                        Some(crate::editor::model::Preedit { text, active, cursor })
+                        let cursor =
+                            crate::editor::model::infer_cursor(state.as_ref(), &text, &active);
+                        Some(crate::editor::model::Preedit {
+                            text,
+                            active,
+                            cursor,
+                        })
                     };
                     preedit = Some(state.clone());
                 }
                 // Ctrl+F：和編輯區一樣開搜尋列。全螢幕程式（vim、less 這類）在執行時，Ctrl+F 還是交給程式
-                egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. }
-                    if (modifiers.ctrl || modifiers.command) && !modifiers.shift && !modifiers.alt && !mode.contains(TermMode::ALT_SCREEN) =>
+                egui::Event::Key {
+                    key: egui::Key::F,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if (modifiers.ctrl || modifiers.command)
+                    && !modifiers.shift
+                    && !modifiers.alt
+                    && !mode.contains(TermMode::ALT_SCREEN) =>
                 {
                     open_search = true;
                 }
-                egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => {
                     // `command` 在 Windows／Linux 是 Ctrl、在 macOS 是 Cmd。macOS 的 Ctrl+C／X／V 不是剪貼簿快捷鍵
                     // （Cmd 才是，也只有 Cmd 會產生 Copy／Cut／Paste 事件），要照一般控制字元送進去：
                     // Claude Code 靠 Ctrl+V（0x16）讀剪貼簿裡的圖片
-                    let clipboard_key = modifiers.command && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
+                    let clipboard_key = modifiers.command
+                        && matches!(key, egui::Key::C | egui::Key::X | egui::Key::V);
                     let alt_gr = modifiers.ctrl && modifiers.alt;
                     if !clipboard_key && !alt_gr {
                         if let Some(bytes) = terminal::encode_key(key, modifiers, mode) {
                             out.extend(bytes);
-                        } else if let Some(bytes) = terminal::alt_letter_fallback(key, modifiers).filter(|_| !had_text) {
+                        } else if let Some(bytes) =
+                            terminal::alt_letter_fallback(key, modifiers).filter(|_| !had_text)
+                        {
                             // 中文輸入法開著時 Alt+字母（例如 Claude Code 貼圖的 Alt+V）被輸入法吃掉，
                             // 只有按鍵事件、沒有文字事件；沒有文字事件跟著時由這裡補送
                             out.extend(bytes);
@@ -803,7 +1043,11 @@ impl App {
                     }
                 }
                 egui::Event::Copy => {
-                    let selected = term.term.lock().selection_to_string().filter(|s| !s.is_empty());
+                    let selected = term
+                        .term
+                        .lock()
+                        .selection_to_string()
+                        .filter(|s| !s.is_empty());
                     match selected {
                         Some(s) => ctx.copy_text(s),
                         None => out.push(0x03), // 沒有選取：就是 Ctrl+C，中斷執行中的程式
@@ -832,249 +1076,362 @@ impl App {
 const CURSOR_BLINK_SECS: f64 = 0.53;
 
 /// 捲出畫面的歷史裡有沒有任何看得到的字（由舊往新找，找到就停，所以大量輸出時很快）。
-fn history_has_text(grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>) -> bool {
+fn history_has_text(
+    grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+) -> bool {
     let history = grid.history_size() as i32;
-    (-history..0).any(|line| (0..grid.columns()).any(|col| !grid[Line(line)][Column(col)].c.is_whitespace() && grid[Line(line)][Column(col)].c != '\0'))
+    (-history..0).any(|line| {
+        (0..grid.columns()).any(|col| {
+            !grid[Line(line)][Column(col)].c.is_whitespace()
+                && grid[Line(line)][Column(col)].c != '\0'
+        })
+    })
 }
 
 /// 畫終端機的畫面（分頁列下面那一塊）；第一次畫的時候才開 shell。
-pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::Rect, opts: &TerminalOptions) {
+pub(crate) fn draw_body(
+    ui: &mut egui::Ui,
+    pane: &mut TerminalPane,
+    body: egui::Rect,
+    opts: &TerminalOptions,
+) {
     let ctx = ui.ctx().clone();
     let dark = ui.visuals().dark_mode;
     let bg = ui.visuals().extreme_bg_color;
-    ui.painter().rect_filled(body, egui::CornerRadius::same(4), bg);
+    ui.painter()
+        .rect_filled(body, egui::CornerRadius::same(4), bg);
     let content = body.shrink(6.0);
     ui.set_clip_rect(content.intersect(ui.clip_rect()));
-        // 一格的大小：用終端機自己的字級與字型（設定裡調整）
-        let font = crate::fonts::terminal_font(&ctx, opts.font_size);
-        let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
-        let size = GridSize { cols: ((content.width() / cw).floor() as usize).max(2), lines: ((content.height() / ch).floor() as usize).max(1) };
+    // 一格的大小：用終端機自己的字級與字型（設定裡調整）
+    let font = crate::fonts::terminal_font(&ctx, opts.font_size);
+    let (cw, ch) = ctx.fonts_mut(|f| {
+        (
+            f.glyph_width(&font, '0').max(1.0),
+            f.row_height(&font).max(1.0),
+        )
+    });
+    let size = GridSize {
+        cols: ((content.width() / cw).floor() as usize).max(2),
+        lines: ((content.height() / ch).floor() as usize).max(1),
+    };
 
-        if pane.term.is_none() && pane.error.is_none() {
-            match Terminal::spawn(&ctx, size, (cw as u16, ch as u16), pane.dir.clone(), &pane.shell) {
-                Ok(t) => {
-                    if !pane.pending_input.is_empty() {
-                        t.write(std::mem::take(&mut pane.pending_input));
-                    }
-                    pane.term = Some(t);
+    if pane.term.is_none() && pane.error.is_none() {
+        match Terminal::spawn(
+            &ctx,
+            size,
+            (cw as u16, ch as u16),
+            pane.dir.clone(),
+            &pane.shell,
+        ) {
+            Ok(t) => {
+                if !pane.pending_input.is_empty() {
+                    t.write(std::mem::take(&mut pane.pending_input));
                 }
-                Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
+                pane.term = Some(t);
+            }
+            Err(e) => pane.error = Some(tf!("無法開啟 shell：{e}", e = e)),
+        }
+    }
+    if let Some(e) = &pane.error {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+            ui.label(egui::RichText::new(e).color(ui.visuals().error_fg_color));
+        });
+        return;
+    }
+    let preedit = pane
+        .preedit
+        .clone()
+        .unwrap_or(crate::editor::model::Preedit {
+            text: String::new(),
+            active: None,
+            cursor: 0,
+        });
+    let Some(term) = pane.term.as_mut() else {
+        return;
+    };
+    term.resize(size, (cw as u16, ch as u16));
+
+    // 互動：點一下取得焦點、拖曳選取、滾輪捲動
+    let wid = widget_id(pane.uid);
+    let resp = ui.interact(content, wid, egui::Sense::click_and_drag());
+    if resp.hovered() && ctx.input(|i| i.pointer.primary_pressed()) {
+        pane.want_focus = true;
+    }
+    if std::mem::take(&mut pane.want_focus) {
+        ctx.memory_mut(|m| m.request_focus(wid));
+    }
+    let focused = ctx.memory(|m| m.has_focus(wid));
+    if focused {
+        // Tab、方向鍵、Esc 都是給 shell 的，不要讓 egui 拿去切換焦點
+        ctx.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                wid,
+                egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: true,
+                },
+            )
+        });
+    }
+    let mode = term.mode();
+    // 程式要求滑鼠回報（vim、htop 這類）時，滑鼠事件送給程式；按住 Shift 則照一般終端機的做法，仍然可以選取文字
+    let report = mode.intersects(TermMode::MOUSE_MODE) && !ctx.input(|i| i.modifiers.shift);
+    // 拖曳選取時，滑鼠移到畫面上緣之上或下緣之下：自動往那個方向捲動（離邊緣越遠捲越快），選取區跟著延伸。
+    // 滑鼠不動也要持續捲，所以要一直要求重畫；一放開滑鼠就停
+    if !report
+        && resp.dragged_by(egui::PointerButton::Primary)
+        && !mode.contains(TermMode::ALT_SCREEN)
+    {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let beyond = if pos.y < content.min.y {
+                content.min.y - pos.y
+            } else if pos.y > content.max.y {
+                content.max.y - pos.y
+            } else {
+                0.0
+            };
+            if beyond != 0.0 {
+                let rows_per_second = (8.0 + beyond.abs() / ch * 8.0).min(60.0);
+                pane.drag_scroll_acc +=
+                    rows_per_second * ctx.input(|i| i.stable_dt).min(0.1) * beyond.signum();
+                let lines = pane.drag_scroll_acc.trunc() as i32;
+                if lines != 0 {
+                    pane.drag_scroll_acc -= lines as f32;
+                    term.term.lock().scroll_display(Scroll::Delta(lines));
+                }
+                ctx.request_repaint();
+            } else {
+                pane.drag_scroll_acc = 0.0;
             }
         }
-        if let Some(e) = &pane.error {
-            ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
-                ui.label(egui::RichText::new(e).color(ui.visuals().error_fg_color));
-            });
-            return;
-        }
-        let preedit = pane.preedit.clone().unwrap_or(crate::editor::model::Preedit { text: String::new(), active: None, cursor: 0 });
-        let Some(term) = pane.term.as_mut() else { return };
-        term.resize(size, (cw as u16, ch as u16));
-
-        // 互動：點一下取得焦點、拖曳選取、滾輪捲動
-        let wid = widget_id(pane.uid);
-        let resp = ui.interact(content, wid, egui::Sense::click_and_drag());
-        if resp.hovered() && ctx.input(|i| i.pointer.primary_pressed()) {
-            pane.want_focus = true;
-        }
-        if std::mem::take(&mut pane.want_focus) {
-            ctx.memory_mut(|m| m.request_focus(wid));
-        }
-        let focused = ctx.memory(|m| m.has_focus(wid));
-        if focused {
-            // Tab、方向鍵、Esc 都是給 shell 的，不要讓 egui 拿去切換焦點
-            ctx.memory_mut(|m| m.set_focus_lock_filter(wid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true }));
-        }
-        let mode = term.mode();
-        // 程式要求滑鼠回報（vim、htop 這類）時，滑鼠事件送給程式；按住 Shift 則照一般終端機的做法，仍然可以選取文字
-        let report = mode.intersects(TermMode::MOUSE_MODE) && !ctx.input(|i| i.modifiers.shift);
-        // 拖曳選取時，滑鼠移到畫面上緣之上或下緣之下：自動往那個方向捲動（離邊緣越遠捲越快），選取區跟著延伸。
-        // 滑鼠不動也要持續捲，所以要一直要求重畫；一放開滑鼠就停
-        if !report && resp.dragged_by(egui::PointerButton::Primary) && !mode.contains(TermMode::ALT_SCREEN) {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                let beyond = if pos.y < content.min.y { content.min.y - pos.y } else if pos.y > content.max.y { content.max.y - pos.y } else { 0.0 };
-                if beyond != 0.0 {
-                    let rows_per_second = (8.0 + beyond.abs() / ch * 8.0).min(60.0);
-                    pane.drag_scroll_acc += rows_per_second * ctx.input(|i| i.stable_dt).min(0.1) * beyond.signum();
-                    let lines = pane.drag_scroll_acc.trunc() as i32;
-                    if lines != 0 {
-                        pane.drag_scroll_acc -= lines as f32;
-                        term.term.lock().scroll_display(Scroll::Delta(lines));
-                    }
-                    ctx.request_repaint();
-                } else {
-                    pane.drag_scroll_acc = 0.0;
-                }
-            }
+    } else {
+        pane.drag_scroll_acc = 0.0;
+    }
+    let display_offset = term.term.lock().grid().display_offset() as i32;
+    let point_at = |pos: egui::Pos2| -> (Point, Side) {
+        let x = (pos.x - content.min.x) / cw;
+        let col = (x.floor().max(0.0) as usize).min(size.cols - 1);
+        let row =
+            (((pos.y - content.min.y) / ch).floor().max(0.0) as i32).min(size.lines as i32 - 1);
+        let side = if x.fract() < 0.5 {
+            Side::Left
         } else {
-            pane.drag_scroll_acc = 0.0;
-        }
-        let display_offset = term.term.lock().grid().display_offset() as i32;
-        let point_at = |pos: egui::Pos2| -> (Point, Side) {
-            let x = (pos.x - content.min.x) / cw;
-            let col = (x.floor().max(0.0) as usize).min(size.cols - 1);
-            let row = (((pos.y - content.min.y) / ch).floor().max(0.0) as i32).min(size.lines as i32 - 1);
-            let side = if x.fract() < 0.5 { Side::Left } else { Side::Right };
-            (Point::new(Line(row - display_offset), Column(col)), side)
+            Side::Right
         };
-        if let Some(pos) = resp.interact_pointer_pos().filter(|_| !report) {
-            if resp.drag_started_by(egui::PointerButton::Primary) {
-                // egui 要等滑鼠移動超過一小段距離才算「開始拖曳」，那時的位置已經離按下去的地方有幾個像素，
-                // 起點要用按下去的位置，不然最前面那個字（滑鼠指著的）會選不到
-                let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(pos);
-                let (p, side) = point_at(origin);
-                let mut selection = Selection::new(SelectionType::Simple, p, side);
-                let (now, now_side) = point_at(pos);
-                selection.update(now, now_side);
-                term.term.lock().selection = Some(selection);
-            } else if resp.dragged_by(egui::PointerButton::Primary) {
-                let (p, side) = point_at(pos);
-                if let Some(sel) = term.term.lock().selection.as_mut() {
-                    sel.update(p, side);
-                }
+        (Point::new(Line(row - display_offset), Column(col)), side)
+    };
+    if let Some(pos) = resp.interact_pointer_pos().filter(|_| !report) {
+        if resp.drag_started_by(egui::PointerButton::Primary) {
+            // egui 要等滑鼠移動超過一小段距離才算「開始拖曳」，那時的位置已經離按下去的地方有幾個像素，
+            // 起點要用按下去的位置，不然最前面那個字（滑鼠指著的）會選不到
+            let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+            let (p, side) = point_at(origin);
+            let mut selection = Selection::new(SelectionType::Simple, p, side);
+            let (now, now_side) = point_at(pos);
+            selection.update(now, now_side);
+            term.term.lock().selection = Some(selection);
+        } else if resp.dragged_by(egui::PointerButton::Primary) {
+            let (p, side) = point_at(pos);
+            if let Some(sel) = term.term.lock().selection.as_mut() {
+                sel.update(p, side);
             }
         }
-        if resp.clicked() && !report {
-            term.term.lock().selection = None;
+    }
+    if resp.clicked() && !report {
+        term.term.lock().selection = None;
+    }
+    if resp.hovered() && !report {
+        let dy = ctx.input(|i| i.smooth_scroll_delta.y);
+        pane.scroll_acc += dy / ch;
+        let lines = pane.scroll_acc.trunc() as i32;
+        if lines != 0 {
+            pane.scroll_acc -= lines as f32;
+            if mode.contains(TermMode::ALT_SCREEN) {
+                // vim、less 這類全螢幕程式：滾輪改成方向鍵
+                let key: &[u8] = if lines > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                for _ in 0..lines.abs() * 3 {
+                    term.write(key.to_vec());
+                }
+            } else {
+                term.term.lock().scroll_display(Scroll::Delta(lines));
+            }
         }
-        if resp.hovered() && !report {
-            let dy = ctx.input(|i| i.smooth_scroll_delta.y);
-            pane.scroll_acc += dy / ch;
+    }
+
+    // 滑鼠回報：按下、放開、拖曳（依程式要求的模式）與滾輪，換算成格子座標送給程式
+    if report {
+        let (events, mods, hover) =
+            ctx.input(|i| (i.events.clone(), i.modifiers, i.pointer.hover_pos()));
+        let cell_at = |pos: egui::Pos2| {
+            let col = ((pos.x - content.min.x) / cw).floor().max(0.0) as usize;
+            let row = ((pos.y - content.min.y) / ch).floor().max(0.0) as usize;
+            (col.min(size.cols - 1), row.min(size.lines - 1))
+        };
+        let mut out: Vec<u8> = Vec::new();
+        for e in events {
+            match e {
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed,
+                    modifiers,
+                } => {
+                    let code = match button {
+                        egui::PointerButton::Primary => 0,
+                        egui::PointerButton::Middle => 1,
+                        egui::PointerButton::Secondary => 2,
+                        _ => continue,
+                    };
+                    if pressed {
+                        if !content.contains(pos) {
+                            continue;
+                        }
+                        pane.mouse_button = Some(code);
+                    } else if pane.mouse_button == Some(code) {
+                        pane.mouse_button = None;
+                    } else {
+                        continue;
+                    }
+                    let (col, row) = cell_at(pos);
+                    pane.last_mouse_cell = Some((col, row));
+                    if let Some(bytes) =
+                        terminal::encode_mouse(code, col, row, !pressed, modifiers, false, mode)
+                    {
+                        out.extend(bytes);
+                    }
+                }
+                egui::Event::PointerMoved(pos) => {
+                    let wants = mode.contains(TermMode::MOUSE_MOTION)
+                        || (mode.contains(TermMode::MOUSE_DRAG) && pane.mouse_button.is_some());
+                    if !wants || !(content.contains(pos) || pane.mouse_button.is_some()) {
+                        continue;
+                    }
+                    let cell = cell_at(pos);
+                    if pane.last_mouse_cell == Some(cell) {
+                        continue;
+                    }
+                    pane.last_mouse_cell = Some(cell);
+                    if let Some(bytes) = terminal::encode_mouse(
+                        pane.mouse_button.unwrap_or(3),
+                        cell.0,
+                        cell.1,
+                        false,
+                        mods,
+                        true,
+                        mode,
+                    ) {
+                        out.extend(bytes);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if resp.hovered() {
+            pane.scroll_acc += ctx.input(|i| i.smooth_scroll_delta.y) / ch;
             let lines = pane.scroll_acc.trunc() as i32;
             if lines != 0 {
                 pane.scroll_acc -= lines as f32;
-                if mode.contains(TermMode::ALT_SCREEN) {
-                    // vim、less 這類全螢幕程式：滾輪改成方向鍵
-                    let key: &[u8] = if lines > 0 { b"\x1b[A" } else { b"\x1b[B" };
-                    for _ in 0..lines.abs() * 3 {
-                        term.write(key.to_vec());
+                let (col, row) = hover.map_or((0, 0), cell_at);
+                for _ in 0..lines.abs().min(10) {
+                    if let Some(bytes) = terminal::encode_mouse(
+                        if lines > 0 { 64 } else { 65 },
+                        col,
+                        row,
+                        false,
+                        mods,
+                        false,
+                        mode,
+                    ) {
+                        out.extend(bytes);
                     }
-                } else {
-                    term.term.lock().scroll_display(Scroll::Delta(lines));
                 }
             }
         }
+        if !out.is_empty() {
+            term.write(out);
+        }
+    } else {
+        pane.mouse_button = None;
+    }
 
-        // 滑鼠回報：按下、放開、拖曳（依程式要求的模式）與滾輪，換算成格子座標送給程式
-        if report {
-            let (events, mods, hover) = ctx.input(|i| (i.events.clone(), i.modifiers, i.pointer.hover_pos()));
-            let cell_at = |pos: egui::Pos2| {
-                let col = ((pos.x - content.min.x) / cw).floor().max(0.0) as usize;
-                let row = ((pos.y - content.min.y) / ch).floor().max(0.0) as usize;
-                (col.min(size.cols - 1), row.min(size.lines - 1))
+    // 搜尋：搜尋字串改了、或過了一小段時間就重新掃描整個終端機（含歷史）；要跳到目前這一筆時把畫面捲過去
+    if let Some(search) = pane.search.as_mut() {
+        let changed = search.query != search.scanned_query;
+        if changed
+            || search
+                .scanned_at
+                .is_none_or(|t| t.elapsed() >= SEARCH_RESCAN)
+        {
+            search.matches = scan_matches(term.term.lock().grid(), &search.query);
+            search.scanned_query = search.query.clone();
+            search.scanned_at = Some(std::time::Instant::now());
+            search.current = match (changed, search.current) {
+                // 新的搜尋字串：從最新（最下面）的一筆開始
+                (true, _) => search.matches.len().checked_sub(1),
+                (false, Some(c)) => {
+                    (!search.matches.is_empty()).then(|| c.min(search.matches.len() - 1))
+                }
+                (false, None) => None,
             };
-            let mut out: Vec<u8> = Vec::new();
-            for e in events {
-                match e {
-                    egui::Event::PointerButton { pos, button, pressed, modifiers } => {
-                        let code = match button {
-                            egui::PointerButton::Primary => 0,
-                            egui::PointerButton::Middle => 1,
-                            egui::PointerButton::Secondary => 2,
-                            _ => continue,
-                        };
-                        if pressed {
-                            if !content.contains(pos) {
-                                continue;
-                            }
-                            pane.mouse_button = Some(code);
-                        } else if pane.mouse_button == Some(code) {
-                            pane.mouse_button = None;
-                        } else {
-                            continue;
-                        }
-                        let (col, row) = cell_at(pos);
-                        pane.last_mouse_cell = Some((col, row));
-                        if let Some(bytes) = terminal::encode_mouse(code, col, row, !pressed, modifiers, false, mode) {
-                            out.extend(bytes);
-                        }
-                    }
-                    egui::Event::PointerMoved(pos) => {
-                        let wants = mode.contains(TermMode::MOUSE_MOTION) || (mode.contains(TermMode::MOUSE_DRAG) && pane.mouse_button.is_some());
-                        if !wants || !(content.contains(pos) || pane.mouse_button.is_some()) {
-                            continue;
-                        }
-                        let cell = cell_at(pos);
-                        if pane.last_mouse_cell == Some(cell) {
-                            continue;
-                        }
-                        pane.last_mouse_cell = Some(cell);
-                        if let Some(bytes) = terminal::encode_mouse(pane.mouse_button.unwrap_or(3), cell.0, cell.1, false, mods, true, mode) {
-                            out.extend(bytes);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if resp.hovered() {
-                pane.scroll_acc += ctx.input(|i| i.smooth_scroll_delta.y) / ch;
-                let lines = pane.scroll_acc.trunc() as i32;
-                if lines != 0 {
-                    pane.scroll_acc -= lines as f32;
-                    let (col, row) = hover.map_or((0, 0), cell_at);
-                    for _ in 0..lines.abs().min(10) {
-                        if let Some(bytes) = terminal::encode_mouse(if lines > 0 { 64 } else { 65 }, col, row, false, mods, false, mode) {
-                            out.extend(bytes);
-                        }
-                    }
-                }
-            }
-            if !out.is_empty() {
-                term.write(out);
-            }
-        } else {
-            pane.mouse_button = None;
+            search.jump |= changed;
         }
-
-        // 搜尋：搜尋字串改了、或過了一小段時間就重新掃描整個終端機（含歷史）；要跳到目前這一筆時把畫面捲過去
-        if let Some(search) = pane.search.as_mut() {
-            let changed = search.query != search.scanned_query;
-            if changed || search.scanned_at.is_none_or(|t| t.elapsed() >= SEARCH_RESCAN) {
-                search.matches = scan_matches(term.term.lock().grid(), &search.query);
-                search.scanned_query = search.query.clone();
-                search.scanned_at = Some(std::time::Instant::now());
-                search.current = match (changed, search.current) {
-                    // 新的搜尋字串：從最新（最下面）的一筆開始
-                    (true, _) => search.matches.len().checked_sub(1),
-                    (false, Some(c)) => (!search.matches.is_empty()).then(|| c.min(search.matches.len() - 1)),
-                    (false, None) => None,
+        if std::mem::take(&mut search.jump) {
+            if let Some(seg) = search
+                .current
+                .and_then(|c| search.matches.get(c))
+                .and_then(|m| m.first())
+            {
+                term.term
+                    .lock()
+                    .scroll_to_point(Point::new(Line(seg.line), Column(seg.start_col)));
+            }
+        }
+        ctx.request_repaint_after(SEARCH_RESCAN);
+    }
+    // 畫面上看得到的符合項目：列號 → （起欄, 迄欄, 是不是目前這一筆）
+    let display_offset = term.term.lock().grid().display_offset() as i32;
+    let mut highlights: std::collections::HashMap<i32, Vec<(usize, usize, bool)>> =
+        std::collections::HashMap::new();
+    if let Some(search) = pane.search.as_ref() {
+        let (first, last) = (-display_offset, -display_offset + size.lines as i32 - 1);
+        for (i, segs) in search.matches.iter().enumerate() {
+            for s in segs.iter().filter(|s| s.line >= first && s.line <= last) {
+                highlights.entry(s.line).or_default().push((
+                    s.start_col,
+                    s.end_col,
+                    search.current == Some(i),
+                ));
+            }
+        }
+    }
+    // 網址：按住 Ctrl 把滑鼠移到網址上，整段網址加底線、游標變成手指，按一下就用預設瀏覽器開啟。
+    // （程式要求滑鼠回報時，滑鼠事件歸程式；按住 Shift 取消回報之後，Ctrl＋Shift＋點擊一樣可以開網址）
+    let mut link_cells: std::collections::HashSet<(i32, usize)> = std::collections::HashSet::new();
+    let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+    if ctrl_held && !report {
+        if let Some(pos) = ctx
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| content.contains(*p))
+        {
+            let (p, _) = point_at(pos);
+            let (line, col) = (p.line.0, p.column.0);
+            // 程式用 OSC 8 標出來的連結（文字和網址可以不一樣）優先：整段同一個連結的格子加底線，
+            // 網址放在提示裡，點之前看得到真正會開哪裡
+            let osc8 = {
+                let g = term.term.lock();
+                let grid = g.grid();
+                let inside = line >= -(grid.history_size() as i32)
+                    && line < grid.screen_lines() as i32
+                    && col < grid.columns();
+                let link = if inside {
+                    grid[Line(line)][Column(col)].hyperlink()
+                } else {
+                    None
                 };
-                search.jump |= changed;
-            }
-            if std::mem::take(&mut search.jump) {
-                if let Some(seg) = search.current.and_then(|c| search.matches.get(c)).and_then(|m| m.first()) {
-                    term.term.lock().scroll_to_point(Point::new(Line(seg.line), Column(seg.start_col)));
-                }
-            }
-            ctx.request_repaint_after(SEARCH_RESCAN);
-        }
-        // 畫面上看得到的符合項目：列號 → （起欄, 迄欄, 是不是目前這一筆）
-        let display_offset = term.term.lock().grid().display_offset() as i32;
-        let mut highlights: std::collections::HashMap<i32, Vec<(usize, usize, bool)>> = std::collections::HashMap::new();
-        if let Some(search) = pane.search.as_ref() {
-            let (first, last) = (-display_offset, -display_offset + size.lines as i32 - 1);
-            for (i, segs) in search.matches.iter().enumerate() {
-                for s in segs.iter().filter(|s| s.line >= first && s.line <= last) {
-                    highlights.entry(s.line).or_default().push((s.start_col, s.end_col, search.current == Some(i)));
-                }
-            }
-        }
-        // 網址：按住 Ctrl 把滑鼠移到網址上，整段網址加底線、游標變成手指，按一下就用預設瀏覽器開啟。
-        // （程式要求滑鼠回報時，滑鼠事件歸程式；按住 Shift 取消回報之後，Ctrl＋Shift＋點擊一樣可以開網址）
-        let mut link_cells: std::collections::HashSet<(i32, usize)> = std::collections::HashSet::new();
-        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        if ctrl_held && !report {
-            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()).filter(|p| content.contains(*p)) {
-                let (p, _) = point_at(pos);
-                let (line, col) = (p.line.0, p.column.0);
-                // 程式用 OSC 8 標出來的連結（文字和網址可以不一樣）優先：整段同一個連結的格子加底線，
-                // 網址放在提示裡，點之前看得到真正會開哪裡
-                let osc8 = {
-                    let g = term.term.lock();
-                    let grid = g.grid();
-                    let inside = line >= -(grid.history_size() as i32) && line < grid.screen_lines() as i32 && col < grid.columns();
-                    let link = if inside { grid[Line(line)][Column(col)].hyperlink() } else { None };
-                    link.filter(|h| terminal_text::openable_link(h.uri())).map(|h| {
+                link.filter(|h| terminal_text::openable_link(h.uri()))
+                    .map(|h| {
                         let first = -display_offset;
                         for row in first..first + size.lines as i32 {
                             for c in 0..grid.columns() {
@@ -1085,281 +1442,380 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                         }
                         h.uri().to_owned()
                     })
-                };
-                if let Some(uri) = osc8 {
-                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                    let resp = resp.clone().on_hover_text(uri.clone());
-                    if resp.clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(uri));
-                    }
-                }
-                let glyphs = logical_containing(term.term.lock().grid(), line);
-                let hovered = glyphs.iter().position(|g| g.line == line && col >= g.col && col < g.col + g.width());
-                if !link_cells.is_empty() {
-                    // 已經是 OSC 8 連結，不再找文字裡的網址
-                } else if let Some((start, end, url)) = hovered.and_then(|i| terminal_text::url_at(&glyphs, i)) {
-                    for g in &glyphs[start..end] {
-                        for k in 0..g.width() {
-                            link_cells.insert((g.line, g.col + k));
-                        }
-                    }
-                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                    if resp.clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
-                    }
-                }
-            }
-        }
-
-        // 捲軸：用 egui 的 ScrollArea 畫（和編輯區同一套樣式：平常不顯示，滑鼠靠近才浮現、移到上面會加寬），
-        // 內容是「歷史加畫面」那麼高的空白，位置和終端機的捲動位置互相同步。滑鼠滾輪、拖曳內容仍由上面處理，
-        // 這個 ScrollArea 只負責那條捲軸。有歷史輸出、而且不是 vim 這類全螢幕程式才有
-        let (history, current_offset, has_history_text) = {
-            let g = term.term.lock();
-            (g.grid().history_size(), g.grid().display_offset(), history_has_text(g.grid()))
-        };
-        // 歷史裡要真的有字才出現：shell 剛開的時候常會先捲出幾列空白，那不算「有更多輸出可以看」
-        if history > 0 && has_history_text && !mode.contains(TermMode::ALT_SCREEN) {
-            // 往下捲的距離 = 離最舊的輸出有幾列
-            let want_y = (history - current_offset) as f32 * ch;
-            let total_h = (history + size.lines) as f32 * ch;
-            let out = ui
-                .scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt(("terminal_scroll", pane.uid))
-                        .auto_shrink([false, false])
-                        .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, drag: egui::scroll_area::DragScroll::Never, mouse_wheel: false })
-                        .vertical_scroll_offset(want_y)
-                        .show(ui, |ui| {
-                            ui.allocate_exact_size(egui::vec2(content.width(), total_h), egui::Sense::hover());
-                        })
-                })
-                .inner;
-            // 使用者拖了捲軸：換算回終端機要往上捲幾列。
-            // 只在真的拖曳捲軸時才照 ScrollArea 的位置走：輸出不斷增加時，ScrollArea 的範圍落後一個畫面，
-            // 位置會被夾在舊的範圍裡，如果每一幀都照它換算，畫面就會被往上拉、停不在最底下
-            let (pressed, down, pos) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.pointer.interact_pos()));
-            let bar = egui::Rect::from_min_max(egui::pos2(content.max.x - 14.0, content.min.y), content.max);
-            if pressed && pos.is_some_and(|p| bar.contains(p)) {
-                pane.scrollbar_drag = true;
-            }
-            if !down {
-                pane.scrollbar_drag = false;
-            }
-            if pane.scrollbar_drag {
-                let wanted = history as i32 - (out.state.clamped_offset().y / ch).round() as i32;
-                let delta = wanted.clamp(0, history as i32) - current_offset as i32;
-                if delta != 0 {
-                    term.term.lock().scroll_display(Scroll::Delta(delta));
-                }
-            }
-        }
-
-        // 畫格子
-        let painter = ui.painter_at(content);
-        let palette = Palette::new(ui.visuals().text_color(), ui.visuals().extreme_bg_color, crate::theme::terminal_colors(&ctx, dark), opts.min_contrast);
-        let accent = ui.visuals().selection.bg_fill;
-        term.set_theme_colors(palette.theme());
-        let guard = term.term.lock();
-        let rc = guard.renderable_content();
-        let offset = rc.display_offset as i32;
-        // 格子邊界對齊實體像素：相鄰格子共用同一條邊，底色和方塊字元之間才不會出現細縫
-        let ppp = ctx.pixels_per_point();
-        let snap = move |v: f32| (v * ppp).round() / ppp;
-        let cell_rect = |col: usize, row: i32, cells: f32| {
-            let x0 = snap(content.min.x + col as f32 * cw);
-            let x1 = snap(content.min.x + (col as f32 + cells) * cw);
-            let y0 = snap(content.min.y + row as f32 * ch);
-            let y1 = snap(content.min.y + (row as f32 + 1.0) * ch);
-            egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
-        };
-        for cell in rc.display_iter {
-            let flags = cell.cell.flags;
-            if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
-                continue;
-            }
-            let row = cell.point.line.0 + offset;
-            if row < 0 || row >= size.lines as i32 {
-                continue;
-            }
-            let col = cell.point.column.0;
-            let cells = if flags.contains(Flags::WIDE_CHAR) { 2.0 } else { 1.0 };
-            let (mut fg, mut bgc) = (cell.cell.fg, cell.cell.bg);
-            if flags.contains(Flags::INVERSE) {
-                std::mem::swap(&mut fg, &mut bgc);
-            }
-            let selected = rc.selection.is_some_and(|s| s.contains(cell.point));
-            let r = cell_rect(col, row, cells);
-            // 這一格實際的底色：選取、程式指定的底色，或窗格自己的底色
-            let cell_bg = if selected { accent } else { palette.background(bgc).unwrap_or(palette.default_bg) };
-            if selected {
-                painter.rect_filled(r, 0.0, accent);
-            } else if let Some(c) = palette.background(bgc) {
-                painter.rect_filled(r, 0.0, c);
-            }
-            if let Some(spans) = highlights.get(&cell.point.line.0) {
-                for &(start, end, current) in spans {
-                    if col >= start && col < end {
-                        let warn = ui.visuals().warn_fg_color;
-                        painter.rect_filled(r, 0.0, warn.gamma_multiply(if current { 0.6 } else { 0.28 }));
-                    }
-                }
-            }
-            let ch_ = cell.cell.c;
-            if ch_ != ' ' && ch_ != '\0' && !flags.contains(Flags::HIDDEN) {
-                let mut color = palette.foreground(fg, flags.contains(Flags::BOLD));
-                if !is_graphic_glyph(ch_) {
-                    color = palette.readable(color, cell_bg);
-                }
-                if flags.contains(Flags::DIM) {
-                    color = color.gamma_multiply(0.6);
-                }
-                if let Some((parts, alpha)) = block_element(ch_) {
-                    // 方塊元素（U+2580–259F）不走字型，直接填滿對齊像素的矩形，Claude Code 的吉祥物才不會有縫
-                    let color = color.gamma_multiply(alpha);
-                    for (x0, y0, x1, y1) in parts {
-                        let rect = egui::Rect::from_min_max(
-                            egui::pos2(snap(r.min.x + r.width() * x0), snap(r.min.y + r.height() * y0)),
-                            egui::pos2(snap(r.min.x + r.width() * x1), snap(r.min.y + r.height() * y1)),
-                        );
-                        painter.rect_filled(rect, 0.0, color);
-                    }
-                } else {
-                    // 等寬字型沒有斜體與粗體字形：斜體用 egui 的合成斜體（把字形斜切），粗體把同一個字往右偏一個實體像素
-                    // 再畫一次（合成粗體）；格寬都不變
-                    let galley = if flags.contains(Flags::ITALIC) {
-                        let mut job = egui::text::LayoutJob::simple_singleline(ch_.to_string(), font.clone(), color);
-                        job.sections[0].format.italics = true;
-                        painter.layout_job(job)
-                    } else {
-                        painter.layout_no_wrap(ch_.to_string(), font.clone(), color)
-                    };
-                    painter.galley(r.min, galley.clone(), color);
-                    if flags.contains(Flags::BOLD) {
-                        painter.galley(r.min + egui::vec2(1.0 / ppp, 0.0), galley, color);
-                    }
-                }
-            }
-            if flags.intersects(Flags::ALL_UNDERLINES) {
-                // 程式用 SGR 58 指定的底線顏色優先，沒指定就用文字的顏色
-                let color = cell.cell.underline_color().map_or_else(|| palette.foreground(fg, false), |c| palette.foreground(c, false));
-                painter.extend(underline_shapes(r, flags, color));
-            }
-            if flags.contains(Flags::STRIKEOUT) {
-                let y = r.center().y;
-                painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.0, palette.foreground(fg, false)));
-            }
-            if link_cells.contains(&(cell.point.line.0, col)) {
-                let y = r.max.y - 1.0;
-                painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.5, ui.visuals().hyperlink_color));
-            }
-        }
-        // 游標
-        let cur = rc.cursor;
-        let cur_row = cur.point.line.0 + offset;
-        if rc.mode.contains(TermMode::SHOW_CURSOR) && cur_row >= 0 && cur_row < size.lines as i32 {
-            let r = cell_rect(cur.point.column.0, cur_row, 1.0);
-            let color = ui.visuals().text_color();
-            // 有焦點時游標閃爍（和一般終端機一樣）；打字、送出按鍵的那一刻起先保持亮著，才看得到游標在哪
-            let blink_on = {
-                let elapsed = (ctx.input(|i| i.time) - pane.cursor_epoch).max(0.0);
-                ((elapsed / CURSOR_BLINK_SECS) as u64) % 2 == 0
             };
-            // 視窗不是作業系統的前景視窗時，不管 egui 記得的焦點在哪，都畫成空心、不閃爍
-            let focused = focused && ctx.input(|i| i.focused);
-            if focused {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f64(CURSOR_BLINK_SECS));
+            if let Some(uri) = osc8 {
+                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                let resp = resp.clone().on_hover_text(uri.clone());
+                if resp.clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab(uri));
+                }
             }
-            if focused && !blink_on {
-                // 熄滅的半個週期：什麼都不畫
-            } else if focused {
-                match cur.shape {
-                    alacritty_terminal::vte::ansi::CursorShape::Beam => {
-                        {
-                            painter.rect_filled(egui::Rect::from_min_size(r.min, egui::vec2(2.0, ch)), 0.0, color);
-                        }
+            let glyphs = logical_containing(term.term.lock().grid(), line);
+            let hovered = glyphs
+                .iter()
+                .position(|g| g.line == line && col >= g.col && col < g.col + g.width());
+            if !link_cells.is_empty() {
+                // 已經是 OSC 8 連結，不再找文字裡的網址
+            } else if let Some((start, end, url)) =
+                hovered.and_then(|i| terminal_text::url_at(&glyphs, i))
+            {
+                for g in &glyphs[start..end] {
+                    for k in 0..g.width() {
+                        link_cells.insert((g.line, g.col + k));
                     }
-                    alacritty_terminal::vte::ansi::CursorShape::Underline => {
-                        {
-                            painter.rect_filled(egui::Rect::from_min_size(egui::pos2(r.min.x, r.max.y - 2.0), egui::vec2(cw, 2.0)), 0.0, color);
-                        }
-                    }
-                    _ => {
-                        painter.rect_filled(r, 0.0, color.gamma_multiply(0.55));
-                    }
+                }
+                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                if resp.clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab(url));
+                }
+            }
+        }
+    }
+
+    // 捲軸：用 egui 的 ScrollArea 畫（和編輯區同一套樣式：平常不顯示，滑鼠靠近才浮現、移到上面會加寬），
+    // 內容是「歷史加畫面」那麼高的空白，位置和終端機的捲動位置互相同步。滑鼠滾輪、拖曳內容仍由上面處理，
+    // 這個 ScrollArea 只負責那條捲軸。有歷史輸出、而且不是 vim 這類全螢幕程式才有
+    let (history, current_offset, has_history_text) = {
+        let g = term.term.lock();
+        (
+            g.grid().history_size(),
+            g.grid().display_offset(),
+            history_has_text(g.grid()),
+        )
+    };
+    // 歷史裡要真的有字才出現：shell 剛開的時候常會先捲出幾列空白，那不算「有更多輸出可以看」
+    if history > 0 && has_history_text && !mode.contains(TermMode::ALT_SCREEN) {
+        // 往下捲的距離 = 離最舊的輸出有幾列
+        let want_y = (history - current_offset) as f32 * ch;
+        let total_h = (history + size.lines) as f32 * ch;
+        let out = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt(("terminal_scroll", pane.uid))
+                    .auto_shrink([false, false])
+                    .scroll_source(egui::scroll_area::ScrollSource {
+                        scroll_bar: true,
+                        drag: egui::scroll_area::DragScroll::Never,
+                        mouse_wheel: false,
+                    })
+                    .vertical_scroll_offset(want_y)
+                    .show(ui, |ui| {
+                        ui.allocate_exact_size(
+                            egui::vec2(content.width(), total_h),
+                            egui::Sense::hover(),
+                        );
+                    })
+            })
+            .inner;
+        // 使用者拖了捲軸：換算回終端機要往上捲幾列。
+        // 只在真的拖曳捲軸時才照 ScrollArea 的位置走：輸出不斷增加時，ScrollArea 的範圍落後一個畫面，
+        // 位置會被夾在舊的範圍裡，如果每一幀都照它換算，畫面就會被往上拉、停不在最底下
+        let (pressed, down, pos) = ctx.input(|i| {
+            (
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.pointer.interact_pos(),
+            )
+        });
+        let bar =
+            egui::Rect::from_min_max(egui::pos2(content.max.x - 14.0, content.min.y), content.max);
+        if pressed && pos.is_some_and(|p| bar.contains(p)) {
+            pane.scrollbar_drag = true;
+        }
+        if !down {
+            pane.scrollbar_drag = false;
+        }
+        if pane.scrollbar_drag {
+            let wanted = history as i32 - (out.state.clamped_offset().y / ch).round() as i32;
+            let delta = wanted.clamp(0, history as i32) - current_offset as i32;
+            if delta != 0 {
+                term.term.lock().scroll_display(Scroll::Delta(delta));
+            }
+        }
+    }
+
+    // 畫格子
+    let painter = ui.painter_at(content);
+    let palette = Palette::new(
+        ui.visuals().text_color(),
+        ui.visuals().extreme_bg_color,
+        crate::theme::terminal_colors(&ctx, dark),
+        opts.min_contrast,
+    );
+    let accent = ui.visuals().selection.bg_fill;
+    term.set_theme_colors(palette.theme());
+    let guard = term.term.lock();
+    let rc = guard.renderable_content();
+    let offset = rc.display_offset as i32;
+    // 格子邊界對齊實體像素：相鄰格子共用同一條邊，底色和方塊字元之間才不會出現細縫
+    let ppp = ctx.pixels_per_point();
+    let snap = move |v: f32| (v * ppp).round() / ppp;
+    let cell_rect = |col: usize, row: i32, cells: f32| {
+        let x0 = snap(content.min.x + col as f32 * cw);
+        let x1 = snap(content.min.x + (col as f32 + cells) * cw);
+        let y0 = snap(content.min.y + row as f32 * ch);
+        let y1 = snap(content.min.y + (row as f32 + 1.0) * ch);
+        egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+    };
+    for cell in rc.display_iter {
+        let flags = cell.cell.flags;
+        if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+            continue;
+        }
+        let row = cell.point.line.0 + offset;
+        if row < 0 || row >= size.lines as i32 {
+            continue;
+        }
+        let col = cell.point.column.0;
+        let cells = if flags.contains(Flags::WIDE_CHAR) {
+            2.0
+        } else {
+            1.0
+        };
+        let (mut fg, mut bgc) = (cell.cell.fg, cell.cell.bg);
+        if flags.contains(Flags::INVERSE) {
+            std::mem::swap(&mut fg, &mut bgc);
+        }
+        let selected = rc.selection.is_some_and(|s| s.contains(cell.point));
+        let r = cell_rect(col, row, cells);
+        // 這一格實際的底色：選取、程式指定的底色，或窗格自己的底色
+        let cell_bg = if selected {
+            accent
+        } else {
+            palette.background(bgc).unwrap_or(palette.default_bg)
+        };
+        if selected {
+            painter.rect_filled(r, 0.0, accent);
+        } else if let Some(c) = palette.background(bgc) {
+            painter.rect_filled(r, 0.0, c);
+        }
+        if let Some(spans) = highlights.get(&cell.point.line.0) {
+            for &(start, end, current) in spans {
+                if col >= start && col < end {
+                    let warn = ui.visuals().warn_fg_color;
+                    painter.rect_filled(
+                        r,
+                        0.0,
+                        warn.gamma_multiply(if current { 0.6 } else { 0.28 }),
+                    );
+                }
+            }
+        }
+        let ch_ = cell.cell.c;
+        if ch_ != ' ' && ch_ != '\0' && !flags.contains(Flags::HIDDEN) {
+            let mut color = palette.foreground(fg, flags.contains(Flags::BOLD));
+            if !is_graphic_glyph(ch_) {
+                color = palette.readable(color, cell_bg);
+            }
+            if flags.contains(Flags::DIM) {
+                color = color.gamma_multiply(0.6);
+            }
+            if let Some((parts, alpha)) = block_element(ch_) {
+                // 方塊元素（U+2580–259F）不走字型，直接填滿對齊像素的矩形，Claude Code 的吉祥物才不會有縫
+                let color = color.gamma_multiply(alpha);
+                for (x0, y0, x1, y1) in parts {
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(
+                            snap(r.min.x + r.width() * x0),
+                            snap(r.min.y + r.height() * y0),
+                        ),
+                        egui::pos2(
+                            snap(r.min.x + r.width() * x1),
+                            snap(r.min.y + r.height() * y1),
+                        ),
+                    );
+                    painter.rect_filled(rect, 0.0, color);
                 }
             } else {
-                painter.rect_stroke(r, 0.0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+                // 等寬字型沒有斜體與粗體字形：斜體用 egui 的合成斜體（把字形斜切），粗體把同一個字往右偏一個實體像素
+                // 再畫一次（合成粗體）；格寬都不變
+                let galley = if flags.contains(Flags::ITALIC) {
+                    let mut job = egui::text::LayoutJob::simple_singleline(
+                        ch_.to_string(),
+                        font.clone(),
+                        color,
+                    );
+                    job.sections[0].format.italics = true;
+                    painter.layout_job(job)
+                } else {
+                    painter.layout_no_wrap(ch_.to_string(), font.clone(), color)
+                };
+                painter.galley(r.min, galley.clone(), color);
+                if flags.contains(Flags::BOLD) {
+                    painter.galley(r.min + egui::vec2(1.0 / ppp, 0.0), galley, color);
+                }
             }
         }
-        // 輸入法：告訴系統候選字視窗要放在游標旁，組字中的字畫在游標位置（底線、蓋住底下的格子）
+        if flags.intersects(Flags::ALL_UNDERLINES) {
+            // 程式用 SGR 58 指定的底線顏色優先，沒指定就用文字的顏色
+            let color = cell.cell.underline_color().map_or_else(
+                || palette.foreground(fg, false),
+                |c| palette.foreground(c, false),
+            );
+            painter.extend(underline_shapes(r, flags, color));
+        }
+        if flags.contains(Flags::STRIKEOUT) {
+            let y = r.center().y;
+            painter.line_segment(
+                [egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)],
+                egui::Stroke::new(1.0, palette.foreground(fg, false)),
+            );
+        }
+        if link_cells.contains(&(cell.point.line.0, col)) {
+            let y = r.max.y - 1.0;
+            painter.line_segment(
+                [egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)],
+                egui::Stroke::new(1.5, ui.visuals().hyperlink_color),
+            );
+        }
+    }
+    // 游標
+    let cur = rc.cursor;
+    let cur_row = cur.point.line.0 + offset;
+    if rc.mode.contains(TermMode::SHOW_CURSOR) && cur_row >= 0 && cur_row < size.lines as i32 {
+        let r = cell_rect(cur.point.column.0, cur_row, 1.0);
+        let color = ui.visuals().text_color();
+        // 有焦點時游標閃爍（和一般終端機一樣）；打字、送出按鍵的那一刻起先保持亮著，才看得到游標在哪
+        let blink_on = {
+            let elapsed = (ctx.input(|i| i.time) - pane.cursor_epoch).max(0.0);
+            ((elapsed / CURSOR_BLINK_SECS) as u64) % 2 == 0
+        };
+        // 視窗不是作業系統的前景視窗時，不管 egui 記得的焦點在哪，都畫成空心、不閃爍
+        let focused = focused && ctx.input(|i| i.focused);
         if focused {
-            // 程式重繪畫面時會先隱藏游標、跳到畫面底下去畫、再跳回輸入的位置才顯示（Claude Code 每個畫格都這樣）；
-            // 隱藏的時候游標停的是重繪到一半的位置，組字的字與候選視窗不能跟著它跳
-            let now = ctx.input(|i| i.time);
-            let visible = rc.mode.contains(TermMode::SHOW_CURSOR);
-            let ((ime_line, ime_col), keep) = ime_anchor(pane.ime_anchor, (cur.point.line.0, cur.point.column.0), visible, now);
-            pane.ime_anchor = keep;
-            let start_col = ime_col.min(size.cols - 1);
-            let start_row = (ime_line + offset).clamp(0, size.lines as i32 - 1);
-            let mut at = cell_rect(start_col, start_row, 1.0);
-            if !preedit.text.is_empty() {
-                let text_color = ui.visuals().text_color();
-                // 組字的字照格子排：寬字佔兩格，超過右邊界就換到下一列；排不下時整段往上靠，讓最後一列留在畫面內
-                let mut rows: Vec<(usize, String)> = vec![(start_col, String::new())];
-                let mut col = start_col;
-                // 插入點在哪一列、該列第幾個字之前（左右鍵會移動它）
-                let mut caret: Option<(usize, usize)> = None;
-                for (idx, c) in preedit.text.chars().enumerate() {
-                    let w = if ctx.fonts_mut(|f| f.glyph_width(&font, c)) > cw * 1.5 { 2 } else { 1 };
-                    if col + w > size.cols && col > 0 {
-                        rows.push((0, String::new()));
-                        col = 0;
-                    }
-                    if idx == preedit.cursor {
-                        caret = Some((rows.len() - 1, rows.last().unwrap().1.chars().count()));
-                    }
-                    rows.last_mut().unwrap().1.push(c);
-                    col += w;
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(CURSOR_BLINK_SECS));
+        }
+        if focused && !blink_on {
+            // 熄滅的半個週期：什麼都不畫
+        } else if focused {
+            match cur.shape {
+                alacritty_terminal::vte::ansi::CursorShape::Beam => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(r.min, egui::vec2(2.0, ch)),
+                        0.0,
+                        color,
+                    );
                 }
-                let caret = caret.unwrap_or((rows.len() - 1, rows.last().unwrap().1.chars().count()));
-                let shift = (start_row + rows.len() as i32 - size.lines as i32).max(0);
-                let stroke = egui::Stroke::new(1.0, text_color);
-                for (i, (from, line)) in rows.iter().enumerate() {
-                    let row = start_row + i as i32 - shift;
-                    let galley = painter.layout_no_wrap(line.clone(), font.clone(), text_color);
-                    let origin = cell_rect(*from, row, 1.0).min;
-                    let box_ = egui::Rect::from_min_size(origin, egui::vec2(galley.size().x.max(cw), ch));
-                    painter.rect_filled(box_, 0.0, ui.visuals().extreme_bg_color);
-                    painter.galley(origin, galley.clone(), text_color);
-                    let y = box_.max.y - 1.0;
-                    painter.line_segment([egui::pos2(box_.min.x, y), egui::pos2(box_.min.x + galley.size().x, y)], stroke);
-                    if i == caret.0 {
-                        // 組字中的插入點：畫在輸入法目前的位置，候選視窗也跟著它走
-                        let before: String = line.chars().take(caret.1).collect();
-                        let x = box_.min.x + painter.layout_no_wrap(before, font.clone(), text_color).size().x;
-                        at = egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(cw, ch));
-                        painter.rect_filled(egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(2.0, ch)), 0.0, text_color);
-                    }
+                alacritty_terminal::vte::ansi::CursorShape::Underline => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            egui::pos2(r.min.x, r.max.y - 2.0),
+                            egui::vec2(cw, 2.0),
+                        ),
+                        0.0,
+                        color,
+                    );
+                }
+                _ => {
+                    painter.rect_filled(r, 0.0, color.gamma_multiply(0.55));
                 }
             }
-            ui.output_mut(|o| {
-                o.ime = Some(egui::output::IMEOutput {
-                    purpose: egui::IMEPurpose::Terminal,
-                    rect: content,
-                    cursor_rect: at,
-                    should_interrupt_composition: false,
-                });
-            });
+        } else {
+            painter.rect_stroke(
+                r,
+                0.0,
+                egui::Stroke::new(1.0, color),
+                egui::StrokeKind::Inside,
+            );
         }
-        // 搜尋列
-        let uid = pane.uid;
-        let mut close_search = false;
-        if let Some(search) = pane.search.as_mut() {
-            let bar = egui::Rect::from_min_size(egui::pos2(content.max.x - 360.0, content.min.y + 2.0), egui::vec2(356.0, 30.0));
-            let bar = bar.intersect(content.expand(-2.0));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
-                egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+    }
+    // 輸入法：告訴系統候選字視窗要放在游標旁，組字中的字畫在游標位置（底線、蓋住底下的格子）
+    if focused {
+        // 程式重繪畫面時會先隱藏游標、跳到畫面底下去畫、再跳回輸入的位置才顯示（Claude Code 每個畫格都這樣）；
+        // 隱藏的時候游標停的是重繪到一半的位置，組字的字與候選視窗不能跟著它跳
+        let now = ctx.input(|i| i.time);
+        let visible = rc.mode.contains(TermMode::SHOW_CURSOR);
+        let ((ime_line, ime_col), keep) = ime_anchor(
+            pane.ime_anchor,
+            (cur.point.line.0, cur.point.column.0),
+            visible,
+            now,
+        );
+        pane.ime_anchor = keep;
+        let start_col = ime_col.min(size.cols - 1);
+        let start_row = (ime_line + offset).clamp(0, size.lines as i32 - 1);
+        let mut at = cell_rect(start_col, start_row, 1.0);
+        if !preedit.text.is_empty() {
+            let text_color = ui.visuals().text_color();
+            // 組字的字照格子排：寬字佔兩格，超過右邊界就換到下一列；排不下時整段往上靠，讓最後一列留在畫面內
+            let mut rows: Vec<(usize, String)> = vec![(start_col, String::new())];
+            let mut col = start_col;
+            // 插入點在哪一列、該列第幾個字之前（左右鍵會移動它）
+            let mut caret: Option<(usize, usize)> = None;
+            for (idx, c) in preedit.text.chars().enumerate() {
+                let w = if ctx.fonts_mut(|f| f.glyph_width(&font, c)) > cw * 1.5 {
+                    2
+                } else {
+                    1
+                };
+                if col + w > size.cols && col > 0 {
+                    rows.push((0, String::new()));
+                    col = 0;
+                }
+                if idx == preedit.cursor {
+                    caret = Some((rows.len() - 1, rows.last().unwrap().1.chars().count()));
+                }
+                rows.last_mut().unwrap().1.push(c);
+                col += w;
+            }
+            let caret = caret.unwrap_or((rows.len() - 1, rows.last().unwrap().1.chars().count()));
+            let shift = (start_row + rows.len() as i32 - size.lines as i32).max(0);
+            let stroke = egui::Stroke::new(1.0, text_color);
+            for (i, (from, line)) in rows.iter().enumerate() {
+                let row = start_row + i as i32 - shift;
+                let galley = painter.layout_no_wrap(line.clone(), font.clone(), text_color);
+                let origin = cell_rect(*from, row, 1.0).min;
+                let box_ =
+                    egui::Rect::from_min_size(origin, egui::vec2(galley.size().x.max(cw), ch));
+                painter.rect_filled(box_, 0.0, ui.visuals().extreme_bg_color);
+                painter.galley(origin, galley.clone(), text_color);
+                let y = box_.max.y - 1.0;
+                painter.line_segment(
+                    [
+                        egui::pos2(box_.min.x, y),
+                        egui::pos2(box_.min.x + galley.size().x, y),
+                    ],
+                    stroke,
+                );
+                if i == caret.0 {
+                    // 組字中的插入點：畫在輸入法目前的位置，候選視窗也跟著它走
+                    let before: String = line.chars().take(caret.1).collect();
+                    let x = box_.min.x
+                        + painter
+                            .layout_no_wrap(before, font.clone(), text_color)
+                            .size()
+                            .x;
+                    at = egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(cw, ch));
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(x, origin.y), egui::vec2(2.0, ch)),
+                        0.0,
+                        text_color,
+                    );
+                }
+            }
+        }
+        ui.output_mut(|o| {
+            o.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Terminal,
+                rect: content,
+                cursor_rect: at,
+                should_interrupt_composition: false,
+            });
+        });
+    }
+    // 搜尋列
+    let uid = pane.uid;
+    let mut close_search = false;
+    if let Some(search) = pane.search.as_mut() {
+        let bar = egui::Rect::from_min_size(
+            egui::pos2(content.max.x - 360.0, content.min.y + 2.0),
+            egui::vec2(356.0, 30.0),
+        );
+        let bar = bar.intersect(content.expand(-2.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(egui::Margin::symmetric(6, 2))
+                .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let input = ui.add(
                             egui::TextEdit::singleline(&mut search.query)
@@ -1377,18 +1833,45 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                             (None, n) => format!("0/{n}"),
                         };
                         ui.label(egui::RichText::new(count).weak());
-                        if crate::icons::small_button(ui, crate::Icon::ChevronUp, t("較早的符合項目（Enter）"), true).clicked() {
+                        if crate::icons::small_button(
+                            ui,
+                            crate::Icon::ChevronUp,
+                            t("較早的符合項目（Enter）"),
+                            true,
+                        )
+                        .clicked()
+                        {
                             search.step(true);
                         }
-                        if crate::icons::small_button(ui, crate::Icon::ChevronDown, t("較新的符合項目（Shift+Enter）"), true).clicked() {
+                        if crate::icons::small_button(
+                            ui,
+                            crate::Icon::ChevronDown,
+                            t("較新的符合項目（Shift+Enter）"),
+                            true,
+                        )
+                        .clicked()
+                        {
                             search.step(false);
                         }
-                        if crate::icons::small_button(ui, crate::Icon::Close, t("關閉搜尋（Esc）"), true).clicked() {
+                        if crate::icons::small_button(
+                            ui,
+                            crate::Icon::Close,
+                            t("關閉搜尋（Esc）"),
+                            true,
+                        )
+                        .clicked()
+                        {
                             close_search = true;
                         }
                         // Enter 找下一筆（Shift+Enter 反方向），Esc 關閉；輸入框按 Enter 或 Esc 會失去焦點，要再要回來
                         if input.lost_focus() {
-                            let (enter, esc, shift) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.modifiers.shift));
+                            let (enter, esc, shift) = ui.input(|i| {
+                                (
+                                    i.key_pressed(egui::Key::Enter),
+                                    i.key_pressed(egui::Key::Escape),
+                                    i.modifiers.shift,
+                                )
+                            });
                             if esc {
                                 close_search = true;
                             } else if enter {
@@ -1398,20 +1881,23 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                         }
                     });
                 });
-            });
-        }
-        if close_search {
-            pane.search = None;
-            pane.want_focus = true;
-        }
+        });
+    }
+    if close_search {
+        pane.search = None;
+        pane.want_focus = true;
+    }
 }
-
 
 /// WCAG 相對亮度。
 fn luminance(c: Color32) -> f32 {
     let channel = |v: u8| {
         let s = v as f32 / 255.0;
-        if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        if s <= 0.03928 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
     };
     0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
 }
@@ -1453,8 +1939,18 @@ fn block_element(c: char) -> Option<(Vec<(f32, f32, f32, f32)>, f32)> {
                 0x259E => [false, true, true, false],
                 _ => [false, true, true, true],
             };
-            let quads = [(0.0, 0.0, 0.5, 0.5), (0.5, 0.0, 1.0, 0.5), (0.0, 0.5, 0.5, 1.0), (0.5, 0.5, 1.0, 1.0)];
-            quads.iter().zip(mask).filter(|(_, on)| *on).map(|(q, _)| *q).collect()
+            let quads = [
+                (0.0, 0.0, 0.5, 0.5),
+                (0.5, 0.0, 1.0, 0.5),
+                (0.0, 0.5, 0.5, 1.0),
+                (0.5, 0.5, 1.0, 1.0),
+            ];
+            quads
+                .iter()
+                .zip(mask)
+                .filter(|(_, on)| *on)
+                .map(|(q, _)| *q)
+                .collect()
         }
         _ => return None,
     };
@@ -1464,7 +1960,7 @@ fn block_element(c: char) -> Option<(Vec<(f32, f32, f32, f32)>, f32)> {
 /// 一格的底線：單線、雙線、波浪、點線、虛線（SGR 4、4:2、4:3、4:4、4:5；`vte` 把 SGR 21 當成取消粗體，不是雙底線）。`rect` 是這一格（或寬字元的兩格）。
 /// 波浪線每格剛好一個週期，起點與終點都在中線上，相鄰的格子接起來是連續的波。
 fn underline_shapes(rect: egui::Rect, flags: Flags, color: Color32) -> Vec<egui::Shape> {
-    use egui::{pos2, Shape, Stroke};
+    use egui::{Shape, Stroke, pos2};
     let stroke = Stroke::new(1.0, color);
     let y = rect.max.y - 1.0;
     let flat = [pos2(rect.min.x, y), pos2(rect.max.x, y)];
@@ -1475,12 +1971,21 @@ fn underline_shapes(rect: egui::Rect, flags: Flags, color: Color32) -> Vec<egui:
         let wave = (0..=steps)
             .map(|i| {
                 let t = i as f32 / steps as f32;
-                pos2(rect.min.x + rect.width() * t, mid + amplitude * (t * std::f32::consts::TAU).sin())
+                pos2(
+                    rect.min.x + rect.width() * t,
+                    mid + amplitude * (t * std::f32::consts::TAU).sin(),
+                )
             })
             .collect();
         vec![Shape::line(wave, stroke)]
     } else if flags.contains(Flags::DOUBLE_UNDERLINE) {
-        vec![Shape::line_segment(flat, stroke), Shape::line_segment([pos2(rect.min.x, y - 2.0), pos2(rect.max.x, y - 2.0)], stroke)]
+        vec![
+            Shape::line_segment(flat, stroke),
+            Shape::line_segment(
+                [pos2(rect.min.x, y - 2.0), pos2(rect.max.x, y - 2.0)],
+                stroke,
+            ),
+        ]
     } else if flags.contains(Flags::DOTTED_UNDERLINE) {
         Shape::dotted_line(&flat, color, 2.0, 0.5)
     } else if flags.contains(Flags::DASHED_UNDERLINE) {
@@ -1502,8 +2007,18 @@ struct Palette {
 }
 
 impl Palette {
-    fn new(default_fg: Color32, default_bg: Color32, ansi: [Color32; 16], min_contrast: f32) -> Self {
-        Self { default_fg, default_bg, ansi, min_contrast }
+    fn new(
+        default_fg: Color32,
+        default_bg: Color32,
+        ansi: [Color32; 16],
+        min_contrast: f32,
+    ) -> Self {
+        Self {
+            default_fg,
+            default_bg,
+            ansi,
+            min_contrast,
+        }
     }
 
     fn ansi(&self, i: usize) -> Color32 {
@@ -1512,8 +2027,17 @@ impl Palette {
 
     /// 這份配色，給程式問顏色（OSC 4／10／11／12）時回答用。
     fn theme(&self) -> terminal::ThemeColors {
-        let rgb = |c: Color32| alacritty_terminal::vte::ansi::Rgb { r: c.r(), g: c.g(), b: c.b() };
-        terminal::ThemeColors { fg: rgb(self.default_fg), bg: rgb(self.default_bg), cursor: rgb(self.default_fg), ansi: self.ansi.map(rgb) }
+        let rgb = |c: Color32| alacritty_terminal::vte::ansi::Rgb {
+            r: c.r(),
+            g: c.g(),
+            b: c.b(),
+        };
+        terminal::ThemeColors {
+            fg: rgb(self.default_fg),
+            bg: rgb(self.default_bg),
+            cursor: rgb(self.default_fg),
+            ansi: self.ansi.map(rgb),
+        }
     }
 
     /// 最低對比度保護：前景和它所在的底色對比不到 [`MIN_CONTRAST`] 時，把前景往能拉開差距的方向（底色亮就往黑、
@@ -1523,11 +2047,19 @@ impl Palette {
         if self.min_contrast <= 1.0 || contrast(fg, bg) >= self.min_contrast {
             return fg;
         }
-        let target = if luminance(bg) > 0.5 { Color32::BLACK } else { Color32::WHITE };
+        let target = if luminance(bg) > 0.5 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        };
         for step in 1..=10 {
             let t = step as f32 / 10.0;
             let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-            let c = Color32::from_rgb(mix(fg.r(), target.r()), mix(fg.g(), target.g()), mix(fg.b(), target.b()));
+            let c = Color32::from_rgb(
+                mix(fg.r(), target.r()),
+                mix(fg.g(), target.g()),
+                mix(fg.b(), target.b()),
+            );
             if contrast(c, bg) >= self.min_contrast {
                 return c;
             }
@@ -1553,9 +2085,15 @@ impl Palette {
     fn foreground(&self, c: Color, bold: bool) -> Color32 {
         match c {
             Color::Spec(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
-            Color::Indexed(i) => self.indexed(if bold && i < 8 { i as usize + 8 } else { i as usize }),
+            Color::Indexed(i) => self.indexed(if bold && i < 8 {
+                i as usize + 8
+            } else {
+                i as usize
+            }),
             Color::Named(n) => match n {
-                NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::Cursor => self.default_fg,
+                NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::Cursor => {
+                    self.default_fg
+                }
                 NamedColor::DimForeground => self.default_fg.gamma_multiply(0.6),
                 NamedColor::Background => self.default_bg,
                 other => {
@@ -1594,8 +2132,8 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alacritty_terminal::vte::ansi::Rgb;
     use crate::settings::DEFAULT_TERMINAL_MIN_CONTRAST as MIN_CONTRAST;
+    use alacritty_terminal::vte::ansi::Rgb;
 
     #[test]
     fn ime_stays_at_the_last_shown_cursor_while_the_app_redraws_with_the_cursor_hidden() {
@@ -1619,12 +2157,34 @@ mod tests {
 
     #[test]
     fn palette_maps_named_indexed_and_true_colors() {
-        let p = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors(), MIN_CONTRAST);
-        assert_eq!(p.foreground(Color::Spec(Rgb { r: 1, g: 2, b: 3 }), false), Color32::from_rgb(1, 2, 3));
-        assert_eq!(p.foreground(Color::Named(NamedColor::Foreground), false), Color32::WHITE);
-        assert_eq!(p.foreground(Color::Named(NamedColor::Background), false), Color32::BLACK, "反相後的前景是窗格底色");
-        assert_eq!(p.foreground(Color::Named(NamedColor::Red), false), p.ansi(1));
-        assert_eq!(p.foreground(Color::Named(NamedColor::Red), true), p.ansi(9), "粗體用亮色");
+        let p = Palette::new(
+            Color32::WHITE,
+            Color32::BLACK,
+            crate::scheme::default_for(true).terminal_colors(),
+            MIN_CONTRAST,
+        );
+        assert_eq!(
+            p.foreground(Color::Spec(Rgb { r: 1, g: 2, b: 3 }), false),
+            Color32::from_rgb(1, 2, 3)
+        );
+        assert_eq!(
+            p.foreground(Color::Named(NamedColor::Foreground), false),
+            Color32::WHITE
+        );
+        assert_eq!(
+            p.foreground(Color::Named(NamedColor::Background), false),
+            Color32::BLACK,
+            "反相後的前景是窗格底色"
+        );
+        assert_eq!(
+            p.foreground(Color::Named(NamedColor::Red), false),
+            p.ansi(1)
+        );
+        assert_eq!(
+            p.foreground(Color::Named(NamedColor::Red), true),
+            p.ansi(9),
+            "粗體用亮色"
+        );
         assert_eq!(p.foreground(Color::Indexed(2), false), p.ansi(2));
         // 6×6×6 色立方與灰階
         assert_eq!(p.indexed(16), Color32::from_rgb(0, 0, 0));
@@ -1633,7 +2193,12 @@ mod tests {
         assert_eq!(p.indexed(232), Color32::from_gray(8));
         assert_eq!(p.indexed(255), Color32::from_gray(238));
         // 最低對比度可以關掉（1 以下）：低對比的文字就原樣畫
-        let off = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors(), 1.0);
+        let off = Palette::new(
+            Color32::WHITE,
+            Color32::BLACK,
+            crate::scheme::default_for(true).terminal_colors(),
+            1.0,
+        );
         let dim = Color32::from_rgb(0x20, 0x20, 0x20);
         assert_eq!(off.readable(dim, Color32::BLACK), dim);
         // 預設背景不畫
@@ -1650,16 +2215,40 @@ mod tests {
         let mut term = alacritty_terminal::Term::new(Config::default(), &size, VoidListener);
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         parser.advance(&mut term, b"\x1b[31mR\x1b[0m\x1b[44;97mB\x1b[0m\x1b[38;2;255;128;0mT\x1b[0m\x1b[38;5;196mI\x1b[0m\x1b[1;32mG\x1b[0mN");
-        let p = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors(), MIN_CONTRAST);
+        let p = Palette::new(
+            Color32::BLACK,
+            Color32::WHITE,
+            crate::scheme::default_for(false).terminal_colors(),
+            MIN_CONTRAST,
+        );
         let cell = |c: usize| term.grid()[Line(0)][Column(c)].clone();
         let (r, b, t, i, g, n) = (cell(0), cell(1), cell(2), cell(3), cell(4), cell(5));
         assert_ne!(p.foreground(r.fg, false), Color32::BLACK, "紅字 {:?}", r.fg);
         assert!(p.background(b.bg).is_some(), "藍底 {:?}", b.bg);
         assert_eq!(p.foreground(b.fg, false), p.ansi(15), "亮白字 {:?}", b.fg);
-        assert_eq!(p.foreground(t.fg, false), Color32::from_rgb(255, 128, 0), "真彩色 {:?}", t.fg);
-        assert_eq!(p.foreground(i.fg, false), Color32::from_rgb(255, 0, 0), "256 色 {:?}", i.fg);
-        assert_ne!(p.foreground(g.fg, g.flags.contains(Flags::BOLD)), Color32::BLACK, "粗體綠 {:?}", g.fg);
-        assert_eq!(p.foreground(n.fg, false), Color32::BLACK, "沒設顏色的字用預設前景");
+        assert_eq!(
+            p.foreground(t.fg, false),
+            Color32::from_rgb(255, 128, 0),
+            "真彩色 {:?}",
+            t.fg
+        );
+        assert_eq!(
+            p.foreground(i.fg, false),
+            Color32::from_rgb(255, 0, 0),
+            "256 色 {:?}",
+            i.fg
+        );
+        assert_ne!(
+            p.foreground(g.fg, g.flags.contains(Flags::BOLD)),
+            Color32::BLACK,
+            "粗體綠 {:?}",
+            g.fg
+        );
+        assert_eq!(
+            p.foreground(n.fg, false),
+            Color32::BLACK,
+            "沒設顏色的字用預設前景"
+        );
     }
 
     #[test]
@@ -1679,7 +2268,10 @@ mod tests {
         assert!(flags(3).contains(Flags::UNDERCURL));
         assert!(flags(4).contains(Flags::DOTTED_UNDERLINE));
         assert!(flags(5).contains(Flags::DASHED_UNDERLINE));
-        assert_eq!(term.grid()[Line(0)][Column(6)].underline_color(), Some(Color::Spec(Rgb { r: 255, g: 0, b: 0 })));
+        assert_eq!(
+            term.grid()[Line(0)][Column(6)].underline_color(),
+            Some(Color::Spec(Rgb { r: 255, g: 0, b: 0 }))
+        );
         assert_eq!(term.grid()[Line(0)][Column(3)].underline_color(), None);
     }
 
@@ -1694,13 +2286,23 @@ mod tests {
         // 波浪線：一條折線，兩端在同一高度（相鄰格子才接得起來），中間有起伏，而且都在格子裡
         let curl = shapes(Flags::UNDERCURL);
         assert_eq!(curl.len(), 1);
-        let egui::Shape::Path(line) = &curl[0] else { panic!("波浪線應該是一條折線") };
+        let egui::Shape::Path(line) = &curl[0] else {
+            panic!("波浪線應該是一條折線")
+        };
         let (first, last) = (line.points[0], *line.points.last().unwrap());
         assert!((first.y - last.y).abs() < 1e-3, "{first:?} {last:?}");
-        assert!(line.points.iter().any(|p| (p.y - first.y).abs() > 0.5), "要有起伏");
-        assert!(line.points.iter().all(|p| r.expand(0.01).contains(*p)), "不能畫出格子");
+        assert!(
+            line.points.iter().any(|p| (p.y - first.y).abs() > 0.5),
+            "要有起伏"
+        );
+        assert!(
+            line.points.iter().all(|p| r.expand(0.01).contains(*p)),
+            "不能畫出格子"
+        );
         // 單線的位置沒變：最下面一列像素
-        let egui::Shape::LineSegment { points, .. } = &shapes(Flags::UNDERLINE)[0] else { panic!() };
+        let egui::Shape::LineSegment { points, .. } = &shapes(Flags::UNDERLINE)[0] else {
+            panic!()
+        };
         assert_eq!(points[0].y, r.max.y - 1.0);
     }
 
@@ -1708,20 +2310,39 @@ mod tests {
     fn low_contrast_text_is_pushed_toward_readable_and_good_text_is_untouched() {
         let dark_bg = Color32::from_rgb(0x1e, 0x1e, 0x1e);
         let light_bg = Color32::from_rgb(0xfa, 0xfa, 0xfa);
-        let dark = Palette::new(Color32::WHITE, dark_bg, crate::scheme::default_for(true).terminal_colors(), MIN_CONTRAST);
-        let light = Palette::new(Color32::BLACK, light_bg, crate::scheme::default_for(false).terminal_colors(), MIN_CONTRAST);
+        let dark = Palette::new(
+            Color32::WHITE,
+            dark_bg,
+            crate::scheme::default_for(true).terminal_colors(),
+            MIN_CONTRAST,
+        );
+        let light = Palette::new(
+            Color32::BLACK,
+            light_bg,
+            crate::scheme::default_for(false).terminal_colors(),
+            MIN_CONTRAST,
+        );
         // 對比夠的原封不動
         let fine = Color32::from_rgb(0xdd, 0xdd, 0xdd);
         assert_eq!(dark.readable(fine, dark_bg), fine);
         // 深色底上的深灰字：變亮到夠為止
         let dim = Color32::from_rgb(0x30, 0x30, 0x30);
         let fixed = dark.readable(dim, dark_bg);
-        assert!(contrast(fixed, dark_bg) >= MIN_CONTRAST && luminance(fixed) > luminance(dim), "{fixed:?}");
+        assert!(
+            contrast(fixed, dark_bg) >= MIN_CONTRAST && luminance(fixed) > luminance(dim),
+            "{fixed:?}"
+        );
         // 淺色底上的淺黃字：變暗，而且盡量保留色相（不是直接變黑）
         let yellow = Color32::from_rgb(0xf5, 0xf5, 0x43);
         let fixed = light.readable(yellow, light_bg);
-        assert!(contrast(fixed, light_bg) >= MIN_CONTRAST && luminance(fixed) < luminance(yellow), "{fixed:?}");
-        assert!(fixed.r() > fixed.b() && fixed.g() > fixed.b(), "黃色調暗之後還是偏黃 {fixed:?}");
+        assert!(
+            contrast(fixed, light_bg) >= MIN_CONTRAST && luminance(fixed) < luminance(yellow),
+            "{fixed:?}"
+        );
+        assert!(
+            fixed.r() > fixed.b() && fixed.g() > fixed.b(),
+            "黃色調暗之後還是偏黃 {fixed:?}"
+        );
         // 前景和底色一模一樣：往對比的方向拉到剛好夠（淡灰），不會是整片消失
         assert!(contrast(dark.readable(dark_bg, dark_bg), dark_bg) >= MIN_CONTRAST);
         assert!(contrast(light.readable(light_bg, light_bg), light_bg) >= MIN_CONTRAST);
@@ -1737,17 +2358,46 @@ mod tests {
     /// 沒有焦點：記下通知、告訴程式失去焦點；回到這個終端機：清掉通知、告訴程式取得焦點。
     #[test]
     fn a_bell_while_unfocused_marks_the_tab_and_focus_changes_are_reported_to_the_program() {
-        if !cfg!(windows) || !crate::terminal::shells_for(true, &|k| std::env::var(k).ok(), &|e| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(e).is_file())), &|_| false, "").iter().any(|s| s.command.starts_with("pwsh")) {
+        if !cfg!(windows)
+            || !crate::terminal::shells_for(
+                true,
+                &|k| std::env::var(k).ok(),
+                &|e| {
+                    std::env::var_os("PATH")
+                        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(e).is_file()))
+                },
+                &|_| false,
+                "",
+            )
+            .iter()
+            .any(|s| s.command.starts_with("pwsh"))
+        {
             return;
         }
         let ctx = egui::Context::default();
         let shell = "pwsh -NoLogo -NoProfile";
         let mut pane = TerminalPane::new(None, 1, shell.to_owned());
-        pane.term = Some(Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell).expect("開不了 pwsh"));
+        pane.term = Some(
+            Terminal::spawn(
+                &ctx,
+                GridSize {
+                    cols: 80,
+                    lines: 24,
+                },
+                (8, 16),
+                None,
+                shell,
+            )
+            .expect("開不了 pwsh"),
+        );
         // 沒有鈴聲：就算沒有焦點也不記通知。Windows 的 PowerShell 不用等程式要求，焦點一變就回報
         assert!(!pane.sync_focus(false));
         assert!(!pane.has_attention());
-        assert_eq!(pane.app_thinks_focused, !cfg!(windows), "Windows 上 PowerShell 無條件回報焦點");
+        assert_eq!(
+            pane.app_thinks_focused,
+            !cfg!(windows),
+            "Windows 上 PowerShell 無條件回報焦點"
+        );
         pane.sync_focus(true);
         // 程式要求焦點回報，然後響鈴
         let wait = |what: &str, done: &mut dyn FnMut() -> bool| {
@@ -1758,8 +2408,13 @@ mod tests {
             assert!(done(), "{what}");
         };
         let term_mode = |pane: &TerminalPane| pane.term.as_ref().unwrap().mode();
-        pane.term.as_ref().unwrap().write(b"[Console]::Write([char]27 + '[?1004h' + [char]7)\r\n".to_vec());
-        wait("程式要求焦點回報", &mut || term_mode(&pane).contains(TermMode::FOCUS_IN_OUT));
+        pane.term
+            .as_ref()
+            .unwrap()
+            .write(b"[Console]::Write([char]27 + '[?1004h' + [char]7)\r\n".to_vec());
+        wait("程式要求焦點回報", &mut || {
+            term_mode(&pane).contains(TermMode::FOCUS_IN_OUT)
+        });
         // 鈴聲緊接在要求之後，等它到
         let mut rang = false;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -1769,7 +2424,10 @@ mod tests {
         }
         assert!(rang, "沒有焦點時收到鈴聲");
         assert!(pane.has_attention(), "分頁標籤要標出來");
-        assert!(!pane.tab_title().contains('●'), "● 是檔案的未儲存標記，通知改畫鈴鐺");
+        assert!(
+            !pane.tab_title().contains('●'),
+            "● 是檔案的未儲存標記，通知改畫鈴鐺"
+        );
         assert!(!pane.app_thinks_focused, "程式要被告知失去焦點");
         // 回到這個終端機：清掉通知，告訴程式取得焦點
         assert!(!pane.sync_focus(true));
@@ -1786,7 +2444,17 @@ mod tests {
         }
         let ctx = egui::Context::default();
         let shell = "pwsh -NoLogo -NoProfile -NoExit -Command \"[Console]::Write([char]27 + ']9;9;C:/Windows' + [char]7 + [char]27 + ']9;build done' + [char]7)\"";
-        let term = Terminal::spawn(&ctx, GridSize { cols: 80, lines: 24 }, (8, 16), None, shell).expect("開不了 pwsh");
+        let term = Terminal::spawn(
+            &ctx,
+            GridSize {
+                cols: 80,
+                lines: 24,
+            },
+            (8, 16),
+            None,
+            shell,
+        )
+        .expect("開不了 pwsh");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let (mut rang, mut cwd) = (false, None);
         while std::time::Instant::now() < deadline && !(rang && cwd.is_some()) {
@@ -1795,7 +2463,11 @@ mod tests {
             cwd = term.cwd();
         }
         assert!(rang, "OSC 9 通知要當成鈴聲（ConPTY 有沒有把它放行？）");
-        assert_eq!(cwd.as_deref(), Some(std::path::Path::new("C:/Windows")), "OSC 9;9 回報的資料夾");
+        assert_eq!(
+            cwd.as_deref(),
+            Some(std::path::Path::new("C:/Windows")),
+            "OSC 9;9 回報的資料夾"
+        );
     }
 
     /// 真的開 PowerShell，從 egui 的按鍵事件一路送進去：終端機有焦點時按 Esc，要送 ESC 給 shell，
@@ -1815,7 +2487,10 @@ mod tests {
         let frame = |app: &mut crate::App, events: Vec<egui::Event>| {
             clock.set(clock.get() + 0.016);
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 400.0),
+            ));
             raw.events = events;
             raw.time = Some(clock.get());
             raw.focused = true; // 真的使用時視窗有焦點
@@ -1837,40 +2512,121 @@ mod tests {
             let g = term.term.lock();
             let grid = g.grid();
             (0..grid.screen_lines() as i32)
-                .map(|l| (0..grid.columns()).map(|c| grid[Line(l)][Column(c)].c).collect::<String>().trim_end().to_owned())
+                .map(|l| {
+                    (0..grid.columns())
+                        .map(|c| grid[Line(l)][Column(c)].c)
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        let wait = |app: &mut crate::App, what: &str, events: &dyn Fn() -> Vec<egui::Event>, done: &dyn Fn(&crate::App) -> bool| {
+        let wait = |app: &mut crate::App,
+                    what: &str,
+                    events: &dyn Fn() -> Vec<egui::Event>,
+                    done: &dyn Fn(&crate::App) -> bool| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
             let mut first = true;
             while std::time::Instant::now() < deadline && !done(app) {
-                frame(app, if std::mem::take(&mut first) { events() } else { vec![] });
+                frame(
+                    app,
+                    if std::mem::take(&mut first) {
+                        events()
+                    } else {
+                        vec![]
+                    },
+                );
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             assert!(done(app), "{what}\n{}", screen(app));
         };
         let key = |k: egui::Key| {
-            vec![egui::Event::Key { key: k, physical_key: Some(k), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }]
+            vec![egui::Event::Key {
+                key: k,
+                physical_key: Some(k),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
         };
         frame(&mut app, vec![]);
         ctx.memory_mut(|m| m.request_focus(id));
-        wait(&mut app, "第一個提示字元", &Vec::new, &|a| screen(a).contains("PS ") || screen(a).contains("➜"));
-        wait(&mut app, "打進去的字", &|| vec![egui::Event::Text("abcxyz".into())], &|a| screen(a).contains("abcxyz"));
-        wait(&mut app, "按 Esc 之後整行被清掉", &|| key(egui::Key::Escape), &|a| !screen(a).contains("abcxyz"));
-        assert!(ctx.memory(|m| m.has_focus(id)), "按了 Esc，終端機還要有焦點");
+        wait(&mut app, "第一個提示字元", &Vec::new, &|a| {
+            screen(a).contains("PS ") || screen(a).contains("➜")
+        });
+        wait(
+            &mut app,
+            "打進去的字",
+            &|| vec![egui::Event::Text("abcxyz".into())],
+            &|a| screen(a).contains("abcxyz"),
+        );
+        wait(
+            &mut app,
+            "按 Esc 之後整行被清掉",
+            &|| key(egui::Key::Escape),
+            &|a| !screen(a).contains("abcxyz"),
+        );
+        assert!(
+            ctx.memory(|m| m.has_focus(id)),
+            "按了 Esc，終端機還要有焦點"
+        );
         // 按完 Esc 之後 Backspace 還要有用（曾經出現過 Esc 之後 Backspace 沒反應、要按方向鍵才恢復）
-        wait(&mut app, "Esc 之後打的字", &|| vec![egui::Event::Text("hello".into())], &|a| screen(a).contains("hello"));
-        wait(&mut app, "Esc 之後 Backspace 有用", &|| key(egui::Key::Backspace), &|a| screen(a).contains("hell") && !screen(a).contains("hello"));
-        assert!(ctx.memory(|m| m.has_focus(id)), "Backspace 之後終端機還要有焦點");
+        wait(
+            &mut app,
+            "Esc 之後打的字",
+            &|| vec![egui::Event::Text("hello".into())],
+            &|a| screen(a).contains("hello"),
+        );
+        wait(
+            &mut app,
+            "Esc 之後 Backspace 有用",
+            &|| key(egui::Key::Backspace),
+            &|a| screen(a).contains("hell") && !screen(a).contains("hello"),
+        );
+        assert!(
+            ctx.memory(|m| m.has_focus(id)),
+            "Backspace 之後終端機還要有焦點"
+        );
         // 再按 Esc 把剩下的字清掉，後面要在乾淨的命令列上執行 Node
-        wait(&mut app, "再按 Esc 清掉殘留的字", &|| key(egui::Key::Escape), &|a| !screen(a).contains("hell"));
+        wait(
+            &mut app,
+            "再按 Esc 清掉殘留的字",
+            &|| key(egui::Key::Escape),
+            &|a| !screen(a).contains("hell"),
+        );
         // 像 Claude Code 那樣的 raw 模式程式（Node）：收到的位元組要是單獨一個 ESC
         if crate::terminal::exists_in_path("node.exe") {
             let script = "node -e \"process.stdin.setRawMode(true);console.log('RAWREADY');process.stdin.on('data',d=>console.log('GOT:'+JSON.stringify(d.toString())))\"\r\n";
-            wait(&mut app, "Node 準備好", &|| vec![egui::Event::Text(script.trim_end().into()), egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }], &|a| screen(a).contains("RAWREADY\n"));
-            wait(&mut app, "Node 收到一般字元", &|| vec![egui::Event::Text("q".into())], &|a| screen(a).contains("GOT:\"q\""));
-            wait(&mut app, "Node 收到 ESC", &|| key(egui::Key::Escape), &|a| screen(a).contains("u001b"));
+            wait(
+                &mut app,
+                "Node 準備好",
+                &|| {
+                    vec![
+                        egui::Event::Text(script.trim_end().into()),
+                        egui::Event::Key {
+                            key: egui::Key::Enter,
+                            physical_key: Some(egui::Key::Enter),
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]
+                },
+                &|a| screen(a).contains("RAWREADY\n"),
+            );
+            wait(
+                &mut app,
+                "Node 收到一般字元",
+                &|| vec![egui::Event::Text("q".into())],
+                &|a| screen(a).contains("GOT:\"q\""),
+            );
+            wait(
+                &mut app,
+                "Node 收到 ESC",
+                &|| key(egui::Key::Escape),
+                &|a| screen(a).contains("u001b"),
+            );
             assert!(screen(&app).contains(r#"GOT:"\u001b""#), "{}", screen(&app));
         }
     }
@@ -1890,17 +2646,56 @@ mod tests {
         // 這一幀裡，終端機處理完輸入之後，還留在輸入裡的按鍵事件數
         let left_over = |app: &mut crate::App, events: Vec<egui::Event>| -> (usize, usize) {
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 400.0),
+            ));
             raw.events = events;
             raw.focused = true;
             let mut left = (0, 0);
             let mut output = ctx.run_ui(raw, |ui| {
                 app.terminal_input(ui.ctx());
                 left = ui.input(|i| {
-                    let tabs = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::Tab, .. })).count();
+                    let tabs = i
+                        .events
+                        .iter()
+                        .filter(|e| {
+                            matches!(
+                                e,
+                                egui::Event::Key {
+                                    key: egui::Key::Tab,
+                                    ..
+                                }
+                            )
+                        })
+                        .count();
                     // 第二個數字：A 以外沒被取走的 A；W 另外算在 tabs 裡（都是「留給全域處理」的按鍵）
-                    let others = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::A, .. })).count();
-                    let w = i.events.iter().filter(|e| matches!(e, egui::Event::Key { key: egui::Key::W, .. })).count();
+                    let others = i
+                        .events
+                        .iter()
+                        .filter(|e| {
+                            matches!(
+                                e,
+                                egui::Event::Key {
+                                    key: egui::Key::A,
+                                    ..
+                                }
+                            )
+                        })
+                        .count();
+                    let w = i
+                        .events
+                        .iter()
+                        .filter(|e| {
+                            matches!(
+                                e,
+                                egui::Event::Key {
+                                    key: egui::Key::W,
+                                    ..
+                                }
+                            )
+                        })
+                        .count();
                     (tabs + w, others)
                 });
                 let body = ui.max_rect();
@@ -1914,22 +2709,70 @@ mod tests {
         left_over(&mut app, vec![]);
         ctx.memory_mut(|m| m.request_focus(id));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while std::time::Instant::now() < deadline && app.doc.terminal.as_ref().and_then(|t| t.term.as_ref()).is_none() {
+        while std::time::Instant::now() < deadline
+            && app
+                .doc
+                .terminal
+                .as_ref()
+                .and_then(|t| t.term.as_ref())
+                .is_none()
+        {
             left_over(&mut app, vec![]);
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let key = |key: egui::Key, modifiers: egui::Modifiers| egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers };
-        let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
-        let ctrl_shift = egui::Modifiers { shift: true, ..ctrl };
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, ctrl)]).0, 1, "Ctrl+Tab 要留給切換分頁");
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, ctrl_shift)]).0, 1, "Ctrl+Shift+Tab 要留給切換分頁");
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::W, ctrl)]).0, 1, "Ctrl+W 預設留給關閉分頁");
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::W, ctrl_shift)]).0, 0, "Ctrl+Shift+W 還是給 shell");
+        let key = |key: egui::Key, modifiers: egui::Modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let ctrl_shift = egui::Modifiers {
+            shift: true,
+            ..ctrl
+        };
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::Tab, ctrl)]).0,
+            1,
+            "Ctrl+Tab 要留給切換分頁"
+        );
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::Tab, ctrl_shift)]).0,
+            1,
+            "Ctrl+Shift+Tab 要留給切換分頁"
+        );
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::W, ctrl)]).0,
+            1,
+            "Ctrl+W 預設留給關閉分頁"
+        );
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::W, ctrl_shift)]).0,
+            0,
+            "Ctrl+Shift+W 還是給 shell"
+        );
         app.settings.terminal_ctrl_w_closes = false;
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::W, ctrl)]).0, 0, "設定關掉之後 Ctrl+W 給 shell");
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::W, ctrl)]).0,
+            0,
+            "設定關掉之後 Ctrl+W 給 shell"
+        );
         // 一般的 Tab（shell 的自動完成）和別的按鍵照舊交給終端機
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::Tab, egui::Modifiers::NONE)]).0, 0, "單按 Tab 還是給 shell");
-        assert_eq!(left_over(&mut app, vec![key(egui::Key::A, egui::Modifiers::NONE)]).1, 0, "一般按鍵還是給 shell");
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::Tab, egui::Modifiers::NONE)]).0,
+            0,
+            "單按 Tab 還是給 shell"
+        );
+        assert_eq!(
+            left_over(&mut app, vec![key(egui::Key::A, egui::Modifiers::NONE)]).1,
+            0,
+            "一般按鍵還是給 shell"
+        );
     }
 
     /// 用滑鼠從某個字拖曳選取：選取要從按下去的那個字開始，不能因為 egui 要等滑鼠移動一小段才算拖曳而少掉最前面的字。
@@ -1965,17 +2808,35 @@ mod tests {
         let rows = |app: &crate::App| -> Vec<String> {
             let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
             let g = term.term.lock();
-            (0..g.grid().screen_lines() as i32).map(|l| (0..g.grid().columns()).map(|c| g.grid()[Line(l)][Column(c)].c).collect::<String>().trim_end().to_owned()).collect()
+            (0..g.grid().screen_lines() as i32)
+                .map(|l| {
+                    (0..g.grid().columns())
+                        .map(|c| g.grid()[Line(l)][Column(c)].c)
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect()
         };
         frame(&mut app, vec![]);
         ctx.memory_mut(|m| m.request_focus(id));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while std::time::Instant::now() < deadline && !rows(&app).iter().any(|r| r.contains("PS ")) {
+        while std::time::Instant::now() < deadline && !rows(&app).iter().any(|r| r.contains("PS "))
+        {
             frame(&mut app, vec![]);
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
-        frame(&mut app, vec![egui::Event::Text("'ABCDEFGHIJ'".into()), enter]);
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(
+            &mut app,
+            vec![egui::Event::Text("'ABCDEFGHIJ'".into()), enter],
+        );
         let mut row = None;
         while std::time::Instant::now() < deadline && row.is_none() {
             frame(&mut app, vec![]);
@@ -1986,9 +2847,19 @@ mod tests {
         // 和 draw_body 一樣的格子大小與位置
         let content = screen.shrink(6.0);
         let font = crate::fonts::terminal_font(&ctx, opts.font_size);
-        let (cw, ch) = ctx.fonts_mut(|f| (f.glyph_width(&font, '0').max(1.0), f.row_height(&font).max(1.0)));
+        let (cw, ch) = ctx.fonts_mut(|f| {
+            (
+                f.glyph_width(&font, '0').max(1.0),
+                f.row_height(&font).max(1.0),
+            )
+        });
         let at = |col: f32| egui::pos2(content.min.x + col * cw, content.min.y + (row + 0.5) * ch);
-        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
         let start = at(3.25); // D 的左半邊
         frame(&mut app, vec![egui::Event::PointerMoved(start)]);
         frame(&mut app, vec![button(start, true)]);
@@ -1998,8 +2869,22 @@ mod tests {
             frame(&mut app, vec![egui::Event::PointerMoved(at(x))]);
         }
         frame(&mut app, vec![button(at(6.75), false)]); // 停在 G 的右半邊
-        let selected = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().selection_to_string();
-        assert_eq!(selected.as_deref(), Some("DEFG"), "從按下去的 D 到滑鼠停的 G，一個字都不能少");
+        let selected = app
+            .doc
+            .terminal
+            .as_ref()
+            .unwrap()
+            .term
+            .as_ref()
+            .unwrap()
+            .term
+            .lock()
+            .selection_to_string();
+        assert_eq!(
+            selected.as_deref(),
+            Some("DEFG"),
+            "從按下去的 D 到滑鼠停的 G，一個字都不能少"
+        );
     }
 
     /// 拖曳選取時滑鼠移到畫面外：要自動往那個方向捲動，選取區跟著延伸；放開滑鼠就不再捲。
@@ -2032,17 +2917,52 @@ mod tests {
             });
             output.textures_delta.clear();
         };
-        let offset = |app: &crate::App| app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().grid().display_offset();
-        let history = |app: &crate::App| app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap().term.lock().grid().history_size();
+        let offset = |app: &crate::App| {
+            app.doc
+                .terminal
+                .as_ref()
+                .unwrap()
+                .term
+                .as_ref()
+                .unwrap()
+                .term
+                .lock()
+                .grid()
+                .display_offset()
+        };
+        let history = |app: &crate::App| {
+            app.doc
+                .terminal
+                .as_ref()
+                .unwrap()
+                .term
+                .as_ref()
+                .unwrap()
+                .term
+                .lock()
+                .grid()
+                .history_size()
+        };
         frame(&mut app, vec![]);
         ctx.memory_mut(|m| m.request_focus(id));
-        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         // 等 shell 起來（和別的測試一樣用畫面上出現提示字元判斷），再送一個印很多行的命令
         let prompt_shown = |app: &crate::App| {
             let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
             let g = term.term.lock();
-            (0..g.grid().screen_lines() as i32).any(|l| (0..g.grid().columns()).map(|c| g.grid()[Line(l)][Column(c)].c).collect::<String>().contains("PS "))
+            (0..g.grid().screen_lines() as i32).any(|l| {
+                (0..g.grid().columns())
+                    .map(|c| g.grid()[Line(l)][Column(c)].c)
+                    .collect::<String>()
+                    .contains("PS ")
+            })
         };
         while std::time::Instant::now() < deadline && !prompt_shown(&app) {
             frame(&mut app, vec![]);
@@ -2054,7 +2974,11 @@ mod tests {
             frame(&mut app, vec![]);
             std::thread::sleep(std::time::Duration::from_millis(30));
         }
-        assert!(history(&app) >= 170, "要先有捲出畫面的歷史，現在只有 {}", history(&app));
+        assert!(
+            history(&app) >= 170,
+            "要先有捲出畫面的歷史，現在只有 {}",
+            history(&app)
+        );
         // 輸出印完了才開始量：捲到歷史裡時，新輸出會讓畫面位置跟著變
         for _ in 0..20 {
             frame(&mut app, vec![]);
@@ -2064,12 +2988,20 @@ mod tests {
         let content = screen.shrink(6.0);
         let inside = egui::pos2(content.center().x, content.max.y - 20.0);
         let above = egui::pos2(content.center().x, content.min.y - 40.0);
-        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
         frame(&mut app, vec![egui::Event::PointerMoved(inside)]);
         frame(&mut app, vec![button(inside, true)]);
         for step in 1..=5 {
             let y = inside.y + (above.y - inside.y) * step as f32 / 5.0;
-            frame(&mut app, vec![egui::Event::PointerMoved(egui::pos2(inside.x, y))]);
+            frame(
+                &mut app,
+                vec![egui::Event::PointerMoved(egui::pos2(inside.x, y))],
+            );
         }
         let before = offset(&app);
         // 滑鼠停在畫面外不動：畫面應該持續往上捲
@@ -2077,7 +3009,10 @@ mod tests {
             frame(&mut app, vec![]);
         }
         let after = offset(&app);
-        assert!(after > before && after > 3, "滑鼠在畫面上緣之外，要自動往歷史捲：{before} → {after}");
+        assert!(
+            after > before && after > 3,
+            "滑鼠在畫面上緣之外，要自動往歷史捲：{before} → {after}"
+        );
         frame(&mut app, vec![button(above, false)]);
         let stopped = offset(&app);
         for _ in 0..10 {
@@ -2099,7 +3034,10 @@ mod tests {
         let ctx = egui::Context::default();
         let frame = |app: &mut crate::App, events: Vec<egui::Event>| {
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 400.0),
+            ));
             raw.events = events;
             let mut output = ctx.run_ui(raw, |ui| {
                 app.terminal_input(ui.ctx());
@@ -2114,7 +3052,13 @@ mod tests {
         let state = |app: &crate::App| {
             let term = app.doc.terminal.as_ref().unwrap().term.as_ref().unwrap();
             let g = term.term.lock();
-            let text: String = (0..g.grid().screen_lines() as i32).map(|l| (0..g.grid().columns()).map(|c| g.grid()[Line(l)][Column(c)].c).collect::<String>()).collect();
+            let text: String = (0..g.grid().screen_lines() as i32)
+                .map(|l| {
+                    (0..g.grid().columns())
+                        .map(|c| g.grid()[Line(l)][Column(c)].c)
+                        .collect::<String>()
+                })
+                .collect();
             (g.grid().display_offset(), g.grid().history_size(), text)
         };
         frame(&mut app, vec![]);
@@ -2125,7 +3069,13 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         let text = egui::Event::Text("1..400 | ForEach-Object { \"line $_\" }".into());
-        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: Some(egui::Key::Enter), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
         frame(&mut app, vec![text, enter]);
         let mut finished = false;
         while std::time::Instant::now() < deadline && !finished {
@@ -2169,16 +3119,32 @@ mod tests {
         assert_eq!(lowest_free_number([1, 3]), 2, "關掉 2 之後，下一個又是 2");
         assert_eq!(lowest_free_number([2]), 1);
         let order = [7, 9, 4];
-        assert_eq!(next_in_cycle(&order, None), Some(7), "從編輯區到第一個終端機");
+        assert_eq!(
+            next_in_cycle(&order, None),
+            Some(7),
+            "從編輯區到第一個終端機"
+        );
         assert_eq!(next_in_cycle(&order, Some(7)), Some(9));
         assert_eq!(next_in_cycle(&order, Some(9)), Some(4));
-        assert_eq!(next_in_cycle(&order, Some(4)), None, "最後一個之後回到編輯區");
+        assert_eq!(
+            next_in_cycle(&order, Some(4)),
+            None,
+            "最後一個之後回到編輯區"
+        );
         assert_eq!(next_in_cycle::<u32>(&[], None), None);
-        assert_eq!(next_in_cycle(&order, Some(99)), None, "不在清單裡的當作繞完");
+        assert_eq!(
+            next_in_cycle(&order, Some(99)),
+            None,
+            "不在清單裡的當作繞完"
+        );
     }
 
     /// 在寬 `cols`、高 `lines` 的終端機裡「顯示」一段輸出（`\r\n` 換行，太長的會折行）。
-    fn term_with(cols: usize, lines: usize, output: &str) -> alacritty_terminal::Term<alacritty_terminal::event::VoidListener> {
+    fn term_with(
+        cols: usize,
+        lines: usize,
+        output: &str,
+    ) -> alacritty_terminal::Term<alacritty_terminal::event::VoidListener> {
         use alacritty_terminal::event::VoidListener;
         use alacritty_terminal::term::Config;
         use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
@@ -2191,22 +3157,46 @@ mod tests {
 
     #[test]
     fn osc_8_links_reach_the_grid_and_only_web_and_mail_links_may_be_opened() {
-        let term = term_with(30, 2, "\x1b]8;;https://example.com/a\x07link\x1b]8;;\x07 plain");
-        let uri = |c: usize| term.grid()[Line(0)][Column(c)].hyperlink().map(|h| h.uri().to_owned());
+        let term = term_with(
+            30,
+            2,
+            "\x1b]8;;https://example.com/a\x07link\x1b]8;;\x07 plain",
+        );
+        let uri = |c: usize| {
+            term.grid()[Line(0)][Column(c)]
+                .hyperlink()
+                .map(|h| h.uri().to_owned())
+        };
         assert_eq!(uri(0).as_deref(), Some("https://example.com/a"));
         assert_eq!(uri(3).as_deref(), Some("https://example.com/a"));
         assert_eq!(uri(5), None, "連結結束之後的字不屬於連結");
         for ok in ["https://a.b", "HTTP://a.b", "mailto:x@y.z"] {
             assert!(terminal_text::openable_link(ok), "{ok}");
         }
-        for bad in ["file:///C:/Windows/notepad.exe", "ms-msdt:/id", "javascript:alert(1)", "ftp://a.b", "", "é"] {
+        for bad in [
+            "file:///C:/Windows/notepad.exe",
+            "ms-msdt:/id",
+            "javascript:alert(1)",
+            "ftp://a.b",
+            "",
+            "é",
+        ] {
             assert!(!terminal_text::openable_link(bad), "{bad}");
         }
     }
 
     #[test]
     fn block_elements_cover_the_expected_area() {
-        let area = |c| block_element(c).map(|(r, a)| (r.iter().map(|(x0, y0, x1, y1)| (x1 - x0) * (y1 - y0)).sum::<f32>(), a));
+        let area = |c| {
+            block_element(c).map(|(r, a)| {
+                (
+                    r.iter()
+                        .map(|(x0, y0, x1, y1)| (x1 - x0) * (y1 - y0))
+                        .sum::<f32>(),
+                    a,
+                )
+            })
+        };
         assert_eq!(area('█'), Some((1.0, 1.0)));
         assert_eq!(area('▐'), Some((0.5, 1.0)));
         assert_eq!(area('▛'), Some((0.75, 1.0)));
@@ -2243,22 +3233,44 @@ mod tests {
         let top = grid.topmost_line().0;
         for line in [top, top + 1] {
             let glyphs = logical_containing(grid, line);
-            let at = glyphs.iter().position(|g| g.line == line && g.c != ' ').expect("這一列有字");
+            let at = glyphs
+                .iter()
+                .position(|g| g.line == line && g.c != ' ')
+                .expect("這一列有字");
             let url = terminal_text::url_at(&glyphs, at).map(|x| x.2);
             if line == top {
                 // 第一列最前面的 "go" 不是網址的一部分，找網址中間的字
-                let mid = glyphs.iter().position(|g| g.c == 'x').expect("example 的 x");
-                assert_eq!(terminal_text::url_at(&glyphs, mid).map(|x| x.2).as_deref(), Some("https://example.com/a/very/long/path"));
+                let mid = glyphs
+                    .iter()
+                    .position(|g| g.c == 'x')
+                    .expect("example 的 x");
+                assert_eq!(
+                    terminal_text::url_at(&glyphs, mid).map(|x| x.2).as_deref(),
+                    Some("https://example.com/a/very/long/path")
+                );
             } else {
-                assert_eq!(url.as_deref(), Some("https://example.com/a/very/long/path"), "第二列也屬於同一個網址");
+                assert_eq!(
+                    url.as_deref(),
+                    Some("https://example.com/a/very/long/path"),
+                    "第二列也屬於同一個網址"
+                );
             }
         }
     }
 
     #[test]
     fn search_steps_wrap_around_in_both_directions_and_ask_for_a_jump() {
-        let seg = |l: i32| vec![Segment { line: l, start_col: 0, end_col: 1 }];
-        let mut s = Search { matches: vec![seg(0), seg(1), seg(2)], ..Search::default() };
+        let seg = |l: i32| {
+            vec![Segment {
+                line: l,
+                start_col: 0,
+                end_col: 1,
+            }]
+        };
+        let mut s = Search {
+            matches: vec![seg(0), seg(1), seg(2)],
+            ..Search::default()
+        };
         s.step(true); // 還沒選：往較早的從最後一筆開始
         assert_eq!((s.current, s.jump), (Some(2), true));
         s.jump = false;
@@ -2271,13 +3283,27 @@ mod tests {
         assert_eq!(s.current, Some(0), "最新的再往後，繞回最早的");
         let mut empty = Search::default();
         empty.step(true);
-        assert_eq!((empty.current, empty.jump), (None, false), "沒有符合項目就什麼都不做");
+        assert_eq!(
+            (empty.current, empty.jump),
+            (None, false),
+            "沒有符合項目就什麼都不做"
+        );
     }
 
     #[test]
     fn light_and_dark_palettes_differ() {
-        let dark = Palette::new(Color32::WHITE, Color32::BLACK, crate::scheme::default_for(true).terminal_colors(), MIN_CONTRAST);
-        let light = Palette::new(Color32::BLACK, Color32::WHITE, crate::scheme::default_for(false).terminal_colors(), MIN_CONTRAST);
+        let dark = Palette::new(
+            Color32::WHITE,
+            Color32::BLACK,
+            crate::scheme::default_for(true).terminal_colors(),
+            MIN_CONTRAST,
+        );
+        let light = Palette::new(
+            Color32::BLACK,
+            Color32::WHITE,
+            crate::scheme::default_for(false).terminal_colors(),
+            MIN_CONTRAST,
+        );
         assert_ne!(dark.ansi(7), light.ansi(7));
     }
 }

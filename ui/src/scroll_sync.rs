@@ -59,8 +59,12 @@ impl SyncState {
             self.last_offset = Some(v.preview_offset);
             return Plan::default();
         }
-        let editor_moved = self.last_line.is_none_or(|l| (v.editor_line - l).abs() > LINE_EPS);
-        let preview_moved = self.last_offset.is_some_and(|o| (v.preview_offset - o).abs() > PIXEL_EPS);
+        let editor_moved = self
+            .last_line
+            .is_none_or(|l| (v.editor_line - l).abs() > LINE_EPS);
+        let preview_moved = self
+            .last_offset
+            .is_some_and(|o| (v.preview_offset - o).abs() > PIXEL_EPS);
         if editor_moved {
             let y = if v.editor_at_bottom {
                 max_offset(v)
@@ -70,7 +74,10 @@ impl SyncState {
             self.settle = SETTLE_FRAMES;
             self.last_line = Some(v.editor_line);
             self.last_offset = Some(y);
-            return Plan { preview_offset: Some(y), editor_line: None };
+            return Plan {
+                preview_offset: Some(y),
+                editor_line: None,
+            };
         }
         if preview_moved {
             let line = if v.preview_offset >= max_offset(v) - 1.0 {
@@ -81,7 +88,10 @@ impl SyncState {
             self.settle = SETTLE_FRAMES;
             self.last_line = Some(line);
             self.last_offset = Some(v.preview_offset);
-            return Plan { preview_offset: None, editor_line: Some(line) };
+            return Plan {
+                preview_offset: None,
+                editor_line: Some(line),
+            };
         }
         self.last_line = Some(v.editor_line);
         self.last_offset = Some(v.preview_offset);
@@ -108,25 +118,43 @@ pub fn offset_at_line(lines: &[usize], tops: &[f32], total_lines: usize, line: f
     if i == 0 {
         // 第一個區塊之前（開頭的空行）：從頂端到第一個區塊之間按比例
         let first = lines[0] as f32;
-        return if first > 0.0 { tops[0] * (line / first).clamp(0.0, 1.0) } else { 0.0 };
+        return if first > 0.0 {
+            tops[0] * (line / first).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
     }
     let i = i - 1;
     let (start, end) = span_of(lines, total_lines, i);
-    let frac = if end > start { ((line - start) / (end - start)).clamp(0.0, 1.0) } else { 0.0 };
+    let frac = if end > start {
+        ((line - start) / (end - start)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     tops[i] + frac * (tops[i + 1] - tops[i])
 }
 
 /// 預覽捲到像素位置 `offset` 時，編輯區最上面該是第幾行（帶小數）。
 pub fn line_at_offset(lines: &[usize], tops: &[f32], total_lines: usize, offset: f32) -> f32 {
     let n = lines.len();
-    let i = tops[..n].partition_point(|&t| t <= offset).saturating_sub(1);
+    let i = tops[..n]
+        .partition_point(|&t| t <= offset)
+        .saturating_sub(1);
     if offset < tops[0] {
         // 第一個區塊之前
-        return if tops[0] > 0.0 { lines[0] as f32 * (offset / tops[0]).clamp(0.0, 1.0) } else { 0.0 };
+        return if tops[0] > 0.0 {
+            lines[0] as f32 * (offset / tops[0]).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
     }
     let (start, end) = span_of(lines, total_lines, i);
     let height = tops[i + 1] - tops[i];
-    let frac = if height > 0.0 { ((offset - tops[i]) / height).clamp(0.0, 1.0) } else { 0.0 };
+    let frac = if height > 0.0 {
+        ((offset - tops[i]) / height).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     start + frac * (end - start)
 }
 
@@ -139,7 +167,15 @@ mod tests {
     const TOPS: [f32; 4] = [0.0, 100.0, 150.0, 400.0];
 
     fn view(editor_line: f32, offset: f32) -> View<'static> {
-        View { lines: &LINES, tops: &TOPS, total_lines: 20, editor_line, editor_at_bottom: false, preview_offset: offset, preview_viewport_h: 200.0 }
+        View {
+            lines: &LINES,
+            tops: &TOPS,
+            total_lines: 20,
+            editor_line,
+            editor_at_bottom: false,
+            preview_offset: offset,
+            preview_viewport_h: 200.0,
+        }
     }
 
     #[test]
@@ -182,7 +218,13 @@ mod tests {
         let mut s = SyncState::default();
         // 第一次：以編輯區為準，把預覽對齊過去
         let p = s.step(&view(2.0, 0.0));
-        assert_eq!(p, Plan { preview_offset: Some(50.0), editor_line: None });
+        assert_eq!(
+            p,
+            Plan {
+                preview_offset: Some(50.0),
+                editor_line: None
+            }
+        );
         // 預覽真的捲過去之後（幾幀內）不再推
         for _ in 0..SETTLE_FRAMES {
             assert_eq!(s.step(&view(2.0, 50.0)), Plan::default());
@@ -190,14 +232,30 @@ mod tests {
         assert_eq!(s.step(&view(2.0, 50.0)), Plan::default(), "沒人動就不推");
         // 使用者捲預覽：編輯區跟著
         let p = s.step(&view(2.0, 125.0));
-        assert_eq!(p, Plan { preview_offset: None, editor_line: Some(7.0) });
+        assert_eq!(
+            p,
+            Plan {
+                preview_offset: None,
+                editor_line: Some(7.0)
+            }
+        );
         for _ in 0..SETTLE_FRAMES {
             s.step(&view(7.0, 125.0));
         }
-        assert_eq!(s.step(&view(7.0, 125.0)), Plan::default(), "編輯區被推過去之後不再推回預覽");
+        assert_eq!(
+            s.step(&view(7.0, 125.0)),
+            Plan::default(),
+            "編輯區被推過去之後不再推回預覽"
+        );
         // 使用者捲編輯區：預覽跟著
         let p = s.step(&view(15.0, 125.0));
-        assert_eq!(p, Plan { preview_offset: Some(275.0), editor_line: None });
+        assert_eq!(
+            p,
+            Plan {
+                preview_offset: Some(275.0),
+                editor_line: None
+            }
+        );
     }
 
     #[test]
@@ -215,7 +273,15 @@ mod tests {
         }
         assert_eq!(s.step(&view(0.0, 200.0)).editor_line, Some(20.0));
         // 沒有對應表（外掛轉的 Markdown、不是 Markdown）：什麼都不做，也忘掉位置
-        let empty = View { lines: &[], tops: &[], total_lines: 20, editor_line: 3.0, editor_at_bottom: false, preview_offset: 0.0, preview_viewport_h: 200.0 };
+        let empty = View {
+            lines: &[],
+            tops: &[],
+            total_lines: 20,
+            editor_line: 3.0,
+            editor_at_bottom: false,
+            preview_offset: 0.0,
+            preview_viewport_h: 200.0,
+        };
         assert_eq!(s.step(&empty), Plan::default());
         assert_eq!(s.last_line, None);
     }

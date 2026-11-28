@@ -18,9 +18,9 @@
 //! 第一行必須是這個固定的開頭加上同一個使用者名稱：網頁或別的程式亂送的資料（例如 HTTP 請求）
 //! 開頭對不上就直接丟掉；同一台機器上別的使用者的 FEditor 也不會互相收到路徑。
 
+use crate::cli::{SendArgs, SendItem, Target};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use crate::cli::{SendArgs, SendItem, Target};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -54,7 +54,10 @@ pub struct SendRequest {
 const TEXT_CHUNK: usize = 4000;
 
 fn escape(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
+    text.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 fn unescape(text: &str) -> String {
@@ -82,10 +85,15 @@ pub fn send(args: &SendArgs) -> Result<(), String> {
 }
 
 pub fn send_at(port: u16, args: &SendArgs) -> Result<(), String> {
-    let mut stream = TcpStream::connect_timeout(&address(port), Duration::from_millis(500)).map_err(|_| "FEditor 沒有在執行，沒辦法送".to_owned())?;
+    let mut stream = TcpStream::connect_timeout(&address(port), Duration::from_millis(500))
+        .map_err(|_| "FEditor 沒有在執行，沒辦法送".to_owned())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    let mut message = format!("{MAGIC_SEND} {}\nsend\t{}\n", user_name(), escape(args.terminal.as_deref().unwrap_or("")));
+    let mut message = format!(
+        "{MAGIC_SEND} {}\nsend\t{}\n",
+        user_name(),
+        escape(args.terminal.as_deref().unwrap_or(""))
+    );
     if args.paste {
         message.push_str("paste\n");
     }
@@ -94,7 +102,10 @@ pub fn send_at(port: u16, args: &SendArgs) -> Result<(), String> {
             SendItem::Text(text) => {
                 let chars: Vec<char> = text.chars().collect();
                 for chunk in chars.chunks(TEXT_CHUNK) {
-                    message.push_str(&format!("text\t{}\n", escape(&chunk.iter().collect::<String>())));
+                    message.push_str(&format!(
+                        "text\t{}\n",
+                        escape(&chunk.iter().collect::<String>())
+                    ));
                 }
             }
             SendItem::Key(key) => message.push_str(&format!("key\t{}\n", escape(key))),
@@ -103,9 +114,13 @@ pub fn send_at(port: u16, args: &SendArgs) -> Result<(), String> {
         }
     }
     message.push('\n');
-    stream.write_all(message.as_bytes()).map_err(|e| format!("送出失敗：{e}"))?;
+    stream
+        .write_all(message.as_bytes())
+        .map_err(|e| format!("送出失敗：{e}"))?;
     let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).map_err(|_| "FEditor 沒有回應".to_owned())?;
+    BufReader::new(stream)
+        .read_line(&mut reply)
+        .map_err(|_| "FEditor 沒有回應".to_owned())?;
     let reply = reply.trim_end_matches(['\r', '\n']);
     if reply == "OK" {
         Ok(())
@@ -127,7 +142,10 @@ pub enum Claim {
 }
 
 fn user_name() -> String {
-    std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default().replace(['\r', '\n'], " ")
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default()
+        .replace(['\r', '\n'], " ")
 }
 
 fn address(port: u16) -> SocketAddr {
@@ -179,7 +197,11 @@ fn forward(addr: SocketAddr, targets: &[Target], wait: bool) -> bool {
         // 相對路徑要用「這個行程」的目前資料夾換成絕對路徑，對方的目前資料夾不一樣
         let absolute = std::path::absolute(&target.path).unwrap_or_else(|_| target.path.clone());
         if let Some(text) = absolute.to_str().filter(|t| !t.contains(['\r', '\n'])) {
-            message.push_str(&format!("open\t{}\t{}\t{text}\n", target.line.unwrap_or(0), target.col.unwrap_or(0)));
+            message.push_str(&format!(
+                "open\t{}\t{}\t{text}\n",
+                target.line.unwrap_or(0),
+                target.col.unwrap_or(0)
+            ));
         }
     }
     message.push('\n');
@@ -210,7 +232,10 @@ fn allow_foreground() {
 }
 
 /// 開始接收別人轉交的路徑：背景執行緒處理連線，每收到一批就呼叫 `notify`（用來喚醒畫面）並把路徑送進回傳的通道。
-pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -> mpsc::Receiver<Request> {
+pub fn serve(
+    listener: TcpListener,
+    notify: impl Fn() + Send + Sync + 'static,
+) -> mpsc::Receiver<Request> {
     let (tx, rx) = mpsc::channel();
     let notify = std::sync::Arc::new(notify);
     std::thread::spawn(move || {
@@ -218,12 +243,23 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
             // 每個連線各用一個執行緒：有人連上來卻不說話，不會卡住後面正常的請求
             let (tx, notify) = (tx.clone(), notify.clone());
             std::thread::spawn(move || {
-                let Some(parsed) = read_request(stream) else { return };
+                let Some(parsed) = read_request(stream) else {
+                    return;
+                };
                 let (targets, wait, mut stream) = (parsed.targets, parsed.wait, parsed.stream);
                 if let Some(args) = parsed.send {
                     // send：等畫面那邊處理完，把結果（OK 或錯誤）回給對方
                     let (reply_tx, reply_rx) = mpsc::channel();
-                    let request = Request { targets: Vec::new(), done: None, send: Some(SendRequest { terminal: args.terminal, items: args.items, paste: args.paste, reply: reply_tx }) };
+                    let request = Request {
+                        targets: Vec::new(),
+                        done: None,
+                        send: Some(SendRequest {
+                            terminal: args.terminal,
+                            items: args.items,
+                            paste: args.paste,
+                            reply: reply_tx,
+                        }),
+                    };
                     if tx.send(request).is_err() {
                         return;
                     }
@@ -231,7 +267,10 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
                     let answer = match reply_rx.recv_timeout(Duration::from_secs(8)) {
                         Ok(Ok(())) => "OK\n".to_owned(),
                         Ok(Err(message)) => format!("ERR\t{}\n", escape(&message)),
-                        Err(_) => format!("ERR\t{}\n", escape("FEditor 沒有及時處理（可能正在顯示對話框）")),
+                        Err(_) => format!(
+                            "ERR\t{}\n",
+                            escape("FEditor 沒有及時處理（可能正在顯示對話框）")
+                        ),
                     };
                     let _ = stream.write_all(answer.as_bytes());
                     return;
@@ -242,7 +281,14 @@ pub fn serve(listener: TcpListener, notify: impl Fn() + Send + Sync + 'static) -
                 let _ = stream.write_all(b"OK\n");
                 let (done_tx, done_rx) = mpsc::channel();
                 let done = wait.then_some(done_tx);
-                if tx.send(Request { targets, done, send: None }).is_err() {
+                if tx
+                    .send(Request {
+                        targets,
+                        done,
+                        send: None,
+                    })
+                    .is_err()
+                {
                     return;
                 }
                 notify();
@@ -271,9 +317,13 @@ fn read_request(stream: TcpStream) -> Option<Parsed> {
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let mut first = String::new();
     // 限制長度：不是我們的用戶端就不要一直讀下去
-    std::io::Read::take(&mut reader, 4096).read_line(&mut first).ok()?;
+    std::io::Read::take(&mut reader, 4096)
+        .read_line(&mut first)
+        .ok()?;
     let first = first.trim_end();
-    if first != format!("{MAGIC} {}", user_name()) && first != format!("{MAGIC_SEND} {}", user_name()) {
+    if first != format!("{MAGIC} {}", user_name())
+        && first != format!("{MAGIC_SEND} {}", user_name())
+    {
         return None;
     }
     let mut targets = Vec::new();
@@ -281,18 +331,30 @@ fn read_request(stream: TcpStream) -> Option<Parsed> {
     let mut send: Option<SendArgs> = None;
     for _ in 0..2000 {
         let mut line = String::new();
-        if std::io::Read::take(&mut reader, 32768).read_line(&mut line).ok()? == 0 {
+        if std::io::Read::take(&mut reader, 32768)
+            .read_line(&mut line)
+            .ok()?
+            == 0
+        {
             return None; // 沒收到結束的空行就斷線
         }
         let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
-            return Some(Parsed { targets, wait, send, stream });
+            return Some(Parsed {
+                targets,
+                wait,
+                send,
+                stream,
+            });
         }
         if line == "wait" {
             wait = true;
         } else if let Some(rest) = line.strip_prefix("send\t") {
             let name = unescape(rest);
-            send = Some(SendArgs { terminal: (!name.is_empty()).then_some(name), ..Default::default() });
+            send = Some(SendArgs {
+                terminal: (!name.is_empty()).then_some(name),
+                ..Default::default()
+            });
         } else if let Some(rest) = line.strip_prefix("text\t") {
             send.as_mut()?.items.push(SendItem::Text(unescape(rest)));
         } else if let Some(rest) = line.strip_prefix("key\t") {
@@ -303,7 +365,11 @@ fn read_request(stream: TcpStream) -> Option<Parsed> {
             let mut f = rest.splitn(3, '\t');
             let (l, c, path) = (f.next()?, f.next()?, f.next()?);
             let num = |t: &str| t.parse::<usize>().ok().filter(|&n| n > 0);
-            targets.push(Target { path: PathBuf::from(path), line: num(l), col: num(c) });
+            targets.push(Target {
+                path: PathBuf::from(path),
+                line: num(l),
+                col: num(c),
+            });
         }
     }
     None
@@ -315,50 +381,90 @@ mod tests {
 
     /// 找一個沒人用的埠（綁 0 讓系統挑，再放掉）。
     fn free_port() -> u16 {
-        TcpListener::bind(address(0)).unwrap().local_addr().unwrap().port()
+        TcpListener::bind(address(0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
     }
 
     #[test]
     fn the_first_instance_is_primary_and_later_ones_forward_their_paths() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!("第一個應該是主角") };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!("第一個應該是主角")
+        };
         let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = woken.clone();
         let rx = serve(listener, move || {
             counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         });
         // 沒有路徑的啟動（開始功能表）：不轉交，自己開新視窗
-        assert!(matches!(claim_at(port, &[], false, false), Claim::Standalone));
+        assert!(matches!(
+            claim_at(port, &[], false, false),
+            Claim::Standalone
+        ));
         // 有路徑：轉交給主角，自己結束
         let file = std::env::temp_dir().join("feditor single instance 測試.txt");
         let folder = std::env::temp_dir();
-        let targets = [Target::plain(file.clone()), Target { path: folder.clone(), line: Some(12), col: Some(3) }];
-        assert!(matches!(claim_at(port, &targets, false, false), Claim::Forwarded));
+        let targets = [
+            Target::plain(file.clone()),
+            Target {
+                path: folder.clone(),
+                line: Some(12),
+                col: Some(3),
+            },
+        ];
+        assert!(matches!(
+            claim_at(port, &targets, false, false),
+            Claim::Forwarded
+        ));
         let got = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert_eq!(got.targets, targets.to_vec(), "路徑原樣送到（含空白與中文）與行、欄");
+        assert_eq!(
+            got.targets,
+            targets.to_vec(),
+            "路徑原樣送到（含空白與中文）與行、欄"
+        );
         assert!(got.done.is_none());
         // 路徑先進通道、之後才喚醒畫面（畫面醒來一定拿得到路徑），所以收到路徑時喚醒可能還沒執行：稍等一下
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while woken.load(std::sync::atomic::Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+        while woken.load(std::sync::atomic::Ordering::SeqCst) == 0
+            && std::time::Instant::now() < deadline
+        {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(woken.load(std::sync::atomic::Ordering::SeqCst), 1, "每一批喚醒畫面一次");
+        assert_eq!(
+            woken.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "每一批喚醒畫面一次"
+        );
     }
 
     #[test]
     fn relative_paths_become_absolute_for_the_receiver() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
-        assert!(forward(address(port), &[Target::plain("relative.txt")], false));
+        assert!(forward(
+            address(port),
+            &[Target::plain("relative.txt")],
+            false
+        ));
         let got = rx.recv_timeout(Duration::from_secs(3)).unwrap().targets;
-        assert!(got[0].path.is_absolute() && got[0].path.ends_with("relative.txt"), "{got:?}");
+        assert!(
+            got[0].path.is_absolute() && got[0].path.ends_with("relative.txt"),
+            "{got:?}"
+        );
     }
 
     #[test]
     fn strangers_and_other_users_are_ignored() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
         let send = |text: &str| {
             let mut s = TcpStream::connect(address(port)).unwrap();
@@ -369,14 +475,33 @@ mod tests {
             reply
         };
         // 網頁送來的 HTTP 請求、別的使用者、沒有結束空行：都不回 OK，也不開任何檔案
-        assert_eq!(send("POST / HTTP/1.1\r\nHost: localhost\r\n\r\n/etc/passwd\n\n"), "");
+        assert_eq!(
+            send("POST / HTTP/1.1\r\nHost: localhost\r\n\r\n/etc/passwd\n\n"),
+            ""
+        );
         // 舊版只認得 FEDITOR2：send 的開頭它不會回 OK（用戶端據此知道對方不支援）
-        assert_eq!(send(&format!("{MAGIC_SEND} someone-else\nsend\t\ntext\tx\n\n")), "");
-        assert_eq!(send(&format!("{MAGIC} someone-else\nopen\t0\t0\t/tmp/x\n\n")), "");
-        assert_eq!(send(&format!("{MAGIC} {}\nopen\t0\t0\t/tmp/x\n", user_name())), "");
-        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "不該收到任何路徑");
+        assert_eq!(
+            send(&format!("{MAGIC_SEND} someone-else\nsend\t\ntext\tx\n\n")),
+            ""
+        );
+        assert_eq!(
+            send(&format!("{MAGIC} someone-else\nopen\t0\t0\t/tmp/x\n\n")),
+            ""
+        );
+        assert_eq!(
+            send(&format!("{MAGIC} {}\nopen\t0\t0\t/tmp/x\n", user_name())),
+            ""
+        );
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "不該收到任何路徑"
+        );
         // 之後正常的請求還是收得到
-        assert!(forward(address(port), &[Target::plain("/tmp/ok.txt")], false));
+        assert!(forward(
+            address(port),
+            &[Target::plain("/tmp/ok.txt")],
+            false
+        ));
         assert!(rx.recv_timeout(Duration::from_secs(3)).is_ok());
     }
 
@@ -390,15 +515,22 @@ mod tests {
                 drop(s);
             }
         });
-        assert!(matches!(claim_at(port, &[Target::plain("x.txt")], false, false), Claim::Standalone));
+        assert!(matches!(
+            claim_at(port, &[Target::plain("x.txt")], false, false),
+            Claim::Standalone
+        ));
     }
 
     #[test]
     fn a_waiting_client_returns_only_after_the_receiver_says_done() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
-        let client = std::thread::spawn(move || forward(address(port), &[Target::plain("/tmp/w.txt")], true));
+        let client = std::thread::spawn(move || {
+            forward(address(port), &[Target::plain("/tmp/w.txt")], true)
+        });
         let req = rx.recv_timeout(Duration::from_secs(3)).unwrap();
         std::thread::sleep(Duration::from_millis(300));
         assert!(!client.is_finished(), "檔案還沒關，不該回來");
@@ -409,9 +541,13 @@ mod tests {
     #[test]
     fn a_waiting_client_gives_up_waiting_when_the_receiver_goes_away() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
-        let client = std::thread::spawn(move || forward(address(port), &[Target::plain("/tmp/w.txt")], true));
+        let client = std::thread::spawn(move || {
+            forward(address(port), &[Target::plain("/tmp/w.txt")], true)
+        });
         drop(rx.recv_timeout(Duration::from_secs(3)).unwrap()); // 丟掉 done：不用等了
         assert!(client.join().unwrap());
     }
@@ -419,28 +555,60 @@ mod tests {
     #[test]
     fn send_carries_text_and_keys_and_returns_the_receivers_answer() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
         // 扮演畫面那一邊：收到 send 就檢查內容，名稱叫「壞」的回報失敗
         let app = std::thread::spawn(move || {
             for _ in 0..2 {
-                let send = rx.recv_timeout(Duration::from_secs(3)).unwrap().send.unwrap();
-                let answer = if send.terminal.as_deref() == Some("壞") { Err("找不到終端機「壞」".to_owned()) } else { Ok(()) };
+                let send = rx
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap()
+                    .send
+                    .unwrap();
+                let answer = if send.terminal.as_deref() == Some("壞") {
+                    Err("找不到終端機「壞」".to_owned())
+                } else {
+                    Ok(())
+                };
                 if answer.is_ok() {
                     assert_eq!(send.terminal.as_deref(), Some("伺服器"));
                     assert!(send.paste, "--paste 旗標送到");
-                    assert_eq!(send.items, vec![SendItem::Text("ls\ttab\\back\nline2".into()), SendItem::Key("Enter".into())], "tab、反斜線、換行原樣送到");
+                    assert_eq!(
+                        send.items,
+                        vec![
+                            SendItem::Text("ls\ttab\\back\nline2".into()),
+                            SendItem::Key("Enter".into())
+                        ],
+                        "tab、反斜線、換行原樣送到"
+                    );
                 }
                 send.reply.send(answer).unwrap();
             }
         });
-        let args = SendArgs { terminal: Some("伺服器".into()), items: vec![SendItem::Text("ls\ttab\\back\nline2".into()), SendItem::Key("Enter".into())], paste: true };
+        let args = SendArgs {
+            terminal: Some("伺服器".into()),
+            items: vec![
+                SendItem::Text("ls\ttab\\back\nline2".into()),
+                SendItem::Key("Enter".into()),
+            ],
+            paste: true,
+        };
         assert_eq!(send_at(port, &args), Ok(()));
-        let bad = SendArgs { terminal: Some("壞".into()), items: vec![SendItem::Key("Enter".into())], paste: false };
+        let bad = SendArgs {
+            terminal: Some("壞".into()),
+            items: vec![SendItem::Key("Enter".into())],
+            paste: false,
+        };
         assert_eq!(send_at(port, &bad), Err("找不到終端機「壞」".to_owned()));
         app.join().unwrap();
         // 沒人在聽
-        assert!(send_at(free_port(), &args).unwrap_err().contains("沒有在執行"));
+        assert!(
+            send_at(free_port(), &args)
+                .unwrap_err()
+                .contains("沒有在執行")
+        );
     }
 
     #[test]
@@ -449,13 +617,35 @@ mod tests {
         assert_eq!(unescape(&escape(text)), text);
         assert!(!escape(text).contains(['\n', '\r', '\t']));
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
         let long = "字".repeat(TEXT_CHUNK * 2 + 5);
         let sent = long.clone();
-        let client = std::thread::spawn(move || send_at(port, &SendArgs { terminal: None, items: vec![SendItem::Text(sent)], paste: false }));
-        let send = rx.recv_timeout(Duration::from_secs(3)).unwrap().send.unwrap();
-        let joined: String = send.items.iter().map(|i| match i { SendItem::Text(t) => t.as_str(), _ => "" }).collect();
+        let client = std::thread::spawn(move || {
+            send_at(
+                port,
+                &SendArgs {
+                    terminal: None,
+                    items: vec![SendItem::Text(sent)],
+                    paste: false,
+                },
+            )
+        });
+        let send = rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .send
+            .unwrap();
+        let joined: String = send
+            .items
+            .iter()
+            .map(|i| match i {
+                SendItem::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect();
         assert_eq!(joined, long, "拆成好幾行送，收到的接起來和原本一樣");
         assert!(send.items.len() >= 3 && send.terminal.is_none());
         send.reply.send(Ok(())).unwrap();
@@ -465,9 +655,14 @@ mod tests {
     #[test]
     fn new_window_never_forwards() {
         let port = free_port();
-        let Claim::Primary(listener) = claim_at(port, &[], false, false) else { panic!() };
+        let Claim::Primary(listener) = claim_at(port, &[], false, false) else {
+            panic!()
+        };
         let rx = serve(listener, || {});
-        assert!(matches!(claim_at(port, &[Target::plain("/tmp/n.txt")], false, true), Claim::Standalone));
+        assert!(matches!(
+            claim_at(port, &[Target::plain("/tmp/n.txt")], false, true),
+            Claim::Standalone
+        ));
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
     }
 }

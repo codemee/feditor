@@ -48,28 +48,75 @@ pub const GROUPS: &[Group] = &[
     Group {
         key: "code",
         extensions: &[
-            "py", "pyw", "rs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "ino", "js", "mjs", "cjs", "jsx", "ts", "tsx",
-            "java", "cs", "kt", "kts", "scala", "dart", "swift", "go", "lua", "sql", "sh", "bash", "zsh", "ps1", "psm1",
-            "css", "scss", "less", "slint",
+            "py", "pyw", "rs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "ino", "js", "mjs",
+            "cjs", "jsx", "ts", "tsx", "java", "cs", "kt", "kts", "scala", "dart", "swift", "go",
+            "lua", "sql", "sh", "bash", "zsh", "ps1", "psm1", "css", "scss", "less", "slint",
         ],
         mime_types: &[
-            "text/x-python", "text/x-python3", "text/rust", "text/x-rust", "text/x-csrc", "text/x-chdr", "text/x-c++src",
-            "text/x-c++hdr", "text/x-java", "text/javascript", "application/javascript", "text/x-javascript",
-            "application/typescript", "text/x-typescript", "text/x-go", "text/x-lua", "text/x-sql", "application/sql",
-            "application/x-shellscript", "text/x-shellscript", "application/x-powershell", "text/css", "text/x-scss",
-            "text/x-less", "text/x-csharp", "text/x-kotlin", "text/x-scala", "text/x-dart", "text/x-swift",
+            "text/x-python",
+            "text/x-python3",
+            "text/rust",
+            "text/x-rust",
+            "text/x-csrc",
+            "text/x-chdr",
+            "text/x-c++src",
+            "text/x-c++hdr",
+            "text/x-java",
+            "text/javascript",
+            "application/javascript",
+            "text/x-javascript",
+            "application/typescript",
+            "text/x-typescript",
+            "text/x-go",
+            "text/x-lua",
+            "text/x-sql",
+            "application/sql",
+            "application/x-shellscript",
+            "text/x-shellscript",
+            "application/x-powershell",
+            "text/css",
+            "text/x-scss",
+            "text/x-less",
+            "text/x-csharp",
+            "text/x-kotlin",
+            "text/x-scala",
+            "text/x-dart",
+            "text/x-swift",
         ],
         default_on: true,
     },
     Group {
         key: "config",
         extensions: &[
-            "json", "jsonc", "toml", "ini", "cfg", "conf", "yml", "yaml", "properties", "env", "flaskenv",
-            "editorconfig", "gitconfig", "gitattributes", "gitmodules", "dockerignore", "npmrc",
+            "json",
+            "jsonc",
+            "toml",
+            "ini",
+            "cfg",
+            "conf",
+            "yml",
+            "yaml",
+            "properties",
+            "env",
+            "flaskenv",
+            "editorconfig",
+            "gitconfig",
+            "gitattributes",
+            "gitmodules",
+            "dockerignore",
+            "npmrc",
         ],
         mime_types: &[
-            "application/json", "application/toml", "text/x-toml", "application/x-yaml", "application/yaml", "text/yaml",
-            "text/x-ini", "application/x-wine-extension-ini", "text/x-properties", "text/x-java-properties",
+            "application/json",
+            "application/toml",
+            "text/x-toml",
+            "application/x-yaml",
+            "application/yaml",
+            "text/yaml",
+            "text/x-ini",
+            "application/x-wine-extension-ini",
+            "text/x-properties",
+            "text/x-java-properties",
         ],
         default_on: true,
     },
@@ -77,7 +124,12 @@ pub const GROUPS: &[Group] = &[
         key: "markup",
         extensions: &["html", "htm", "xml", "svg", "xaml", "vue", "md", "markdown"],
         mime_types: &[
-            "text/html", "application/xhtml+xml", "application/xml", "text/xml", "image/svg+xml", "text/markdown",
+            "text/html",
+            "application/xhtml+xml",
+            "application/xml",
+            "text/xml",
+            "image/svg+xml",
+            "text/markdown",
             "text/x-markdown",
         ],
         default_on: false,
@@ -85,33 +137,56 @@ pub const GROUPS: &[Group] = &[
     Group {
         key: "text",
         extensions: &["txt", "log", "csv", "tsv"],
-        mime_types: &["text/plain", "text/csv", "text/tab-separated-values", "text/x-log"],
+        mime_types: &[
+            "text/plain",
+            "text/csv",
+            "text/tab-separated-values",
+            "text/x-log",
+        ],
         default_on: false,
     },
 ];
 
 /// 第一次開啟這個功能時，預設勾選的類別。
 pub fn default_groups() -> BTreeSet<String> {
-    GROUPS.iter().filter(|g| g.default_on).map(|g| g.key.to_owned()).collect()
+    GROUPS
+        .iter()
+        .filter(|g| g.default_on)
+        .map(|g| g.key.to_owned())
+        .collect()
 }
 
 /// 選到的類別的所有副檔名（不含點）。不認得的類別名稱略過。
 pub fn extensions_for(selected: &BTreeSet<String>) -> Vec<&'static str> {
-    GROUPS.iter().filter(|g| selected.contains(g.key)).flat_map(|g| g.extensions.iter().copied()).collect()
+    GROUPS
+        .iter()
+        .filter(|g| selected.contains(g.key))
+        .flat_map(|g| g.extensions.iter().copied())
+        .collect()
 }
 
 /// 所有類別的所有副檔名。
 pub fn all_extensions() -> Vec<&'static str> {
-    GROUPS.iter().flat_map(|g| g.extensions.iter().copied()).collect()
+    GROUPS
+        .iter()
+        .flat_map(|g| g.extensions.iter().copied())
+        .collect()
 }
 
 /// 選到的類別的所有 MIME 類型。
 pub fn mime_types_for(selected: &BTreeSet<String>) -> Vec<&'static str> {
-    GROUPS.iter().filter(|g| selected.contains(g.key)).flat_map(|g| g.mime_types.iter().copied()).collect()
+    GROUPS
+        .iter()
+        .filter(|g| selected.contains(g.key))
+        .flat_map(|g| g.mime_types.iter().copied())
+        .collect()
 }
 
 pub fn all_mime_types() -> Vec<&'static str> {
-    GROUPS.iter().flat_map(|g| g.mime_types.iter().copied()).collect()
+    GROUPS
+        .iter()
+        .flat_map(|g| g.mime_types.iter().copied())
+        .collect()
 }
 
 /// 套用之後的結果。
@@ -131,7 +206,11 @@ pub fn supported() -> bool {
 /// 沒選到的類別（以前選過的）會一併還原。重複呼叫沒有副作用，所以程式搬了位置也可以再呼叫一次更新。
 pub fn apply(selected: &BTreeSet<String>, on: bool) -> Result<Outcome, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let selected: BTreeSet<String> = if on { selected.clone() } else { BTreeSet::new() };
+    let selected: BTreeSet<String> = if on {
+        selected.clone()
+    } else {
+        BTreeSet::new()
+    };
     imp::apply(&exe, &selected)
 }
 
@@ -143,7 +222,8 @@ pub fn open_default_apps_page() {
 
 /// 備份檔放在設定資料夾（macOS 記原本的處理程式用）。
 fn backup_path() -> Option<std::path::PathBuf> {
-    crate::settings::Settings::default_path().and_then(|p| p.parent().map(|d| d.join("file-assoc-backup.txt")))
+    crate::settings::Settings::default_path()
+        .and_then(|p| p.parent().map(|d| d.join("file-assoc-backup.txt")))
 }
 
 // ───────── Linux：.desktop 與 mimeapps.list 的內容（純文字邏輯，每個平台都能測） ─────────
@@ -203,10 +283,18 @@ pub fn clear_default_apps(text: &str, mimes: &[&str], desktop: &str) -> String {
 
 /// 逐一處理 `[Default Applications]` 裡這些 MIME 類型那一行：`change` 收到現在的值（沒有這一行是 `None`），
 /// 回傳新的值（`None` 表示不要這一行）。其他段落與行原樣保留；沒有這個段落時，需要新增才建立。
-fn edit_default_apps(text: &str, mimes: &[&str], change: impl Fn(Option<&str>) -> Option<String>) -> String {
+fn edit_default_apps(
+    text: &str,
+    mimes: &[&str],
+    change: impl Fn(Option<&str>) -> Option<String>,
+) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let new_lines = |handled: &[&str]| -> Vec<String> {
-        mimes.iter().filter(|m| !handled.contains(m)).filter_map(|m| change(None).map(|v| format!("{m}={v}"))).collect()
+        mimes
+            .iter()
+            .filter(|m| !handled.contains(m))
+            .filter_map(|m| change(None).map(|v| format!("{m}={v}")))
+            .collect()
     };
     let mut out: Vec<String> = Vec::new();
     match lines.iter().position(|l| l.trim() == DEFAULT_SECTION) {
@@ -222,7 +310,10 @@ fn edit_default_apps(text: &str, mimes: &[&str], change: impl Fn(Option<&str>) -
             }
         }
         Some(start) => {
-            let end = lines[start + 1..].iter().position(|l| l.trim_start().starts_with('[')).map_or(lines.len(), |p| start + 1 + p);
+            let end = lines[start + 1..]
+                .iter()
+                .position(|l| l.trim_start().starts_with('['))
+                .map_or(lines.len(), |p| start + 1 + p);
             out.extend(lines[..=start].iter().map(|l| (*l).to_owned()));
             let mut handled: Vec<&str> = Vec::new();
             for line in &lines[start + 1..end] {
@@ -260,10 +351,13 @@ mod imp {
     use super::*;
     use feditor_core::tf;
     use std::ptr::{null, null_mut};
-    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::Foundation::{
+        ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS,
+    };
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW,
-        RegDeleteKeyValueW, RegDeleteTreeW, RegGetValueW, RegSetValueExW,
+        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ,
+        RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteTreeW, RegGetValueW,
+        RegSetValueExW,
     };
     use windows_sys::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
 
@@ -277,7 +371,11 @@ mod imp {
         pub registered: &'static str,
     }
 
-    pub const NAMES: Names = Names { progid: "FEditor.File", app_key: r"Software\FEditor", registered: "FEditor" };
+    pub const NAMES: Names = Names {
+        progid: "FEditor.File",
+        app_key: r"Software\FEditor",
+        registered: "FEditor",
+    };
 
     /// 顯示用的文字（由呼叫端翻譯好）。
     pub struct Texts {
@@ -293,11 +391,19 @@ mod imp {
     }
 
     fn check(code: u32, what: &str) -> Result<(), String> {
-        if code == ERROR_SUCCESS { Ok(()) } else { Err(format!("{what}（錯誤碼 {code}）")) }
+        if code == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!("{what}（錯誤碼 {code}）"))
+        }
     }
 
     fn full(base: &str, key: &str) -> Vec<u16> {
-        wide(&if key.is_empty() { base.to_owned() } else { format!(r"{base}\{key}") })
+        wide(&if key.is_empty() {
+            base.to_owned()
+        } else {
+            format!(r"{base}\{key}")
+        })
     }
 
     /// 寫字串值到 `HKCU\<base>\<key>`（`name` 空字串是預設值）。
@@ -306,13 +412,32 @@ mod imp {
         let mut hkey: HKEY = null_mut();
         // SAFETY: 參數都是以 0 結尾的 UTF-16 字串或有效的輸出指標
         let created = unsafe {
-            RegCreateKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, null(), &mut hkey, null_mut())
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                path.as_ptr(),
+                0,
+                null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_WRITE,
+                null(),
+                &mut hkey,
+                null_mut(),
+            )
         };
         check(created, "無法建立登錄機碼")?;
         let name = wide(name);
         let data = wide(data);
         // SAFETY: hkey 剛建立成功；資料長度以位元組計，含結尾的 0
-        let code = unsafe { RegSetValueExW(hkey, name.as_ptr(), 0, REG_SZ, data.as_ptr().cast(), (data.len() * 2) as u32) };
+        let code = unsafe {
+            RegSetValueExW(
+                hkey,
+                name.as_ptr(),
+                0,
+                REG_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
         // SAFETY: 關閉剛開啟的 key
         unsafe { RegCloseKey(hkey) };
         check(code, "無法寫入登錄值")
@@ -326,7 +451,15 @@ mod imp {
         let mut bytes = (buf.len() * 2) as u32;
         // SAFETY: buf 夠大，bytes 是它的位元組數；函式會回報實際長度
         let code = unsafe {
-            RegGetValueW(HKEY_CURRENT_USER, path.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, null_mut(), buf.as_mut_ptr().cast(), &mut bytes)
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                path.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
         };
         if code != ERROR_SUCCESS {
             return None;
@@ -339,7 +472,11 @@ mod imp {
     fn delete_value(base: &str, key: &str, name: &str) -> Result<(), String> {
         let path = full(base, key);
         let name_w = wide(name);
-        let name_ptr = if name.is_empty() { null() } else { name_w.as_ptr() };
+        let name_ptr = if name.is_empty() {
+            null()
+        } else {
+            name_w.as_ptr()
+        };
         // SAFETY: 以 0 結尾的 UTF-16 字串（或預設值用的空指標）
         let code = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, path.as_ptr(), name_ptr) };
         if code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND {
@@ -361,7 +498,11 @@ mod imp {
 
     /// 使用者在系統設定自己選過的這個副檔名的預設程式（有的話系統就不讓程式改）。
     fn user_choice(ext: &str) -> Option<String> {
-        get(SOFTWARE, &format!(r"Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext}\UserChoice"), "ProgId")
+        get(
+            SOFTWARE,
+            &format!(r"Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext}\UserChoice"),
+            "ProgId",
+        )
     }
 
     /// 這個副檔名是不是被使用者自己選的別的程式佔住了。
@@ -375,9 +516,21 @@ mod imp {
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         let verb = wide("open");
         // registeredAppUser 是 RegisteredApplications 裡登記的名稱：頁面直接停在 FEditor
-        let uri = wide(&format!("ms-settings:defaultapps?registeredAppUser={}", NAMES.registered));
+        let uri = wide(&format!(
+            "ms-settings:defaultapps?registeredAppUser={}",
+            NAMES.registered
+        ));
         // SAFETY: 參數都是以 0 結尾的 UTF-16 字串，其餘是空指標
-        unsafe { ShellExecuteW(null_mut(), verb.as_ptr(), uri.as_ptr(), null(), null(), SW_SHOWNORMAL) };
+        unsafe {
+            ShellExecuteW(
+                null_mut(),
+                verb.as_ptr(),
+                uri.as_ptr(),
+                null(),
+                null(),
+                SW_SHOWNORMAL,
+            )
+        };
     }
 
     /// 請檔案總管重新讀取檔案關聯（不然圖示與預設程式要過一陣子才更新）。
@@ -396,12 +549,24 @@ mod imp {
 
     fn remove_all(names: &Names) -> Result<(), String> {
         delete_tree(CLASSES, names.progid)?;
-        delete_tree(SOFTWARE, names.app_key.strip_prefix(r"Software\").unwrap_or(names.app_key))?;
+        delete_tree(
+            SOFTWARE,
+            names
+                .app_key
+                .strip_prefix(r"Software\")
+                .unwrap_or(names.app_key),
+        )?;
         delete_value(SOFTWARE, "RegisteredApplications", names.registered)
     }
 
     /// 讓 `selected`（含點的副檔名）預設用 `exe` 開啟，`all` 裡其他的還原。`selected` 是空的就全部移除。
-    pub fn sync(names: &Names, selected: &[String], all: &[String], exe: &Path, texts: &Texts) -> Result<Outcome, String> {
+    pub fn sync(
+        names: &Names,
+        selected: &[String],
+        all: &[String],
+        exe: &Path,
+        texts: &Texts,
+    ) -> Result<Outcome, String> {
         for ext in all.iter().filter(|e| !selected.contains(e)) {
             unregister_ext(names, ext)?;
         }
@@ -413,22 +578,55 @@ mod imp {
         let exe = exe.display().to_string();
         // 檔案類型：雙按時執行 "exe" "檔案"
         set(CLASSES, names.progid, "", &texts.type_name)?;
-        set(CLASSES, &format!(r"{}\DefaultIcon", names.progid), "", &format!("\"{exe}\",0"))?;
-        set(CLASSES, &format!(r"{}\shell\open\command", names.progid), "", &format!("\"{exe}\" \"%1\""))?;
+        set(
+            CLASSES,
+            &format!(r"{}\DefaultIcon", names.progid),
+            "",
+            &format!("\"{exe}\",0"),
+        )?;
+        set(
+            CLASSES,
+            &format!(r"{}\shell\open\command", names.progid),
+            "",
+            &format!("\"{exe}\" \"%1\""),
+        )?;
         // 能力宣告：讓 FEditor 出現在系統設定的「預設應用程式」，使用者可以一次選好
-        let app = names.app_key.strip_prefix(r"Software\").unwrap_or(names.app_key);
+        let app = names
+            .app_key
+            .strip_prefix(r"Software\")
+            .unwrap_or(names.app_key);
         let caps = format!(r"{app}\Capabilities");
         delete_tree(SOFTWARE, &format!(r"{caps}\FileAssociations"))?;
         set(SOFTWARE, &caps, "ApplicationName", "FEditor")?;
-        set(SOFTWARE, &caps, "ApplicationDescription", &texts.description)?;
+        set(
+            SOFTWARE,
+            &caps,
+            "ApplicationDescription",
+            &texts.description,
+        )?;
         for ext in selected {
-            set(SOFTWARE, &format!(r"{caps}\FileAssociations"), ext, names.progid)?;
+            set(
+                SOFTWARE,
+                &format!(r"{caps}\FileAssociations"),
+                ext,
+                names.progid,
+            )?;
         }
-        set(SOFTWARE, "RegisteredApplications", names.registered, &format!(r"{}\Capabilities", names.app_key))?;
+        set(
+            SOFTWARE,
+            "RegisteredApplications",
+            names.registered,
+            &format!(r"{}\Capabilities", names.app_key),
+        )?;
         let mut blocked = Vec::new();
         for ext in selected {
             // 「開啟方式」清單裡有 FEditor
-            set(CLASSES, &format!(r"{ext}\OpenWithProgids"), names.progid, "")?;
+            set(
+                CLASSES,
+                &format!(r"{ext}\OpenWithProgids"),
+                names.progid,
+                "",
+            )?;
             // 還沒有預設程式的：直接設成 FEditor（使用者在 HKCU 已經指定別的程式就不動它）
             if get(CLASSES, ext, "").is_none_or(|d| d.is_empty()) {
                 set(CLASSES, ext, "", names.progid)?;
@@ -445,7 +643,10 @@ mod imp {
         let dotted = |e: &&str| format!(".{e}");
         let chosen: Vec<String> = extensions_for(selected).iter().map(dotted).collect();
         let all: Vec<String> = all_extensions().iter().map(dotted).collect();
-        let texts = Texts { type_name: t("FEditor 文字檔案").to_owned(), description: t("FEditor：輕量的跨平台文字編輯器").to_owned() };
+        let texts = Texts {
+            type_name: t("FEditor 文字檔案").to_owned(),
+            description: t("FEditor：輕量的跨平台文字編輯器").to_owned(),
+        };
         sync(&NAMES, &chosen, &all, exe, &texts).map_err(|e| tf!("無法更新檔案關聯：{}", e))
     }
 
@@ -453,19 +654,32 @@ mod imp {
     mod tests {
         use super::*;
 
-        const TEST: Names = Names { progid: "FEditorTest.File", app_key: r"Software\FEditorTest", registered: "FEditorTest" };
+        const TEST: Names = Names {
+            progid: "FEditorTest.File",
+            app_key: r"Software\FEditorTest",
+            registered: "FEditorTest",
+        };
         const EXT: &str = ".feditortest";
 
         fn texts() -> Texts {
-            Texts { type_name: "FEditor test file".into(), description: "test".into() }
+            Texts {
+                type_name: "FEditor test file".into(),
+                description: "test".into(),
+            }
         }
 
         #[test]
         fn blocked_only_when_the_user_picked_another_program() {
             assert!(!is_blocked(None, "FEditor.File"));
             assert!(!is_blocked(Some(""), "FEditor.File"));
-            assert!(!is_blocked(Some("feditor.file"), "FEditor.File"), "大小寫不分，是自己就不算");
-            assert!(is_blocked(Some("Applications\\notepad.exe"), "FEditor.File"));
+            assert!(
+                !is_blocked(Some("feditor.file"), "FEditor.File"),
+                "大小寫不分，是自己就不算"
+            );
+            assert!(is_blocked(
+                Some("Applications\\notepad.exe"),
+                "FEditor.File"
+            ));
         }
 
         /// 真的寫進登錄檔再還原（用一個不存在的副檔名和另一組名稱，不影響真正的設定）。
@@ -476,29 +690,80 @@ mod imp {
             let _ = sync(&TEST, &[], &all, exe, &texts()); // 先清乾淨
             let outcome = sync(&TEST, &all, &all, exe, &texts()).unwrap();
             assert!(outcome.blocked.is_empty(), "沒有人選過這個副檔名");
-            assert_eq!(get(CLASSES, EXT, "").as_deref(), Some("FEditorTest.File"), "沒有預設程式：直接設成 FEditor");
-            assert_eq!(get(CLASSES, &format!(r"{EXT}\OpenWithProgids"), "FEditorTest.File").as_deref(), Some(""));
+            assert_eq!(
+                get(CLASSES, EXT, "").as_deref(),
+                Some("FEditorTest.File"),
+                "沒有預設程式：直接設成 FEditor"
+            );
+            assert_eq!(
+                get(
+                    CLASSES,
+                    &format!(r"{EXT}\OpenWithProgids"),
+                    "FEditorTest.File"
+                )
+                .as_deref(),
+                Some("")
+            );
             assert_eq!(
                 get(CLASSES, r"FEditorTest.File\shell\open\command", "").as_deref(),
                 Some(r#""C:\Apps\FEditor\feditor.exe" "%1""#)
             );
-            assert_eq!(get(SOFTWARE, r"FEditorTest\Capabilities\FileAssociations", EXT).as_deref(), Some("FEditorTest.File"));
-            assert_eq!(get(SOFTWARE, "RegisteredApplications", "FEditorTest").as_deref(), Some(r"Software\FEditorTest\Capabilities"));
+            assert_eq!(
+                get(SOFTWARE, r"FEditorTest\Capabilities\FileAssociations", EXT).as_deref(),
+                Some("FEditorTest.File")
+            );
+            assert_eq!(
+                get(SOFTWARE, "RegisteredApplications", "FEditorTest").as_deref(),
+                Some(r"Software\FEditorTest\Capabilities")
+            );
             // 取消：全部還原（我們設的預設程式、開啟方式、能力宣告都拿掉）
             sync(&TEST, &[], &all, exe, &texts()).unwrap();
             assert_eq!(get(CLASSES, EXT, ""), None, "我們設的預設程式要拿掉");
-            assert_eq!(get(CLASSES, &format!(r"{EXT}\OpenWithProgids"), "FEditorTest.File"), None);
-            assert_eq!(get(CLASSES, r"FEditorTest.File\shell\open\command", ""), None);
+            assert_eq!(
+                get(
+                    CLASSES,
+                    &format!(r"{EXT}\OpenWithProgids"),
+                    "FEditorTest.File"
+                ),
+                None
+            );
+            assert_eq!(
+                get(CLASSES, r"FEditorTest.File\shell\open\command", ""),
+                None
+            );
             assert_eq!(get(SOFTWARE, "RegisteredApplications", "FEditorTest"), None);
-            assert_eq!(get(SOFTWARE, r"FEditorTest\Capabilities", "ApplicationName"), None);
+            assert_eq!(
+                get(SOFTWARE, r"FEditorTest\Capabilities", "ApplicationName"),
+                None
+            );
             // 副檔名本來就有別的預設程式：不動它，但「開啟方式」清單還是加上；取消時也只拿掉我們加的
             set(CLASSES, EXT, "", "SomeoneElse.File").unwrap();
             sync(&TEST, &all, &all, exe, &texts()).unwrap();
             assert_eq!(get(CLASSES, EXT, "").as_deref(), Some("SomeoneElse.File"));
-            assert_eq!(get(CLASSES, &format!(r"{EXT}\OpenWithProgids"), "FEditorTest.File").as_deref(), Some(""));
+            assert_eq!(
+                get(
+                    CLASSES,
+                    &format!(r"{EXT}\OpenWithProgids"),
+                    "FEditorTest.File"
+                )
+                .as_deref(),
+                Some("")
+            );
             sync(&TEST, &[], &all, exe, &texts()).unwrap();
-            assert_eq!(get(CLASSES, EXT, "").as_deref(), Some("SomeoneElse.File"), "別人的預設程式不能被我們刪掉");
-            assert_eq!(get(CLASSES, &format!(r"{EXT}\OpenWithProgids"), "FEditorTest.File"), None);            let _ = delete_tree(CLASSES, EXT);
+            assert_eq!(
+                get(CLASSES, EXT, "").as_deref(),
+                Some("SomeoneElse.File"),
+                "別人的預設程式不能被我們刪掉"
+            );
+            assert_eq!(
+                get(
+                    CLASSES,
+                    &format!(r"{EXT}\OpenWithProgids"),
+                    "FEditorTest.File"
+                ),
+                None
+            );
+            let _ = delete_tree(CLASSES, EXT);
         }
     }
 }
@@ -517,16 +782,36 @@ mod imp {
 
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
-        fn CFStringCreateWithCString(alloc: *const c_void, c_str: *const c_char, encoding: u32) -> CFStringRef;
-        fn CFStringGetCString(string: CFStringRef, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
+        fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            c_str: *const c_char,
+            encoding: u32,
+        ) -> CFStringRef;
+        fn CFStringGetCString(
+            string: CFStringRef,
+            buffer: *mut c_char,
+            size: isize,
+            encoding: u32,
+        ) -> u8;
         fn CFRelease(cf: *const c_void);
     }
 
     #[link(name = "CoreServices", kind = "framework")]
     unsafe extern "C" {
-        fn UTTypeCreatePreferredIdentifierForTag(tag_class: CFStringRef, tag: CFStringRef, conforming_to: CFStringRef) -> CFStringRef;
-        fn LSSetDefaultRoleHandlerForContentType(content_type: CFStringRef, roles: u32, handler: CFStringRef) -> i32;
-        fn LSCopyDefaultRoleHandlerForContentType(content_type: CFStringRef, roles: u32) -> CFStringRef;
+        fn UTTypeCreatePreferredIdentifierForTag(
+            tag_class: CFStringRef,
+            tag: CFStringRef,
+            conforming_to: CFStringRef,
+        ) -> CFStringRef;
+        fn LSSetDefaultRoleHandlerForContentType(
+            content_type: CFStringRef,
+            roles: u32,
+            handler: CFStringRef,
+        ) -> i32;
+        fn LSCopyDefaultRoleHandlerForContentType(
+            content_type: CFStringRef,
+            roles: u32,
+        ) -> CFStringRef;
     }
 
     /// 擁有一個 CFString（用完自動釋放）。
@@ -548,9 +833,14 @@ mod imp {
         fn to_text(&self) -> Option<String> {
             let mut buf = vec![0 as c_char; 512];
             // SAFETY: buf 夠大，長度如實告訴系統；成功時內容以 0 結尾
-            let ok = unsafe { CFStringGetCString(self.0, buf.as_mut_ptr(), buf.len() as isize, UTF8) };
+            let ok =
+                unsafe { CFStringGetCString(self.0, buf.as_mut_ptr(), buf.len() as isize, UTF8) };
             // SAFETY: 成功時 buf 是以 0 結尾的字串
-            (ok != 0).then(|| unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned())
+            (ok != 0).then(|| {
+                unsafe { CStr::from_ptr(buf.as_ptr()) }
+                    .to_string_lossy()
+                    .into_owned()
+            })
         }
     }
 
@@ -566,7 +856,8 @@ mod imp {
         let class = Cf::new("public.filename-extension")?;
         let tag = Cf::new(ext)?;
         // SAFETY: 兩個參數都是有效的 CFString；回傳的 UTI 由我們擁有
-        let uti = unsafe { UTTypeCreatePreferredIdentifierForTag(class.0, tag.0, std::ptr::null()) };
+        let uti =
+            unsafe { UTTypeCreatePreferredIdentifierForTag(class.0, tag.0, std::ptr::null()) };
         Cf::owned(uti)?.to_text()
     }
 
@@ -578,7 +869,9 @@ mod imp {
     }
 
     fn set_handler(uti: &str, bundle: &str) -> Result<(), i32> {
-        let (Some(uti), Some(bundle)) = (Cf::new(uti), Cf::new(bundle)) else { return Err(-1) };
+        let (Some(uti), Some(bundle)) = (Cf::new(uti), Cf::new(bundle)) else {
+            return Err(-1);
+        };
         // SAFETY: 兩個參數都是有效的 CFString
         let status = unsafe { LSSetDefaultRoleHandlerForContentType(uti.0, ROLES_ALL, bundle.0) };
         if status == 0 { Ok(()) } else { Err(status) }
@@ -679,7 +972,9 @@ mod imp {
             std::fs::write(&mimeapps, text).map_err(|e| e.to_string())?;
         }
         // 請桌面環境重新讀取（沒有這個指令也沒關係）
-        let _ = std::process::Command::new("update-desktop-database").arg(&applications).status();
+        let _ = std::process::Command::new("update-desktop-database")
+            .arg(&applications)
+            .status();
         Ok(Outcome::default())
     }
 }
@@ -691,7 +986,11 @@ mod imp {
     pub fn open_default_apps_page() {}
 
     pub fn apply(_: &Path, selected: &BTreeSet<String>) -> Result<Outcome, String> {
-        if selected.is_empty() { Ok(Outcome::default()) } else { Err("這個系統不支援".to_owned()) }
+        if selected.is_empty() {
+            Ok(Outcome::default())
+        } else {
+            Err("這個系統不支援".to_owned())
+        }
     }
 }
 
@@ -708,14 +1007,23 @@ mod tests {
         let all = all_extensions();
         let unique: BTreeSet<&str> = all.iter().copied().collect();
         assert_eq!(all.len(), unique.len(), "同一個副檔名只屬於一類");
-        assert!(all.iter().all(|e| !e.starts_with('.') && *e == e.to_ascii_lowercase() && !e.is_empty()));
+        assert!(
+            all.iter()
+                .all(|e| !e.starts_with('.') && *e == e.to_ascii_lowercase() && !e.is_empty())
+        );
         assert_eq!(default_groups(), set_of(&["code", "config"]));
         // 「雙按就是執行」的檔案不在裡面
         for risky in ["bat", "cmd", "exe", "com", "msi", "vbs", "lnk"] {
             assert!(!all.contains(&risky), "{risky} 不該被接手");
         }
-        assert_eq!(extensions_for(&set_of(&["text"])), vec!["txt", "log", "csv", "tsv"]);
-        assert!(extensions_for(&set_of(&["nonsense"])).is_empty(), "不認得的類別略過");
+        assert_eq!(
+            extensions_for(&set_of(&["text"])),
+            vec!["txt", "log", "csv", "tsv"]
+        );
+        assert!(
+            extensions_for(&set_of(&["nonsense"])).is_empty(),
+            "不認得的類別略過"
+        );
         assert!(extensions_for(&BTreeSet::new()).is_empty());
     }
 
@@ -724,7 +1032,10 @@ mod tests {
         // 設定面板列出的類別，FEditor 自己也認得（語法上色）：副檔名表和語言表不能各唱各的
         for group in GROUPS.iter().filter(|g| g.key != "text") {
             for ext in group.extensions {
-                assert!(crate::syntax::language_for_name(&format!("x.{ext}")).is_some(), "{ext} 沒有對應的語言");
+                assert!(
+                    crate::syntax::language_for_name(&format!("x.{ext}")).is_some(),
+                    "{ext} 沒有對應的語言"
+                );
             }
         }
     }
@@ -732,7 +1043,11 @@ mod tests {
     #[test]
     fn every_group_has_a_label_and_mime_types() {
         for g in GROUPS {
-            assert!(!g.label().is_empty() && !g.mime_types.is_empty(), "{}", g.key);
+            assert!(
+                !g.label().is_empty() && !g.mime_types.is_empty(),
+                "{}",
+                g.key
+            );
         }
         assert!(mime_types_for(&set_of(&["config"])).contains(&"application/json"));
         assert!(all_mime_types().len() > mime_types_for(&set_of(&["config"])).len());
@@ -742,7 +1057,10 @@ mod tests {
     fn the_desktop_entry_lists_every_mime_type_and_quotes_the_exe() {
         let entry = desktop_entry(Path::new("/opt/my apps/feditor"));
         assert!(entry.starts_with("[Desktop Entry]\nType=Application\n"));
-        assert!(entry.contains("Exec=\"/opt/my apps/feditor\" %F\n"), "{entry}");
+        assert!(
+            entry.contains("Exec=\"/opt/my apps/feditor\" %F\n"),
+            "{entry}"
+        );
         assert!(entry.contains("MimeType=text/x-python;") && entry.contains("text/plain;"));
         assert!(entry.contains("Categories=Utility;TextEditor;"));
         assert!(desktop_entry(Path::new("/a\"b$c")).contains(r#"Exec="/a\"b\$c" %F"#));
@@ -772,18 +1090,31 @@ mod tests {
 
     #[test]
     fn default_apps_create_the_section_when_missing_and_leave_other_apps_alone() {
-        assert_eq!(set_default_apps("", &["text/plain"], APP), "[Default Applications]\ntext/plain=feditor.desktop;\n");
         assert_eq!(
-            set_default_apps("[Added Associations]\na/b=x.desktop;\n", &["text/plain"], APP),
+            set_default_apps("", &["text/plain"], APP),
+            "[Default Applications]\ntext/plain=feditor.desktop;\n"
+        );
+        assert_eq!(
+            set_default_apps(
+                "[Added Associations]\na/b=x.desktop;\n",
+                &["text/plain"],
+                APP
+            ),
             "[Added Associations]\na/b=x.desktop;\n\n[Default Applications]\ntext/plain=feditor.desktop;\n"
         );
         // 別的程式排第一的，FEditor 插到最前面；取消後原樣回來
         let other = "[Default Applications]\ntext/plain=kate.desktop;\n";
         let set = set_default_apps(other, &["text/plain"], APP);
-        assert_eq!(set, "[Default Applications]\ntext/plain=feditor.desktop;kate.desktop;\n");
+        assert_eq!(
+            set,
+            "[Default Applications]\ntext/plain=feditor.desktop;kate.desktop;\n"
+        );
         assert_eq!(clear_default_apps(&set, &["text/plain"], APP), other);
         // 沒有東西要改：不動、也不憑空變出段落
         assert_eq!(clear_default_apps("", &["text/plain"], APP), "");
-        assert_eq!(clear_default_apps("[Added Associations]\na/b=x;\n", &["text/plain"], APP), "[Added Associations]\na/b=x;\n");
+        assert_eq!(
+            clear_default_apps("[Added Associations]\na/b=x;\n", &["text/plain"], APP),
+            "[Added Associations]\na/b=x;\n"
+        );
     }
 }

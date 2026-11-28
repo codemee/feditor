@@ -187,7 +187,9 @@ mod tests {
             .button("否", Answer::No)
             .button("取消", Answer::Cancel);
         assert_eq!(three.dismiss, Some(Answer::Cancel));
-        let two = Spec::new("t", "m").button("是", Answer::Yes).button("否", Answer::No);
+        let two = Spec::new("t", "m")
+            .button("是", Answer::Yes)
+            .button("否", Answer::No);
         assert_eq!(two.dismiss, Some(Answer::No));
         assert_eq!(two.no_dismiss().dismiss, None);
     }

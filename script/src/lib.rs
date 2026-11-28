@@ -130,7 +130,11 @@ pub fn find_in_text(
         },
     )
     .map_err(|e| e.to_string())?;
-    let byte = |chars: usize| text.char_indices().nth(chars).map_or(text.len(), |(b, _)| b);
+    let byte = |chars: usize| {
+        text.char_indices()
+            .nth(chars)
+            .map_or(text.len(), |(b, _)| b)
+    };
     let found = if opts.backward {
         searcher.find_prev(text, byte(from))
     } else {
@@ -166,7 +170,10 @@ impl EditorApi for Buffer {
     }
     fn slice(&self, range: Range<usize>) -> String {
         let n = Buffer::len_chars(self);
-        Buffer::slice(self, range.start.min(n)..range.end.min(n).max(range.start.min(n)))
+        Buffer::slice(
+            self,
+            range.start.min(n)..range.end.min(n).max(range.start.min(n)),
+        )
     }
     fn line_start(&self, line: usize) -> usize {
         if line >= Buffer::line_count(self) {
@@ -258,7 +265,11 @@ mod tests {
             None
         }
         fn insert(&mut self, at: usize, text: &str) {
-            let b = self.0.char_indices().nth(at).map_or(self.0.len(), |(b, _)| b);
+            let b = self
+                .0
+                .char_indices()
+                .nth(at)
+                .map_or(self.0.len(), |(b, _)| b);
             self.0.insert_str(b, text);
         }
         fn remove(&mut self, _: Range<usize>) {}
@@ -288,12 +299,25 @@ mod tests {
         let mut b = Buffer::from_text("你好 foo 世界 Foo");
         let plain = FindOptions::default();
         assert_eq!(b.find("foo", 0, plain).unwrap(), Some(3..6));
-        assert_eq!(b.find("foo", 4, plain).unwrap(), Some(10..13), "預設不分大小寫");
-        let cs = FindOptions { case_sensitive: true, ..plain };
+        assert_eq!(
+            b.find("foo", 4, plain).unwrap(),
+            Some(10..13),
+            "預設不分大小寫"
+        );
+        let cs = FindOptions {
+            case_sensitive: true,
+            ..plain
+        };
         assert_eq!(b.find("Foo", 0, cs).unwrap(), Some(10..13));
-        let back = FindOptions { backward: true, ..plain };
+        let back = FindOptions {
+            backward: true,
+            ..plain
+        };
         assert_eq!(b.find("foo", 10, back).unwrap(), Some(3..6));
-        let re = FindOptions { regex: true, ..plain };
+        let re = FindOptions {
+            regex: true,
+            ..plain
+        };
         assert_eq!(b.find("世.", 0, re).unwrap(), Some(7..9));
         assert!(b.find("(", 0, re).is_err(), "規則有誤要回報");
         assert_eq!(b.find("nope", 0, plain).unwrap(), None);

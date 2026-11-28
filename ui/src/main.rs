@@ -5,73 +5,74 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod cli;
+mod cli_command;
 mod conpty;
 mod document;
 mod editor;
+mod file_assoc;
 mod find;
 mod folder_search;
 mod fonts;
 mod icons;
-mod language;
-mod macro_lib;
 mod ime_case;
+#[cfg(windows)]
+mod jump_list;
+mod language;
+#[cfg(target_os = "macos")]
+mod macos_open;
+mod macro_lib;
 mod macros;
 mod modal;
-mod pty_tap;
 mod pane_ops;
-mod search_dock;
 mod panes;
 mod preview;
 mod preview_pane;
 mod preview_ui;
-mod scheme;
-mod session;
-mod settings;
-mod cli_command;
-mod file_assoc;
 mod project_cmd;
+mod pty_tap;
 mod recent;
 mod recent_os;
 mod runtime_env;
-mod shortcuts;
+mod scheme;
+mod search_dock;
+mod session;
+mod settings;
 mod shell_integration;
-#[cfg(target_os = "macos")]
-mod macos_open;
-#[cfg(windows)]
-mod jump_list;
-#[cfg(windows)]
-mod text_drop;
+mod shortcuts;
 mod single_instance;
 mod syntax;
 mod tabs;
 mod terminal;
 mod terminal_pane;
+#[cfg(windows)]
+mod text_drop;
 use terminal_pane::DropPayload;
-mod terminal_text;
 mod scroll_sync;
 mod shell_icons;
+mod terminal_text;
+mod theme;
 mod watcher;
-mod window_chrome;
 #[cfg(windows)]
 mod win_frame;
 #[cfg(windows)]
 mod win_icon;
-mod theme;
+mod window_chrome;
 
 use document::{Document, SaveDocError};
+use editor::model::EditorState;
 use eframe::egui;
-use feditor_core::i18n::t;
-use feditor_core::tf;
 use egui::text::CCursor;
 use egui::text_selection::CCursorRange;
 use encoding_rs::Encoding;
-use editor::model::EditorState;
 use feditor_core::fileio::{LineEnding, common_encodings, format_choices, format_label};
+use feditor_core::i18n::t;
+use feditor_core::tf;
 use find::FindState;
 use icons::Icon;
 use settings::{
-    DEFAULT_FONT_SIZE, DEFAULT_PREVIEW_FONT_SIZE, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_TERMINAL_MIN_CONTRAST, MAX_FONT_SIZE, MAX_TERMINAL_CONTRAST, MIN_FONT_SIZE, MIN_TERMINAL_CONTRAST, Settings, ThemeChoice, adjust_font_size,
-    clamp_font_size, zoom_steps,
+    DEFAULT_FONT_SIZE, DEFAULT_PREVIEW_FONT_SIZE, DEFAULT_TERMINAL_FONT_SIZE,
+    DEFAULT_TERMINAL_MIN_CONTRAST, MAX_FONT_SIZE, MAX_TERMINAL_CONTRAST, MIN_FONT_SIZE,
+    MIN_TERMINAL_CONTRAST, Settings, ThemeChoice, adjust_font_size, clamp_font_size, zoom_steps,
 };
 use std::ops::Range;
 use std::path::PathBuf;
@@ -118,7 +119,8 @@ fn combo_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>) -> 
 /// 從目前位置往右到可見範圍（裁切範圍）邊緣的寬度：區域比內容窄、內容被裁掉的時候，
 /// 排版要用這個寬度才不會把右邊的欄位排到看不見的地方。
 fn visible_width(ui: &egui::Ui) -> f32 {
-    ui.available_width().min((ui.clip_rect().right() - ui.cursor().left()).max(0.0))
+    ui.available_width()
+        .min((ui.clip_rect().right() - ui.cursor().left()).max(0.0))
 }
 
 /// 一個有標題、有外框的區塊：上面是區塊名稱，下面是框起來的內容。`fill` 為真時填滿剩下的空間，
@@ -144,10 +146,21 @@ fn split_handle(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, horizont
             egui::CursorIcon::ResizeHorizontal
         });
     }
-    let color = ui.visuals().weak_text_color().gamma_multiply(if resp.hovered() || resp.dragged() { 1.0 } else { 0.6 });
+    let color =
+        ui.visuals()
+            .weak_text_color()
+            .gamma_multiply(if resp.hovered() || resp.dragged() {
+                1.0
+            } else {
+                0.6
+            });
     for k in -1..=1 {
         let off = k as f32 * 5.0;
-        let c = if horizontal_bar { rect.center() + egui::vec2(off, 0.0) } else { rect.center() + egui::vec2(0.0, off) };
+        let c = if horizontal_bar {
+            rect.center() + egui::vec2(off, 0.0)
+        } else {
+            rect.center() + egui::vec2(0.0, off)
+        };
         ui.painter().circle_filled(c, 1.2, color);
     }
 }
@@ -181,11 +194,26 @@ fn same_file(doc: Option<&std::path::Path>, hit: &std::path::Path) -> bool {
 /// 結果表格「內容」欄的一行文字：去掉行首空白，命中的字用選取色標出。
 fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJob {
     let chars: Vec<char> = hit.text.chars().collect();
-    let start = hit.range.start.saturating_sub(hit.text_offset).min(chars.len());
-    let end = hit.range.end.saturating_sub(hit.text_offset).clamp(start, chars.len());
-    let lead = chars.iter().take(start).take_while(|c| c.is_whitespace()).count();
+    let start = hit
+        .range
+        .start
+        .saturating_sub(hit.text_offset)
+        .min(chars.len());
+    let end = hit
+        .range
+        .end
+        .saturating_sub(hit.text_offset)
+        .clamp(start, chars.len());
+    let lead = chars
+        .iter()
+        .take(start)
+        .take_while(|c| c.is_whitespace())
+        .count();
     let seg = |a: usize, b: usize| -> String {
-        chars[a..b].iter().map(|&c| if c == '\t' { ' ' } else { c }).collect()
+        chars[a..b]
+            .iter()
+            .map(|&c| if c == '\t' { ' ' } else { c })
+            .collect()
     };
     let plain = egui::TextFormat {
         font_id: egui::TextStyle::Monospace.resolve(ui.style()),
@@ -193,7 +221,10 @@ fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJo
         ..Default::default()
     };
     // 命中的字只改文字顏色，不加底色
-    let marked = egui::TextFormat { color: ui.visuals().warn_fg_color, ..plain.clone() };
+    let marked = egui::TextFormat {
+        color: ui.visuals().warn_fg_color,
+        ..plain.clone()
+    };
     let mut job = egui::text::LayoutJob::default();
     job.append(&seg(lead, start), 0.0, plain.clone());
     job.append(&seg(start, end), 0.0, marked);
@@ -205,7 +236,12 @@ fn hit_job(ui: &egui::Ui, hit: &feditor_core::grep::Hit) -> egui::text::LayoutJo
 /// 留住之後 Tab 才會留在事件裡，由 [`App::tab_between_find_and_replace`] 在搜尋與取代之間切換。
 /// 方向鍵照原本的樣子留給輸入框（游標左右移動）。
 fn keep_tab_in_find_inputs(ui: &egui::Ui) {
-    let filter = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: false };
+    let filter = egui::EventFilter {
+        tab: true,
+        horizontal_arrows: true,
+        vertical_arrows: true,
+        escape: false,
+    };
     ui.memory_mut(|m| {
         for id in [find_input_id(), replace_input_id()] {
             if m.has_focus(id) {
@@ -217,12 +253,19 @@ fn keep_tab_in_find_inputs(ui: &egui::Ui) {
 
 /// 右鍵選單兩個項目的文字（跟著目前的介面語言）。
 fn shell_menu_labels() -> shell_integration::Labels {
-    shell_integration::Labels { open: t("用 FEditor 開啟").to_owned(), pick: t("用 FEditor 選取檔案開啟…").to_owned() }
+    shell_integration::Labels {
+        open: t("用 FEditor 開啟").to_owned(),
+        pick: t("用 FEditor 選取檔案開啟…").to_owned(),
+    }
 }
 
 /// 檔案管理員的名稱（設定面板的標籤用）。
 fn file_manager_name() -> &'static str {
-    if cfg!(windows) { t("檔案總管") } else { "Finder" }
+    if cfg!(windows) {
+        t("檔案總管")
+    } else {
+        "Finder"
+    }
 }
 
 /// 真正去加入（`on`）或移除右鍵選單。
@@ -307,7 +350,11 @@ struct Pending {
 
 impl Pending {
     fn new(spec: modal::Spec, then: Then) -> Self {
-        Pending { spec, then, input: None }
+        Pending {
+            spec,
+            then,
+            input: None,
+        }
     }
 
     fn with_input(mut self, input: modal::Input) -> Self {
@@ -320,7 +367,10 @@ impl Pending {
 /// 只丟掉文字等於這個鍵的字元，回傳丟掉幾個。
 fn drop_key_text(events: &mut Vec<egui::Event>, key: egui::Key) -> usize {
     let before = events.len();
-    let (symbol, name) = (key.symbol_or_name().to_lowercase(), key.name().to_lowercase());
+    let (symbol, name) = (
+        key.symbol_or_name().to_lowercase(),
+        key.name().to_lowercase(),
+    );
     // egui 的減號符號是 Unicode 的「−」，實際打出來的是 ASCII 的 "-"
     let ascii_minus = key == egui::Key::Minus;
     events.retain(|e| match e {
@@ -345,7 +395,16 @@ fn tight_buttons(ui: &mut egui::Ui) {
 }
 
 /// 設定面板左側的標籤（順序與 `settings_page` 的頁碼一致）。
-const SETTINGS_TABS: [&str; 8] = ["介面", "編輯區", "檔案類型", "預覽", "終端機", "狀態列", "快捷鍵", "關於"];
+const SETTINGS_TABS: [&str; 8] = [
+    "介面",
+    "編輯區",
+    "檔案類型",
+    "預覽",
+    "終端機",
+    "狀態列",
+    "快捷鍵",
+    "關於",
+];
 /// 「快捷鍵」頁在 [`SETTINGS_TABS`] 裡的索引。
 const SHORTCUTS_TAB: usize = 6;
 /// 「關於」頁在 [`SETTINGS_TABS`] 裡的索引。
@@ -418,7 +477,10 @@ fn form_row_tall(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)
 /// 巨集「適用的檔案類型」清單裡列出的名稱：目前支援的每一種語言；巨集檔頭寫了清單裡沒有的名稱
 /// （例如自訂語言檔被刪了）時，照樣列在最前面，讓使用者能取消它。
 fn macro_type_names(current: &[String]) -> Vec<String> {
-    let mut names: Vec<String> = syntax::all_languages().iter().map(|l| l.name.to_owned()).collect();
+    let mut names: Vec<String> = syntax::all_languages()
+        .iter()
+        .map(|l| l.name.to_owned())
+        .collect();
     for extra in current.iter().rev() {
         if !names.iter().any(|n| n.eq_ignore_ascii_case(extra)) {
             names.insert(0, extra.clone());
@@ -429,7 +491,11 @@ fn macro_type_names(current: &[String]) -> Vec<String> {
 
 /// 在適用的檔案類型 `current` 裡勾選（`checked`）或取消 `name` 之後的新清單；其餘的順序不變。
 fn toggled_langs(current: &[String], name: &str, checked: bool) -> Vec<String> {
-    let mut next: Vec<String> = current.iter().filter(|c| !c.eq_ignore_ascii_case(name)).cloned().collect();
+    let mut next: Vec<String> = current
+        .iter()
+        .filter(|c| !c.eq_ignore_ascii_case(name))
+        .cloned()
+        .collect();
     if checked {
         next.push(name.to_owned());
     }
@@ -446,7 +512,12 @@ struct WrapPreset {
 
 /// 「用文字包住選取」的常用項目。
 fn wrap_presets() -> Vec<WrapPreset> {
-    let p = |prefix, suffix, shown, name: &str| WrapPreset { prefix, suffix, shown, name: name.to_owned() };
+    let p = |prefix, suffix, shown, name: &str| WrapPreset {
+        prefix,
+        suffix,
+        shown,
+        name: name.to_owned(),
+    };
     vec![
         p("\"", "\"", "\"…\"", t("雙引號")),
         p("'", "'", "'…'", t("單引號")),
@@ -456,7 +527,12 @@ fn wrap_presets() -> Vec<WrapPreset> {
         p("{", "}", "{…}", t("大括號")),
         p("<", ">", "<…>", t("角括號")),
         p("**", "**", "**…**", t("粗體（Markdown）")),
-        p("```\n", "\n```", "```…```", t("程式碼區塊（Markdown，前後各一行）")),
+        p(
+            "```\n",
+            "\n```",
+            "```…```",
+            t("程式碼區塊（Markdown，前後各一行）"),
+        ),
     ]
 }
 
@@ -490,8 +566,17 @@ fn unescape_wrap_text(text: &str) -> String {
 /// 「找到專案設定，但工具用不了」的說明文字（選單裡不能按的一行，也用在執行時的提示）。
 fn notice_text(notice: &project_cmd::Notice) -> String {
     match &notice.problem {
-        None => tf!("找到專案設定（{}），但系統上沒有 {}", notice.evidence, notice.tool),
-        Some(reason) => tf!("找到專案設定（{}），但 {} 無法執行：{}", notice.evidence, notice.tool, reason),
+        None => tf!(
+            "找到專案設定（{}），但系統上沒有 {}",
+            notice.evidence,
+            notice.tool
+        ),
+        Some(reason) => tf!(
+            "找到專案設定（{}），但 {} 無法執行：{}",
+            notice.evidence,
+            notice.tool,
+            reason
+        ),
     }
 }
 
@@ -514,12 +599,16 @@ fn drop_position(ctx: &egui::Context) -> Option<egui::Pos2> {
         use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
         // SAFETY: `pt` 是有效的輸出緩衝區
-        if unsafe { GetCursorPos(&mut pt) } != 0 && ctx.input(|i| i.viewport().inner_rect).is_some() {
+        if unsafe { GetCursorPos(&mut pt) } != 0 && ctx.input(|i| i.viewport().inner_rect).is_some()
+        {
             return Some(screen_to_window(ctx, pt.x, pt.y));
         }
     }
     #[cfg(target_os = "macos")]
-    if let (Some((x, y)), Some(rect)) = (macos_open::mouse_position(), ctx.input(|i| i.viewport().inner_rect)) {
+    if let (Some((x, y)), Some(rect)) = (
+        macos_open::mouse_position(),
+        ctx.input(|i| i.viewport().inner_rect),
+    ) {
         return Some(egui::pos2(x, y) - rect.min.to_vec2());
     }
     ctx.input(|i| i.pointer.latest_pos())
@@ -529,7 +618,9 @@ fn drop_position(ctx: &egui::Context) -> Option<egui::Pos2> {
 #[cfg(windows)]
 pub(crate) fn screen_to_window(ctx: &egui::Context, x: i32, y: i32) -> egui::Pos2 {
     let ppp = ctx.pixels_per_point();
-    let origin = ctx.input(|i| i.viewport().inner_rect).map_or(egui::Vec2::ZERO, |r| r.min.to_vec2());
+    let origin = ctx
+        .input(|i| i.viewport().inner_rect)
+        .map_or(egui::Vec2::ZERO, |r| r.min.to_vec2());
     egui::pos2(x as f32 / ppp, y as f32 / ppp) - origin
 }
 
@@ -568,7 +659,10 @@ fn drop_overlay(ctx: &egui::Context, rect: egui::Rect, count: usize, into_termin
 fn flat_list(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     no_hover_outline(ui);
     egui::Frame::NONE
-        .inner_margin(egui::Margin { right: 14, ..Default::default() })
+        .inner_margin(egui::Margin {
+            right: 14,
+            ..Default::default()
+        })
         .show(ui, add);
 }
 
@@ -581,7 +675,12 @@ fn aligned_panel_frame(style: &egui::Style) -> egui::Frame {
     let frame = egui::Frame::side_top_panel(style);
     let side = CENTRAL_SIDE_MARGIN + pane_ops::AREA_INSET_X.round() as i8;
     let m = frame.inner_margin;
-    frame.inner_margin(egui::Margin { left: side, right: side, top: m.top, bottom: m.bottom })
+    frame.inner_margin(egui::Margin {
+        left: side,
+        right: side,
+        top: m.top,
+        bottom: m.bottom,
+    })
 }
 
 /// 設定面板裡數字欄位旁邊的單位（pt、欄…）。單位寫在輸入欄位的外面，輸入欄位裡只有數字，
@@ -594,11 +693,17 @@ fn unit_label(ui: &mut egui::Ui, unit: &str) {
 /// （`ui.separator()` 在橫向排列裡會撐滿整列高度，看起來太長。）
 /// 狀態列的群組分隔線：和這一列的控制項一樣高，比工具列的短。
 fn status_separator(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, ui.spacing().interact_size.y), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(1.0, ui.spacing().interact_size.y),
+        egui::Sense::hover(),
+    );
     let x = rect.center().x;
     let color = ui.visuals().widgets.noninteractive.bg_stroke.color;
     ui.painter().line_segment(
-        [egui::pos2(x, rect.center().y - 7.0), egui::pos2(x, rect.center().y + 7.0)],
+        [
+            egui::pos2(x, rect.center().y - 7.0),
+            egui::pos2(x, rect.center().y + 7.0),
+        ],
         egui::Stroke::new(1.0, color),
     );
 }
@@ -631,7 +736,10 @@ fn option_toggle(ui: &mut egui::Ui, icon: Icon, tip: &str, value: &mut bool) -> 
 
 /// 套用字型設定：編輯區用指定的等寬字型（`None` 表示系統預設）。
 fn install_fonts(ctx: &egui::Context, settings: &settings::Settings) {
-    ctx.set_fonts(fonts::build_fonts_with(settings.font_family.as_deref(), settings.terminal_font_family.as_deref()));
+    ctx.set_fonts(fonts::build_fonts_with(
+        settings.font_family.as_deref(),
+        settings.terminal_font_family.as_deref(),
+    ));
 }
 
 /// 規則表達式按鈕的 tooltip：基本語法速查，加上完整說明的連結。
@@ -660,7 +768,9 @@ fn regex_help(ui: &mut egui::Ui) {
             }
         });
     ui.add_space(4.0);
-    ui.label(t("取代字串：$1 代入群組，\\n 換行，\\t 跳位，$$ 為字面的 $"));
+    ui.label(t(
+        "取代字串：$1 代入群組，\\n 換行，\\t 跳位，$$ 為字面的 $",
+    ));
     ui.add_space(4.0);
     ui.hyperlink_to(
         t("完整語法說明（docs.rs/regex）"),
@@ -688,7 +798,9 @@ enum Action {
     ToggleOutput,
     Reload(&'static Encoding),
     /// 開啟尋找面板；`replace` 為 true 時一併展開取代欄。
-    Find { replace: bool },
+    Find {
+        replace: bool,
+    },
     FindNext,
     FindPrev,
     /// 搜尋字串或選項被改了：即時重新搜尋。
@@ -805,7 +917,9 @@ enum Action {
     CaptureShortcut(usize),
     ToggleRecord,
     /// 把 Tab 換成空白（`to_tabs` 為 false），或把行首縮排的空白換成 Tab。
-    ConvertIndent { to_tabs: bool },
+    ConvertIndent {
+        to_tabs: bool,
+    },
     /// 排列格式：依語言重排縮排、去行尾空白（JSON 重新排版）。
     Reformat,
     /// 用（前, 後）兩段文字包住每個選取。
@@ -963,7 +1077,8 @@ struct App {
     /// 在 `~/.local/bin` 加入／移除 `feditor` 指令（測試時換成不碰系統的替身）。
     cli_backend: fn(bool) -> Result<(), String>,
     /// 讓選到的檔案類別預設用 FEditor 開啟（測試時換成不碰系統的替身）。
-    assoc_backend: fn(&std::collections::BTreeSet<String>, bool) -> Result<file_assoc::Outcome, String>,
+    assoc_backend:
+        fn(&std::collections::BTreeSet<String>, bool) -> Result<file_assoc::Outcome, String>,
     /// 開啟系統的「預設應用程式」頁（測試時換成不開視窗的替身）。
     open_default_apps: fn(),
     /// 自動搜尋的執行環境（Python 的虛擬環境等）：背景搜尋與快取。
@@ -1160,7 +1275,11 @@ impl App {
             (Some(a), Some(b)) => (a - b).abs() > 0.002,
             (a, b) => a != b,
         };
-        if s.search_dock_edge != dock.edge || far(s.search_dock_width, dock.width) || far(s.search_dock_height, dock.height) || split_changed {
+        if s.search_dock_edge != dock.edge
+            || far(s.search_dock_width, dock.width)
+            || far(s.search_dock_height, dock.height)
+            || split_changed
+        {
             s.search_dock_edge = dock.edge;
             s.search_dock_width = dock.width;
             s.search_dock_height = dock.height;
@@ -1414,7 +1533,10 @@ impl App {
         if current.as_ref() != Some(&want) {
             // 很大的文件：只在搜尋條件改了的時候重搜，打字時不要每個字都掃一遍
             let only_text_changed = current.as_ref().is_some_and(|s| {
-                s.query == want.query && s.options == want.options && s.path == want.path && s.scope == want.scope
+                s.query == want.query
+                    && s.options == want.options
+                    && s.path == want.path
+                    && s.scope == want.scope
             });
             if only_text_changed && want.len > find::STATS_MAX_BYTES {
                 self.folder.stamp = Some(want);
@@ -1424,9 +1546,11 @@ impl App {
                 let text = self.doc.text().to_owned();
                 let within = want.scope.as_ref().map(|s| {
                     let buf = &self.doc.buffer;
-                    buf.char_to_byte(s.start.min(buf.len_chars()))..buf.char_to_byte(s.end.min(buf.len_chars()))
+                    buf.char_to_byte(s.start.min(buf.len_chars()))
+                        ..buf.char_to_byte(s.end.min(buf.len_chars()))
                 });
-                self.folder.start_text(ctx, &label, path, text, &want.query, opts, within);
+                self.folder
+                    .start_text(ctx, &label, path, text, &want.query, opts, within);
                 self.folder.stamp = Some(want);
             }
         }
@@ -1516,7 +1640,10 @@ impl App {
             self.push(LogKind::Info, t("沒有可取代的內容"));
             return;
         }
-        let open = paths.iter().filter(|p| self.find_open_path(p).is_some()).count();
+        let open = paths
+            .iter()
+            .filter(|p| self.find_open_path(p).is_some())
+            .count();
         let spec = modal::Spec::new(
             t("全部取代"),
             tf!(
@@ -1564,7 +1691,9 @@ impl App {
                             files += 1;
                             total += n;
                         }
-                        feditor_core::fileio::read_file(&path).ok().map(|(_, d)| d.text)
+                        feditor_core::fileio::read_file(&path)
+                            .ok()
+                            .map(|(_, d)| d.text)
                     }
                     Err(e) => {
                         self.push(LogKind::Warn, tf!("無法取代「{}」：{}", path.display(), e));
@@ -1576,13 +1705,26 @@ impl App {
                 self.folder.refresh_file(&path, &text, &query, opts);
             }
         }
-        self.push(LogKind::Info, tf!("已在 {files} 個檔案取代 {total} 筆", files = files, total = total));
-        self.folder.status = tf!("已在 {files} 個檔案取代 {total} 筆", files = files, total = total);
+        self.push(
+            LogKind::Info,
+            tf!(
+                "已在 {files} 個檔案取代 {total} 筆",
+                files = files,
+                total = total
+            ),
+        );
+        self.folder.status = tf!(
+            "已在 {files} 個檔案取代 {total} 筆",
+            files = files,
+            total = total
+        );
     }
 
     fn replace_one(&mut self) {
         let selection = self.editor_selection();
-        let App { doc, find, editor, .. } = self;
+        let App {
+            doc, find, editor, ..
+        } = self;
         if let Some(replaced) = find.replace_current(&mut doc.buffer, selection) {
             doc.sync();
             editor.set_caret(&mut doc.buffer, replaced.end, false);
@@ -1622,12 +1764,23 @@ impl App {
     fn ask_save_with(&mut self, then: Then, before: &str, discard_all: bool) {
         let spec = modal::Spec::new(
             t("尚未儲存"),
-            tf!("「{}」有尚未儲存的修改。要在{}之前儲存嗎？", self.doc.name(), before),
+            tf!(
+                "「{}」有尚未儲存的修改。要在{}之前儲存嗎？",
+                self.doc.name(),
+                before
+            ),
         )
         .button(t("儲存"), modal::Answer::Yes)
         .button(t("不儲存"), modal::Answer::No);
-        let spec = if discard_all { spec.button(t("全部不儲存"), modal::Answer::NoToAll) } else { spec };
-        self.modal = Some(Pending::new(spec.button(t("取消"), modal::Answer::Cancel), then));
+        let spec = if discard_all {
+            spec.button(t("全部不儲存"), modal::Answer::NoToAll)
+        } else {
+            spec
+        };
+        self.modal = Some(Pending::new(
+            spec.button(t("取消"), modal::Answer::Cancel),
+            then,
+        ));
     }
 
     /// 錄製結束：請使用者為巨集命名（預設名稱不與現有的重複）。`text`／`error` 用在輸入有誤、重新詢問時。
@@ -1640,8 +1793,15 @@ impl App {
         // 目前的檔案有語言時，可以把巨集限定在這一種檔案；輸入有誤重新詢問時，保留使用者剛才的選擇
         let mut input = modal::Input::new(text);
         if let Some(lang) = self.doc_lang() {
-            let selected = if error.is_some() { self.modal_choice } else { 0 };
-            input = input.with_choices(vec![t("所有檔案").to_owned(), tf!("只有 {} 檔案", lang)], selected);
+            let selected = if error.is_some() {
+                self.modal_choice
+            } else {
+                0
+            };
+            input = input.with_choices(
+                vec![t("所有檔案").to_owned(), tf!("只有 {} 檔案", lang)],
+                selected,
+            );
         }
         spec.error = error;
         self.modal = Some(Pending::new(spec, Then::SaveRecording(source)).with_input(input));
@@ -1649,28 +1809,57 @@ impl App {
 
     /// 錄好的巨集要限定的檔案類型：對話框選了「只有 X 檔案」就是目前檔案的語言，否則是空的（所有檔案）。
     fn recording_langs(&self) -> Vec<String> {
-        if self.modal_choice == 1 { self.doc_lang().map(|l| vec![l.to_owned()]).unwrap_or_default() } else { Vec::new() }
+        if self.modal_choice == 1 {
+            self.doc_lang()
+                .map(|l| vec![l.to_owned()])
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
     }
 
     /// 把第 `i` 支巨集適用的檔案類型設成 `langs`（空的是所有檔案）：改寫檔頭的 `@lang`。
     /// 快捷鍵會和別支適用範圍重疊的巨集衝突時不改，說明原因。
     fn set_macro_langs(&mut self, i: usize, langs: Vec<String>) {
-        let Some(entry) = self.macros.get(i).cloned() else { return };
+        let Some(entry) = self.macros.get(i).cloned() else {
+            return;
+        };
         if let Some(sc) = entry.shortcut.as_ref() {
-            let same = |a: &egui::KeyboardShortcut| a.logical_key == sc.logical_key && a.modifiers == sc.modifiers;
-            if let Some(other) = self.macros.iter().enumerate().find(|(j, m)| *j != i && m.shortcut.as_ref().is_some_and(same) && macro_lib::scopes_overlap(&langs, &m.langs)) {
-                let message = tf!("「{}」也用了 {}，適用範圍重疊；請先換掉其中一個的快捷鍵", other.1.name, macro_lib::format_shortcut(sc));
+            let same = |a: &egui::KeyboardShortcut| {
+                a.logical_key == sc.logical_key && a.modifiers == sc.modifiers
+            };
+            if let Some(other) = self.macros.iter().enumerate().find(|(j, m)| {
+                *j != i
+                    && m.shortcut.as_ref().is_some_and(same)
+                    && macro_lib::scopes_overlap(&langs, &m.langs)
+            }) {
+                let message = tf!(
+                    "「{}」也用了 {}，適用範圍重疊；請先換掉其中一個的快捷鍵",
+                    other.1.name,
+                    macro_lib::format_shortcut(sc)
+                );
                 self.push(LogKind::Warn, message);
                 return;
             }
         }
-        let result = std::fs::read_to_string(&entry.path).and_then(|src| std::fs::write(&entry.path, macro_lib::set_header_langs(&src, &langs)));
+        let result = std::fs::read_to_string(&entry.path)
+            .and_then(|src| std::fs::write(&entry.path, macro_lib::set_header_langs(&src, &langs)));
         match result {
             Ok(()) => {
-                let scope = if langs.is_empty() { t("所有檔案").to_owned() } else { langs.join(", ") };
-                self.push(LogKind::Info, tf!("巨集「{}」的適用範圍設為：{}", entry.name, scope));
+                let scope = if langs.is_empty() {
+                    t("所有檔案").to_owned()
+                } else {
+                    langs.join(", ")
+                };
+                self.push(
+                    LogKind::Info,
+                    tf!("巨集「{}」的適用範圍設為：{}", entry.name, scope),
+                );
             }
-            Err(e) => self.push(LogKind::Error, tf!("無法更新 {}：{}", entry.path.display(), e)),
+            Err(e) => self.push(
+                LogKind::Error,
+                tf!("無法更新 {}：{}", entry.path.display(), e),
+            ),
         }
         self.refresh_macros();
     }
@@ -1679,18 +1868,26 @@ impl App {
     /// 勾選或取消就回傳新的類型清單。巨集檔頭寫了清單裡沒有的名稱（例如自訂語言檔被刪了）時，照樣列在最前面讓使用者取消。
     fn macro_types_menu(ui: &mut egui::Ui, i: usize, current: &[String]) -> Option<Action> {
         let mut action = None;
-        if ui.selectable_label(current.is_empty(), t("所有檔案")).clicked() {
+        if ui
+            .selectable_label(current.is_empty(), t("所有檔案"))
+            .clicked()
+        {
             action = Some(Action::SetMacroLangs(i, Vec::new()));
         }
         ui.separator();
-        egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-            for name in macro_type_names(current) {
-                let mut checked = current.iter().any(|c| c.eq_ignore_ascii_case(&name));
-                if ui.checkbox(&mut checked, name.as_str()).changed() {
-                    action = Some(Action::SetMacroLangs(i, toggled_langs(current, &name, checked)));
+        egui::ScrollArea::vertical()
+            .max_height(280.0)
+            .show(ui, |ui| {
+                for name in macro_type_names(current) {
+                    let mut checked = current.iter().any(|c| c.eq_ignore_ascii_case(&name));
+                    if ui.checkbox(&mut checked, name.as_str()).changed() {
+                        action = Some(Action::SetMacroLangs(
+                            i,
+                            toggled_langs(current, &name, checked),
+                        ));
+                    }
                 }
-            }
-        });
+            });
         action
     }
 
@@ -1701,17 +1898,23 @@ impl App {
         if !taken(base) {
             return base.to_owned();
         }
-        (2..).map(|n| format!("{base} {n}")).find(|n| !taken(n)).expect("名稱一定找得到")
+        (2..)
+            .map(|n| format!("{base} {n}"))
+            .find(|n| !taken(n))
+            .expect("名稱一定找得到")
     }
 
     fn ask_rename_macro(&mut self, i: usize, text: Option<String>, error: Option<String>) {
-        let Some(entry) = self.macros.get(i) else { return };
+        let Some(entry) = self.macros.get(i) else {
+            return;
+        };
         let text = text.unwrap_or_else(|| entry.name.clone());
         let mut spec = modal::Spec::new(t("重新命名巨集"), tf!("「{}」的新名稱：", entry.name))
             .button(t("重新命名"), modal::Answer::Yes)
             .button(t("取消"), modal::Answer::Cancel);
         spec.error = error;
-        self.modal = Some(Pending::new(spec, Then::RenameMacro(i)).with_input(modal::Input::new(text)));
+        self.modal =
+            Some(Pending::new(spec, Then::RenameMacro(i)).with_input(modal::Input::new(text)));
     }
 
     /// 雙按分頁：沒有檔案的文件走「另存新檔」，有檔案的就問新檔名（只改檔名，留在同一個資料夾）。
@@ -1733,19 +1936,30 @@ impl App {
 
     /// 雙按終端機分頁：問新名字（留空就改回預設的「終端機 N」）。
     fn ask_rename_terminal(&mut self, text: Option<String>) {
-        let Some(terminal) = self.doc.terminal.as_ref() else { return };
+        let Some(terminal) = self.doc.terminal.as_ref() else {
+            return;
+        };
         // 預填的是自己取的名字（沒有就是預設名稱），不能帶上資料夾，不然存下去就變成自訂名字了
-        let old = terminal.custom_name().map_or_else(|| terminal.default_title(), str::to_owned);
+        let old = terminal
+            .custom_name()
+            .map_or_else(|| terminal.default_title(), str::to_owned);
         let number = terminal.number();
         let text = text.unwrap_or_else(|| old.clone());
         let len = text.chars().count();
         let spec = modal::Spec::new(
             t("重新命名終端機"),
-            tf!("「{old}」的新名稱（留空就改回預設的「終端機 {n}」）：", old = old, n = number),
+            tf!(
+                "「{old}」的新名稱（留空就改回預設的「終端機 {n}」）：",
+                old = old,
+                n = number
+            ),
         )
         .button(t("重新命名"), modal::Answer::Yes)
         .button(t("取消"), modal::Answer::Cancel);
-        self.modal = Some(Pending::new(spec, Then::RenameTerminal).with_input(modal::Input::new(text).select(0..len)));
+        self.modal = Some(
+            Pending::new(spec, Then::RenameTerminal)
+                .with_input(modal::Input::new(text).select(0..len)),
+        );
     }
 
     fn ask_rename_file(&mut self, text: Option<String>, error: Option<String>) {
@@ -1756,11 +1970,17 @@ impl App {
             Some(p) if p > 0 => text[..p].chars().count(),
             _ => text.chars().count(),
         };
-        let mut spec = modal::Spec::new(t("重新命名檔案"), tf!("「{old}」的新檔名（檔案留在同一個資料夾）：", old = old))
-            .button(t("重新命名"), modal::Answer::Yes)
-            .button(t("取消"), modal::Answer::Cancel);
+        let mut spec = modal::Spec::new(
+            t("重新命名檔案"),
+            tf!("「{old}」的新檔名（檔案留在同一個資料夾）：", old = old),
+        )
+        .button(t("重新命名"), modal::Answer::Yes)
+        .button(t("取消"), modal::Answer::Cancel);
         spec.error = error;
-        self.modal = Some(Pending::new(spec, Then::RenameFile).with_input(modal::Input::new(text).select(0..stem)));
+        self.modal = Some(
+            Pending::new(spec, Then::RenameFile)
+                .with_input(modal::Input::new(text).select(0..stem)),
+        );
     }
 
     /// 把作用中文件的檔案改名。別的分頁已經開著同名檔案時拒絕，免得兩個分頁指到同一個檔案。
@@ -1804,11 +2024,24 @@ impl App {
     }
 
     /// 使用者回答了確認對話框：接著做原本被擋住的事。`text` 是對話框文字框裡最後的內容。
-    fn resolve_modal(&mut self, then: Then, answer: modal::Answer, text: Option<String>, ctx: &egui::Context) {
+    fn resolve_modal(
+        &mut self,
+        then: Then,
+        answer: modal::Answer,
+        text: Option<String>,
+        ctx: &egui::Context,
+    ) {
         use modal::Answer::{No, Yes};
-        let typed = text.as_deref().map(str::trim).unwrap_or_default().to_owned();
+        let typed = text
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_owned();
         // 巨集相關的對話框關掉之後，鍵盤焦點回到編輯區（錄完巨集接著打字）
-        if matches!(then, Then::SaveRecording(_) | Then::RenameMacro(_) | Then::DeleteMacro(_)) {
+        if matches!(
+            then,
+            Then::SaveRecording(_) | Then::RenameMacro(_) | Then::DeleteMacro(_)
+        ) {
             self.pending_editor_focus = true;
         }
         match then {
@@ -1820,7 +2053,11 @@ impl App {
             }
             Then::SaveRecording(source) => match answer {
                 Yes if typed.is_empty() => {
-                    self.ask_recording_name(source, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
+                    self.ask_recording_name(
+                        source,
+                        Some(String::new()),
+                        Some(t("名稱不能是空的").to_owned()),
+                    );
                 }
                 Yes => {
                     // 選了「只有 X 檔案」：寫進 @lang，之後只在這種檔案上適用
@@ -1832,14 +2069,23 @@ impl App {
             Then::RenameMacro(i) => {
                 if answer == Yes {
                     if typed.is_empty() {
-                        self.ask_rename_macro(i, Some(String::new()), Some(t("名稱不能是空的").to_owned()));
+                        self.ask_rename_macro(
+                            i,
+                            Some(String::new()),
+                            Some(t("名稱不能是空的").to_owned()),
+                        );
                     } else if let Some(entry) = self.macros.get(i).cloned() {
                         match macro_lib::rename(&entry.path, &typed) {
                             Ok(()) => {
                                 self.refresh_macros();
-                                self.push(LogKind::Info, tf!("已將巨集「{}」重新命名為「{}」", entry.name, typed));
+                                self.push(
+                                    LogKind::Info,
+                                    tf!("已將巨集「{}」重新命名為「{}」", entry.name, typed),
+                                );
                             }
-                            Err(e) => self.push(LogKind::Error, tf!("無法重新命名巨集：{e}", e = e)),
+                            Err(e) => {
+                                self.push(LogKind::Error, tf!("無法重新命名巨集：{e}", e = e))
+                            }
                         }
                     }
                 }
@@ -1898,7 +2144,9 @@ impl App {
             Then::CloseWindow => {
                 match answer {
                     Yes if self.save() => {}
-                    No => self.close_skipped.push((self.layout.focus, self.tabs.active())),
+                    No => self
+                        .close_skipped
+                        .push((self.layout.focus, self.tabs.active())),
                     // 全部不儲存：剩下的也都不問了，直接關
                     modal::Answer::NoToAll => return self.close_now(ctx),
                     _ => return, // 取消，或儲存失敗／另存新檔被取消：不關了
@@ -1922,11 +2170,18 @@ impl App {
 
     /// 關閉視窗：依序問每個有未儲存修改的分頁；都處理完了才真的關。
     fn next_close_prompt(&mut self, ctx: &egui::Context) {
-        let next = self.all_dirty().into_iter().find(|k| !self.close_skipped.contains(k));
+        let next = self
+            .all_dirty()
+            .into_iter()
+            .find(|k| !self.close_skipped.contains(k));
         match next {
             Some((pane, i)) => {
                 // 除了這一份，還有別的還沒問過的：多給一個「全部不儲存」
-                let remaining = self.all_dirty().into_iter().filter(|k| !self.close_skipped.contains(k)).count();
+                let remaining = self
+                    .all_dirty()
+                    .into_iter()
+                    .filter(|k| !self.close_skipped.contains(k))
+                    .count();
                 self.focus_pane(pane);
                 self.switch_tab(i);
                 self.ask_save_with(Then::CloseWindow, t("關閉"), remaining > 1);
@@ -1946,7 +2201,11 @@ impl App {
     /// 而且是 Python，或是能判斷出直譯器的 shell 腳本（見 [`runtime_env::rule_for_file`]）。
     fn run_rule(&self) -> Option<&'static runtime_env::Rule> {
         let lang = self.run_lang()?;
-        runtime_env::rule_for_file(lang, self.doc.path.as_deref()?, &self.doc.buffer.line_text(0))
+        runtime_env::rule_for_file(
+            lang,
+            self.doc.path.as_deref()?,
+            &self.doc.buffer.line_text(0),
+        )
     }
 
     /// 目前這份文件的語言名稱（語法上色的語言）：不是終端機分頁、已經存成檔案才有。
@@ -1968,20 +2227,31 @@ impl App {
                 return None;
             }
             let n = self.doc.buffer.len_chars().min(400);
-            if n == 0 { None } else { syntax::detect(&self.doc.buffer.slice(0..n)) }
+            if n == 0 {
+                None
+            } else {
+                syntax::detect(&self.doc.buffer.slice(0..n))
+            }
         })?;
         Some(lang.name)
     }
 
     /// 這份文件的專案命令（`cargo run`、`uv run`…）：語言有提供者才找；第一次問會在背景搜尋，回傳 `None`。
-    fn project_commands(&self, ctx: &egui::Context) -> Option<std::sync::Arc<project_cmd::ProjectResolved>> {
+    fn project_commands(
+        &self,
+        ctx: &egui::Context,
+    ) -> Option<std::sync::Arc<project_cmd::ProjectResolved>> {
         let lang = self.run_lang().filter(|l| project_cmd::supports(l))?;
-        self.project_runtime.get(ctx, lang, self.doc.path.as_deref()?)
+        self.project_runtime
+            .get(ctx, lang, self.doc.path.as_deref()?)
     }
 
     /// 能不能「在終端機執行」目前的檔案：有直譯器規則（Python、shell 腳本），或找到了能執行的專案命令（Rust 的 Cargo 專案…）。
     fn can_run(&self, ctx: &egui::Context) -> bool {
-        self.run_rule().is_some() || self.project_commands(ctx).is_some_and(|p| !p.commands.is_empty())
+        self.run_rule().is_some()
+            || self
+                .project_commands(ctx)
+                .is_some_and(|p| !p.commands.is_empty())
     }
 
     /// 在終端機執行目前的檔案：有未儲存的修改先存檔。用什麼執行見 [`project_cmd::active`]：
@@ -1989,11 +2259,18 @@ impl App {
     fn run_current_file(&mut self, ctx: &egui::Context) {
         let rule = self.run_rule();
         let lang = self.run_lang().filter(|l| project_cmd::supports(l));
-        let Some(path) = self.doc.path.clone().filter(|_| rule.is_some() || lang.is_some()) else {
+        let Some(path) = self
+            .doc
+            .path
+            .clone()
+            .filter(|_| rule.is_some() || lang.is_some())
+        else {
             let message = if self.doc.path.is_none() {
                 t("請先儲存檔案再執行")
             } else {
-                t("這個檔案不能在終端機執行：支援 Python、有 shebang 或副檔名明確的 shell 腳本（.sh、.zsh、.ps1、.bat…），以及有專案設定檔的 Rust、Python 專案")
+                t(
+                    "這個檔案不能在終端機執行：支援 Python、有 shebang 或副檔名明確的 shell 腳本（.sh、.zsh、.ps1、.bat…），以及有專案設定檔的 Rust、Python 專案",
+                )
             };
             self.push(LogKind::Info, message.to_owned());
             return;
@@ -2003,31 +2280,70 @@ impl App {
         }
         let Some(dir) = path.parent() else { return };
         let root = runtime_env::project_root(dir).display().to_string();
-        let manual = rule.and_then(|r| self.settings.runtime_choices.get(&runtime_env::choice_key(r, &root)).cloned());
-        let manual_command = lang.and_then(|l| self.settings.runtime_choices.get(&project_cmd::command_choice_key(l, &root)).cloned());
+        let manual = rule.and_then(|r| {
+            self.settings
+                .runtime_choices
+                .get(&runtime_env::choice_key(r, &root))
+                .cloned()
+        });
+        let manual_command = lang.and_then(|l| {
+            self.settings
+                .runtime_choices
+                .get(&project_cmd::command_choice_key(l, &root))
+                .cloned()
+        });
         let interpreters = rule.map(|r| self.runtime.get(ctx, r, dir));
-        let project = if lang.is_some() { self.project_commands(ctx) } else { None };
-        if interpreters.as_ref().is_some_and(Option::is_none) || (lang.is_some() && project.is_none()) {
-            self.push(LogKind::Info, t("正在搜尋執行環境，請稍後再按一次").to_owned());
+        let project = if lang.is_some() {
+            self.project_commands(ctx)
+        } else {
+            None
+        };
+        if interpreters.as_ref().is_some_and(Option::is_none)
+            || (lang.is_some() && project.is_none())
+        {
+            self.push(
+                LogKind::Info,
+                t("正在搜尋執行環境，請稍後再按一次").to_owned(),
+            );
             return;
         }
         let interpreters = interpreters.flatten();
-        let extra = self.settings.run_args.get(&path.display().to_string()).cloned().unwrap_or_default();
-        match project_cmd::active(manual_command.as_deref(), manual.as_deref(), interpreters.as_deref(), project.as_deref()) {
+        let extra = self
+            .settings
+            .run_args
+            .get(&path.display().to_string())
+            .cloned()
+            .unwrap_or_default();
+        match project_cmd::active(
+            manual_command.as_deref(),
+            manual.as_deref(),
+            interpreters.as_deref(),
+            project.as_deref(),
+        ) {
             project_cmd::Active::Command(command) => {
                 let command = command.clone();
                 self.run_project_command(&command, &path, &extra);
             }
             project_cmd::Active::Interpreter(item) => {
                 let candidate = item.candidate.clone();
-                self.run_in_terminal(&candidate.program.to_string_lossy(), &candidate.args, &path, &extra);
+                self.run_in_terminal(
+                    &candidate.program.to_string_lossy(),
+                    &candidate.args,
+                    &path,
+                    &extra,
+                );
             }
             project_cmd::Active::None => {
                 let notice = project.as_ref().and_then(|p| p.notices.first());
                 match (rule, notice) {
                     (_, Some(notice)) => self.push(LogKind::Warn, notice_text(notice)),
-                    (Some(rule), None) => self.push(LogKind::Warn, tf!("找不到可以執行 {} 的直譯器", rule.label)),
-                    (None, None) => self.push(LogKind::Warn, tf!("找不到可以執行 {} 檔案的專案設定", lang.unwrap_or_default())),
+                    (Some(rule), None) => {
+                        self.push(LogKind::Warn, tf!("找不到可以執行 {} 的直譯器", rule.label))
+                    }
+                    (None, None) => self.push(
+                        LogKind::Warn,
+                        tf!("找不到可以執行 {} 檔案的專案設定", lang.unwrap_or_default()),
+                    ),
                 }
             }
         }
@@ -2044,9 +2360,13 @@ impl App {
                 self.mark_settings_dirty();
                 if on && !outcome.blocked.is_empty() {
                     let hint = if cfg!(windows) {
-                        t("請到「設定 → 應用程式 → 預設應用程式」，找到 FEditor，把這些副檔名改成 FEditor。")
+                        t(
+                            "請到「設定 → 應用程式 → 預設應用程式」，找到 FEditor，把這些副檔名改成 FEditor。",
+                        )
                     } else {
-                        t("macOS 需要用打包好的 FEditor.app（放在「應用程式」資料夾）才能設定；請確認後再試一次。")
+                        t(
+                            "macOS 需要用打包好的 FEditor.app（放在「應用程式」資料夾）才能設定；請確認後再試一次。",
+                        )
                     };
                     self.show_notice(
                         t("有些檔案要請你自己確認"),
@@ -2085,7 +2405,10 @@ impl App {
         if self.settings.shell_menu
             && let Err(e) = (self.shell_menu_backend)(true, &shell_menu_labels())
         {
-            self.push(LogKind::Warn, tf!("無法更新{}的右鍵選單：{}", file_manager_name(), e));
+            self.push(
+                LogKind::Warn,
+                tf!("無法更新{}的右鍵選單：{}", file_manager_name(), e),
+            );
         }
     }
 
@@ -2094,7 +2417,8 @@ impl App {
         let language = if self.doc.terminal.is_some() {
             None
         } else {
-            syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).map(|l| l.name)
+            syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer)
+                .map(|l| l.name)
         };
         feditor_core::motion::set_tab_width(self.settings.tab_width_for(language));
         feditor_core::motion::set_tab_uses_spaces(self.settings.tab_spaces);
@@ -2105,7 +2429,10 @@ impl App {
 
     /// 作用中的是空白、沒存過、沒改過的文件：開新檔案時直接用掉它，不要多出一個空分頁。
     fn is_pristine(&self) -> bool {
-        self.doc.terminal.is_none() && self.doc.path.is_none() && !self.doc.dirty && self.doc.buffer.is_empty()
+        self.doc.terminal.is_none()
+            && self.doc.path.is_none()
+            && !self.doc.dirty
+            && self.doc.buffer.is_empty()
     }
 
     /// 幫還沒有檔案的文件編序號（「未命名 1」「未命名 2」…）：每份取開著的未命名文件裡最小的空號，
@@ -2125,7 +2452,10 @@ impl App {
             }
         }
         let mut next = 1;
-        for doc in docs.iter_mut().filter(|d| d.is_untitled() && d.untitled_number == 0) {
+        for doc in docs
+            .iter_mut()
+            .filter(|d| d.is_untitled() && d.untitled_number == 0)
+        {
             while used.contains(&next) {
                 next += 1;
             }
@@ -2164,7 +2494,11 @@ impl App {
             return;
         }
         // 沒有版面（舊版的工作階段）或只有一個窗格：全部開在目前的窗格
-        let focus = session.panes.iter().find(|p| p.id == session.focus).or(session.panes.first());
+        let focus = session
+            .panes
+            .iter()
+            .find(|p| p.id == session.focus)
+            .or(session.panes.first());
         let mut active_tab = None;
         for pane in &session.panes {
             for (i, (path, caret)) in pane.files.iter().enumerate() {
@@ -2194,7 +2528,13 @@ impl App {
         if self.doc.dirty && !ask(&name) {
             // 使用者要保留自己的版本：記下磁碟版本，不要每秒都再問一次
             self.doc.accept_disk_version();
-            self.push(LogKind::Warn, tf!("{name} 已被其他程式修改，目前保留編輯器裡的版本", name = name));
+            self.push(
+                LogKind::Warn,
+                tf!(
+                    "{name} 已被其他程式修改，目前保留編輯器裡的版本",
+                    name = name
+                ),
+            );
             return;
         }
         let sel = self.editor.sel;
@@ -2204,22 +2544,32 @@ impl App {
                 self.editor.sel = sel;
                 self.editor.extra.clear();
                 self.editor.clamp(&self.doc.buffer);
-                self.push(LogKind::Info, tf!("{name} 已被其他程式修改，已自動重新載入", name = name));
+                self.push(
+                    LogKind::Info,
+                    tf!("{name} 已被其他程式修改，已自動重新載入", name = name),
+                );
                 for w in warnings {
                     self.push(LogKind::Warn, w);
                 }
             }
             Err(e) => {
                 self.doc.accept_disk_version();
-                self.push(LogKind::Error, tf!("無法重新載入 {name}：{e}", name = name, e = e));
+                self.push(
+                    LogKind::Error,
+                    tf!("無法重新載入 {name}：{e}", name = name, e = e),
+                );
             }
         }
     }
 
     /// 所有窗格裡所有有檔案的分頁，檔案的路徑。
     fn open_paths(&self) -> Vec<PathBuf> {
-        let mut paths: Vec<PathBuf> =
-            self.tabs.session_entries(Some((&self.doc, &self.editor))).into_iter().map(|(p, ..)| p).collect();
+        let mut paths: Vec<PathBuf> = self
+            .tabs
+            .session_entries(Some((&self.doc, &self.editor)))
+            .into_iter()
+            .map(|(p, ..)| p)
+            .collect();
         for set in self.layout.others.values() {
             paths.extend(set.session_entries(None).into_iter().map(|(p, ..)| p));
         }
@@ -2229,7 +2579,9 @@ impl App {
     /// 讓監看的資料夾跟著開著的檔案走，並回傳有沒有（穩定下來的）檔案系統事件。
     fn watch_files(&mut self, ctx: &egui::Context) -> bool {
         let paths = self.open_paths();
-        let w = self.watcher.get_or_insert_with(|| watcher::FileWatcher::new(ctx.clone()));
+        let w = self
+            .watcher
+            .get_or_insert_with(|| watcher::FileWatcher::new(ctx.clone()));
         w.sync(watcher::watch_dirs(paths.iter().map(PathBuf::as_path)));
         let changed = w.take_changes();
         if w.pending() {
@@ -2243,7 +2595,11 @@ impl App {
     fn check_background_docs(&mut self) {
         let mut logs: Vec<(LogKind, String)> = Vec::new();
         let tabs = self.tabs.background_mut(true);
-        let others = self.layout.others.values_mut().flat_map(|s| s.background_mut(false));
+        let others = self
+            .layout
+            .others
+            .values_mut()
+            .flat_map(|s| s.background_mut(false));
         for tab in tabs.chain(others) {
             watcher::refresh_background_tab(tab, &mut logs);
         }
@@ -2255,7 +2611,13 @@ impl App {
     fn check_external_changes(&mut self) {
         if self.doc.poll_disk() == document::DiskChange::Gone {
             let name = self.doc.name();
-            self.push(LogKind::Warn, tf!("{name} 已被刪除或移走，分頁裡的內容仍然保留；存檔會重新建立這個檔案", name = name));
+            self.push(
+                LogKind::Warn,
+                tf!(
+                    "{name} 已被刪除或移走，分頁裡的內容仍然保留；存檔會重新建立這個檔案",
+                    name = name
+                ),
+            );
         }
         if self.modal.is_some() {
             return;
@@ -2300,7 +2662,12 @@ impl App {
         self.switch_tab(i);
         if self.doc.dirty {
             self.ask_save(Then::CloseTab, t("關閉分頁"));
-        } else if self.doc.terminal.as_ref().is_some_and(|t| t.has_running_program()) {
+        } else if self
+            .doc
+            .terminal
+            .as_ref()
+            .is_some_and(|t| t.has_running_program())
+        {
             // 終端機裡有程式在跑（shell 本身不算）：關掉會連它一起結束，先確認
             let spec = modal::Spec::new(
                 t("關閉終端機"),
@@ -2350,10 +2717,15 @@ impl App {
 
     /// 記下剛開啟（或另存）的檔案：移到「最近開啟」的最前面，並通知作業系統（跳躍清單、Dock）。
     fn remember_recent(&mut self, path: &std::path::Path) {
-        let Some(text) = recent::push(&mut self.settings.recent_files, path) else { return };
+        let Some(text) = recent::push(&mut self.settings.recent_files, path) else {
+            return;
+        };
         self.mark_settings_dirty();
         if self.os_recent_enabled {
-            recent_os::update(&self.settings.recent_files, Some(std::path::Path::new(&text)));
+            recent_os::update(
+                &self.settings.recent_files,
+                Some(std::path::Path::new(&text)),
+            );
         }
     }
 
@@ -2400,7 +2772,10 @@ impl App {
         if let Some((pane, i)) = self.find_open_path(path) {
             self.focus_pane(pane);
             self.switch_tab(i);
-            self.push(LogKind::Info, tf!("{} 已經開啟，切換到該分頁", self.doc.name()));
+            self.push(
+                LogKind::Info,
+                tf!("{} 已經開啟，切換到該分頁", self.doc.name()),
+            );
             return;
         }
         match Document::open(path) {
@@ -2448,7 +2823,10 @@ impl App {
                 for picked in (self.pick_files_in)(&path) {
                     self.open_path_recent(&picked);
                 }
-            } else if path.symlink_metadata().is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            } else if path
+                .symlink_metadata()
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            {
                 self.open_new_file(&path);
             } else {
                 self.open_path_recent(&path);
@@ -2480,9 +2858,18 @@ impl App {
             self.tabs.push(&mut self.doc, &mut self.editor, doc);
             self.tab_changed();
         }
-        self.push(LogKind::Info, tf!("「{}」還不存在，已開啟空白文件，存檔時才會建立檔案", self.doc.name()));
+        self.push(
+            LogKind::Info,
+            tf!(
+                "「{}」還不存在，已開啟空白文件，存檔時才會建立檔案",
+                self.doc.name()
+            ),
+        );
         if let Some(dir) = path.parent().filter(|d| !d.is_dir()) {
-            self.push(LogKind::Warn, tf!("資料夾 {} 不存在，存檔時會失敗", dir.display()));
+            self.push(
+                LogKind::Warn,
+                tf!("資料夾 {} 不存在，存檔時會失敗", dir.display()),
+            );
         }
         self.save_session();
     }
@@ -2503,7 +2890,9 @@ impl App {
     }
 
     fn save_as(&mut self) -> bool {
-        let mut dialog = rfd::FileDialog::new().set_title(t("另存新檔")).set_file_name(self.doc.name());
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(t("另存新檔"))
+            .set_file_name(self.doc.name());
         if let Some(dir) = self.dialog_dir() {
             dialog = dialog.set_directory(dir);
         }
@@ -2572,15 +2961,23 @@ impl App {
         let source = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
-                self.push(LogKind::Error, tf!("無法讀取 {name}：{e}", name = name, e = e));
+                self.push(
+                    LogKind::Error,
+                    tf!("無法讀取 {name}：{e}", name = name, e = e),
+                );
                 return;
             }
         };
 
         self.push(LogKind::Info, tf!("執行 {name}", name = name));
         let path_text = self.doc.path.as_ref().map(|p| p.display().to_string());
-        let report =
-            macros::run_js_macro_in(&source, &mut self.doc.buffer, &mut self.editor, path_text, true);
+        let report = macros::run_js_macro_in(
+            &source,
+            &mut self.doc.buffer,
+            &mut self.editor,
+            path_text,
+            true,
+        );
 
         for line in report.output {
             self.push(LogKind::Output, line);
@@ -2609,7 +3006,13 @@ impl App {
         if self.doc.terminal.is_some()
             && matches!(
                 action,
-                Action::Save | Action::SaveAs | Action::Reload(_) | Action::Undo | Action::Redo | Action::ReplaceOne | Action::ReplaceAll
+                Action::Save
+                    | Action::SaveAs
+                    | Action::Reload(_)
+                    | Action::Undo
+                    | Action::Redo
+                    | Action::ReplaceOne
+                    | Action::ReplaceAll
             )
         {
             return;
@@ -2655,7 +3058,9 @@ impl App {
                 self.settings_open = true;
                 self.settings_tab_request.set(Some(SHORTCUTS_TAB));
             }
-            Action::OpenMacroDocs => ctx.open_url(egui::OpenUrl::new_tab(macro_docs_url(feditor_core::i18n::is_english()))),
+            Action::OpenMacroDocs => ctx.open_url(egui::OpenUrl::new_tab(macro_docs_url(
+                feditor_core::i18n::is_english(),
+            ))),
             Action::ClearLog => self.log.clear(),
             Action::ToggleOutput => self.toggle_output(),
             Action::SetOutputPane(on) => {
@@ -2786,19 +3191,31 @@ impl App {
             }
             Action::DeleteMacro(i) => self.delete_macro(i),
             Action::CaptureShortcut(i) => {
-                self.capturing_shortcut = if self.capturing_shortcut == Some(i) { None } else { Some(i) };
+                self.capturing_shortcut = if self.capturing_shortcut == Some(i) {
+                    None
+                } else {
+                    Some(i)
+                };
             }
             Action::ToggleRecord => self.toggle_record(),
             Action::ConvertIndent { to_tabs } => {
                 if self.doc.terminal.is_none() {
                     // 用作用中文件的檔案類型的 Tab 欄寬（apply_tab_settings 每個畫面都設好了）
-                    let name = if to_tabs { "spacesToTabs" } else { "tabsToSpaces" };
+                    let name = if to_tabs {
+                        "spacesToTabs"
+                    } else {
+                        "tabsToSpaces"
+                    };
                     self.editor.clamp(&self.doc.buffer);
                     if self.editor.command(&mut self.doc.buffer, name) == Some(true) {
                         self.doc.sync();
                         self.find.invalidate();
                     } else {
-                        let message = if to_tabs { t("沒有可以換成 Tab 的縮排空白") } else { t("沒有 Tab 需要換成空白") };
+                        let message = if to_tabs {
+                            t("沒有可以換成 Tab 的縮排空白")
+                        } else {
+                            t("沒有 Tab 需要換成空白")
+                        };
                         self.push(LogKind::Info, message.to_owned());
                     }
                     self.pending_editor_focus = true;
@@ -2824,14 +3241,20 @@ impl App {
                 } else {
                     // 檔案不見了或開不了（原因已經顯示在輸出面板）：從清單拿掉
                     self.forget_recent(&path);
-                    self.push(LogKind::Warn, tf!("「{}」開不了，已從最近開啟的清單移除", path));
+                    self.push(
+                        LogKind::Warn,
+                        tf!("「{}」開不了，已從最近開啟的清單移除", path),
+                    );
                 }
             }
             Action::ClearRecent => self.clear_recent(),
             Action::Wrap(prefix, suffix) => {
                 if self.doc.terminal.is_none() {
                     self.editor.clamp(&self.doc.buffer);
-                    if self.editor.wrap_selections(&mut self.doc.buffer, &prefix, &suffix) {
+                    if self
+                        .editor
+                        .wrap_selections(&mut self.doc.buffer, &prefix, &suffix)
+                    {
                         self.doc.sync();
                         self.find.invalidate();
                     }
@@ -2869,7 +3292,10 @@ impl App {
                 } else if path.is_file() {
                     self.open_path(&path);
                 } else {
-                    self.push(LogKind::Warn, tf!("找不到連結指向的檔案：{path}", path = path.display()));
+                    self.push(
+                        LogKind::Warn,
+                        tf!("找不到連結指向的檔案：{path}", path = path.display()),
+                    );
                 }
             }
             Action::BeginPreviewDrag(id) => self.begin_preview_drag(id),
@@ -2879,7 +3305,11 @@ impl App {
             Action::MoveTab(pane, i, target) => self.move_tab(pane, i, target),
             Action::ReorderTab(pane, from, to) => self.reorder_tab(pane, from, to),
             Action::SortTabs(pane, descending) => self.sort_tabs(pane, descending),
-            Action::CloseTab(i) => self.close_tab(if i == usize::MAX { self.tabs.active() } else { i }),
+            Action::CloseTab(i) => self.close_tab(if i == usize::MAX {
+                self.tabs.active()
+            } else {
+                i
+            }),
             Action::NextTab => self.switch_tab(self.tabs.neighbor(true)),
             Action::PrevTab => self.switch_tab(self.tabs.neighbor(false)),
             Action::SetView(view) => {
@@ -2947,7 +3377,9 @@ impl App {
             Action::SetRuntime(project, choice) => {
                 // 改選直譯器（或回到自動）就不再用手動選的專案命令：命令的鍵是「專案#cmd:語言」，直譯器的鍵是專案本身
                 let command_prefix = format!("{project}#cmd:");
-                self.settings.runtime_choices.retain(|k, _| !k.starts_with(&command_prefix));
+                self.settings
+                    .runtime_choices
+                    .retain(|k, _| !k.starts_with(&command_prefix));
                 match choice {
                     Some(program) => {
                         self.settings.runtime_choices.insert(project, program);
@@ -2978,7 +3410,9 @@ impl App {
                             self.settings.cli_command = on;
                             self.mark_settings_dirty();
                             if on {
-                                let dir = cli_command::bin_dir().map(|d| d.display().to_string()).unwrap_or_else(|| "~/.local/bin".to_owned());
+                                let dir = cli_command::bin_dir()
+                                    .map(|d| d.display().to_string())
+                                    .unwrap_or_else(|| "~/.local/bin".to_owned());
                                 let message = if cfg!(windows) {
                                     tf!(
                                         "已確認 {} 在使用者的 PATH 裡（本來就有的不會重複加入）。\n\n已經開著的終端機要關掉重開才會生效；FEditor 內建的終端機會繼承 FEditor 自己的環境，要重新啟動 FEditor 才拿得到。之後在終端機輸入 feditor 檔案 就能開啟檔案。",
@@ -3004,7 +3438,10 @@ impl App {
                             self.settings.shell_menu = on;
                             self.mark_settings_dirty();
                         }
-                        Err(e) => self.push(LogKind::Error, tf!("無法更新{}的右鍵選單：{}", file_manager_name(), e)),
+                        Err(e) => self.push(
+                            LogKind::Error,
+                            tf!("無法更新{}的右鍵選單：{}", file_manager_name(), e),
+                        ),
                     }
                 }
             }
@@ -3017,7 +3454,10 @@ impl App {
             Action::SetLanguageTabWidth(name, width) => {
                 match width {
                     Some(w) => {
-                        self.settings.tab_widths.insert(name, w.clamp(settings::MIN_TAB_COLUMNS, settings::MAX_TAB_COLUMNS));
+                        self.settings.tab_widths.insert(
+                            name,
+                            w.clamp(settings::MIN_TAB_COLUMNS, settings::MAX_TAB_COLUMNS),
+                        );
                     }
                     None => {
                         self.settings.tab_widths.remove(&name);
@@ -3041,14 +3481,22 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SetTerminalFontSize(size) => {
-                let size = if size.is_finite() { clamp_font_size(size) } else { DEFAULT_TERMINAL_FONT_SIZE };
+                let size = if size.is_finite() {
+                    clamp_font_size(size)
+                } else {
+                    DEFAULT_TERMINAL_FONT_SIZE
+                };
                 if size != self.settings.terminal_font_size {
                     self.settings.terminal_font_size = size;
                     self.mark_settings_dirty();
                 }
             }
             Action::SetTerminalMinContrast(ratio) => {
-                let ratio = if ratio.is_finite() { ratio.clamp(MIN_TERMINAL_CONTRAST, MAX_TERMINAL_CONTRAST) } else { DEFAULT_TERMINAL_MIN_CONTRAST };
+                let ratio = if ratio.is_finite() {
+                    ratio.clamp(MIN_TERMINAL_CONTRAST, MAX_TERMINAL_CONTRAST)
+                } else {
+                    DEFAULT_TERMINAL_MIN_CONTRAST
+                };
                 if ratio != self.settings.terminal_min_contrast {
                     self.settings.terminal_min_contrast = ratio;
                     self.mark_settings_dirty();
@@ -3076,7 +3524,11 @@ impl App {
                 }
             }
             Action::SetPreviewFontSize(size) => {
-                let size = if size.is_finite() { clamp_font_size(size) } else { DEFAULT_PREVIEW_FONT_SIZE };
+                let size = if size.is_finite() {
+                    clamp_font_size(size)
+                } else {
+                    DEFAULT_PREVIEW_FONT_SIZE
+                };
                 if size != self.settings.preview_font_size {
                     self.settings.preview_font_size = size;
                     self.mark_settings_dirty();
@@ -3110,11 +3562,17 @@ impl App {
             let full_clip = ui.clip_rect();
             let toolbar_rect = ui.max_rect();
             let separator_width = if window_chrome::CUSTOM { 9.0 } else { 0.0 };
-            let left_limit = toolbar_rect.right() - window_chrome::RIGHT_WIDTH - separator_width - icons::BUTTON_HEIGHT;
+            let left_limit = toolbar_rect.right()
+                - window_chrome::RIGHT_WIDTH
+                - separator_width
+                - icons::BUTTON_HEIGHT;
             ui.set_clip_rect(full_clip.intersect(egui::Rect::everything_left_of(left_limit)));
             // 自繪標題列：整條工具列可以拖曳視窗（先登記，按鈕才會蓋在它上面），最左邊是應用程式圖示
             if window_chrome::CUSTOM {
-                let bar = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), icons::BUTTON_HEIGHT));
+                let bar = egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    egui::vec2(ui.available_width(), icons::BUTTON_HEIGHT),
+                );
                 window_chrome::drag_area(ui, bar);
                 window_chrome::app_icon(ui);
             }
@@ -3122,15 +3580,21 @@ impl App {
             // 各群組的寬度記在上一個畫面：量過之後才知道放不放得下（第一個畫面全部照畫，下一個畫面就會收進「更多」）
             let groups = Self::TOOLBAR_GROUPS;
             let widths_id = ui.make_persistent_id("toolbar_group_widths");
-            let known: Vec<f32> = ui.data(|d| d.get_temp(widths_id)).unwrap_or_else(|| vec![0.0; groups]);
+            let known: Vec<f32> = ui
+                .data(|d| d.get_temp(widths_id))
+                .unwrap_or_else(|| vec![0.0; groups]);
             let spacing = ui.spacing().item_spacing.x;
             let separator = 1.0 + spacing; // 群組之間的分隔線（前一個元件後面的間距已經算在群組寬度裡）
             let available = left_limit - ui.cursor().min.x;
-            let total = |n: usize| known[..n].iter().sum::<f32>() + n.saturating_sub(1) as f32 * separator;
+            let total =
+                |n: usize| known[..n].iter().sum::<f32>() + n.saturating_sub(1) as f32 * separator;
             let mut visible = groups;
             if known.iter().all(|w| *w > 0.0) && total(groups) > available {
                 let reserve = separator + icons::BUTTON_HEIGHT + spacing; // 分隔線與「更多」鈕
-                visible = (0..groups).rev().find(|&n| total(n) + reserve <= available).unwrap_or(0);
+                visible = (0..groups)
+                    .rev()
+                    .find(|&n| total(n) + reserve <= available)
+                    .unwrap_or(0);
             }
             let mut measured = known.clone();
             for group in 0..visible {
@@ -3143,7 +3607,11 @@ impl App {
                 }
                 measured[group] = ui.cursor().min.x - x0;
             }
-            if measured.iter().zip(&known).any(|(a, b)| (a - b).abs() > 0.5) {
+            if measured
+                .iter()
+                .zip(&known)
+                .any(|(a, b)| (a - b).abs() > 0.5)
+            {
                 ui.ctx().request_repaint();
             }
             ui.data_mut(|d| d.insert_temp(widths_id, measured));
@@ -3156,19 +3624,21 @@ impl App {
                 let settings_before = self.settings_open;
                 // 點到清單裡的按鈕不會自動關閉（裡面有自己的下拉選單，點下拉不能把整份清單關掉），
                 // 所以有動作或展開了設定面板時自己關
-                egui::Popup::menu(&overflow).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                    tight_buttons(ui);
-                    for group in visible..groups {
-                        let mut group_action = None;
-                        ui.horizontal(|ui| group_action = self.toolbar_group(ui, group));
-                        if group_action.is_some() || self.settings_open != settings_before {
-                            ui.close();
+                egui::Popup::menu(&overflow)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        tight_buttons(ui);
+                        for group in visible..groups {
+                            let mut group_action = None;
+                            ui.horizontal(|ui| group_action = self.toolbar_group(ui, group));
+                            if group_action.is_some() || self.settings_open != settings_before {
+                                ui.close();
+                            }
+                            if group_action.is_some() {
+                                action = group_action;
+                            }
                         }
-                        if group_action.is_some() {
-                            action = group_action;
-                        }
-                    }
-                });
+                    });
                 // 收進「更多」的巨集鈕：巨集面板展開在「更多」鈕下面
                 if visible <= Self::TOOLBAR_MACRO_GROUP {
                     self.macro_anchor = Some(overflow.rect);
@@ -3179,7 +3649,10 @@ impl App {
             ui.set_clip_rect(full_clip);
             let right_rect = egui::Rect::from_min_max(
                 egui::pos2(left_limit, toolbar_rect.top()),
-                egui::pos2(toolbar_rect.right(), toolbar_rect.top() + icons::BUTTON_HEIGHT),
+                egui::pos2(
+                    toolbar_rect.right(),
+                    toolbar_rect.top() + icons::BUTTON_HEIGHT,
+                ),
             );
             let right_builder = egui::UiBuilder::new()
                 .max_rect(right_rect)
@@ -3208,209 +3681,332 @@ impl App {
     fn toolbar_group(&mut self, ui: &mut egui::Ui, group: usize) -> Option<Action> {
         let mut action = None;
         match group {
-        0 => {
-            // 所有按鈕只顯示圖示，文字說明放在 tooltip
-            if icons::button(ui, Icon::New, t("新增空白文件 (Ctrl+N)"), true).clicked() {
-                action = Some(Action::New);
-            }
-            // 「開啟」和旁邊的下拉箭頭同一組：中間不留縫。箭頭展開最近開啟的檔案
-            let gap_open = ui.spacing().item_spacing.x;
-            ui.spacing_mut().item_spacing.x = 0.0;
-            if icons::button(ui, Icon::Open, t("開啟檔案 (Ctrl+O)"), true).clicked() {
-                action = Some(Action::Open);
-            }
-            let recent_button = icons::dropdown_button(ui, Icon::ChevronDown, t("最近開啟的檔案"), !self.settings.recent_files.is_empty());
-            ui.spacing_mut().item_spacing.x = gap_open;
-            egui::Popup::menu(&recent_button).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
-                ui.set_min_width(260.0);
-                let font = egui::TextStyle::Button.resolve(ui.style());
-                for path in &self.settings.recent_files {
-                    let (name, folder) = recent::name_and_folder(path);
-                    // 檔名用一般的顏色，後面接淡色的資料夾（太長就留最後一段），滑鼠停上去看完整路徑
-                    let mut job = egui::text::LayoutJob::default();
-                    job.append(&name, 0.0, egui::TextFormat::simple(font.clone(), ui.visuals().text_color()));
-                    if !folder.is_empty() {
-                        job.append(&format!("   {}", recent::shorten_folder(&folder, 44)), 0.0, egui::TextFormat::simple(font.clone(), ui.visuals().weak_text_color()));
-                    }
-                    if ui.add(egui::Button::new(job)).on_hover_text(path.as_str()).clicked() {
-                        action = Some(Action::OpenRecent(path.clone()));
-                    }
+            0 => {
+                // 所有按鈕只顯示圖示，文字說明放在 tooltip
+                if icons::button(ui, Icon::New, t("新增空白文件 (Ctrl+N)"), true).clicked() {
+                    action = Some(Action::New);
                 }
-                ui.separator();
-                if ui.button(t("清除最近開啟的檔案")).clicked() {
-                    action = Some(Action::ClearRecent);
+                // 「開啟」和旁邊的下拉箭頭同一組：中間不留縫。箭頭展開最近開啟的檔案
+                let gap_open = ui.spacing().item_spacing.x;
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if icons::button(ui, Icon::Open, t("開啟檔案 (Ctrl+O)"), true).clicked() {
+                    action = Some(Action::Open);
                 }
-            });
-            if icons::button(ui, Icon::Save, t("儲存 (Ctrl+S)"), true).clicked() {
-                action = Some(Action::Save);
+                let recent_button = icons::dropdown_button(
+                    ui,
+                    Icon::ChevronDown,
+                    t("最近開啟的檔案"),
+                    !self.settings.recent_files.is_empty(),
+                );
+                ui.spacing_mut().item_spacing.x = gap_open;
+                egui::Popup::menu(&recent_button)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                    .show(|ui| {
+                        ui.set_min_width(260.0);
+                        let font = egui::TextStyle::Button.resolve(ui.style());
+                        for path in &self.settings.recent_files {
+                            let (name, folder) = recent::name_and_folder(path);
+                            // 檔名用一般的顏色，後面接淡色的資料夾（太長就留最後一段），滑鼠停上去看完整路徑
+                            let mut job = egui::text::LayoutJob::default();
+                            job.append(
+                                &name,
+                                0.0,
+                                egui::TextFormat::simple(font.clone(), ui.visuals().text_color()),
+                            );
+                            if !folder.is_empty() {
+                                job.append(
+                                    &format!("   {}", recent::shorten_folder(&folder, 44)),
+                                    0.0,
+                                    egui::TextFormat::simple(
+                                        font.clone(),
+                                        ui.visuals().weak_text_color(),
+                                    ),
+                                );
+                            }
+                            if ui
+                                .add(egui::Button::new(job))
+                                .on_hover_text(path.as_str())
+                                .clicked()
+                            {
+                                action = Some(Action::OpenRecent(path.clone()));
+                            }
+                        }
+                        ui.separator();
+                        if ui.button(t("清除最近開啟的檔案")).clicked() {
+                            action = Some(Action::ClearRecent);
+                        }
+                    });
+                if icons::button(ui, Icon::Save, t("儲存 (Ctrl+S)"), true).clicked() {
+                    action = Some(Action::Save);
+                }
+                if icons::button(ui, Icon::SaveAs, t("另存新檔 (Ctrl+Shift+S)"), true).clicked()
+                {
+                    action = Some(Action::SaveAs);
+                }
             }
-            if icons::button(ui, Icon::SaveAs, t("另存新檔 (Ctrl+Shift+S)"), true).clicked() {
-                action = Some(Action::SaveAs);
-            }
-        }
-        1 => {
-            // 轉換縮排：有選取只轉選到的行，沒有就轉整份文件；欄寬用這份文件的檔案類型的 Tab 欄數
-            let editable = self.doc.terminal.is_none();
-            if icons::button(ui, Icon::TabsToSpaces, t("把 Tab 換成空白（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"), editable).clicked() {
-                action = Some(Action::ConvertIndent { to_tabs: false });
-            }
-            if icons::button(ui, Icon::SpacesToTabs, t("把行首縮排的空白換成 Tab（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"), editable).clicked() {
-                action = Some(Action::ConvertIndent { to_tabs: true });
-            }
-            if icons::button(ui, Icon::Reformat, t("排列格式：依檔案類型重排縮排並去掉行尾空白，JSON 重新排版（有選取只處理選到的行，否則整份文件）"), editable).clicked() {
+            1 => {
+                // 轉換縮排：有選取只轉選到的行，沒有就轉整份文件；欄寬用這份文件的檔案類型的 Tab 欄數
+                let editable = self.doc.terminal.is_none();
+                if icons::button(
+                    ui,
+                    Icon::TabsToSpaces,
+                    t("把 Tab 換成空白（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"),
+                    editable,
+                )
+                .clicked()
+                {
+                    action = Some(Action::ConvertIndent { to_tabs: false });
+                }
+                if icons::button(
+                    ui,
+                    Icon::SpacesToTabs,
+                    t("把行首縮排的空白換成 Tab（依 Tab 欄數；有選取只轉選到的行，否則整份文件）"),
+                    editable,
+                )
+                .clicked()
+                {
+                    action = Some(Action::ConvertIndent { to_tabs: true });
+                }
+                if icons::button(ui, Icon::Reformat, t("排列格式：依檔案類型重排縮排並去掉行尾空白，JSON 重新排版（有選取只處理選到的行，否則整份文件）"), editable).clicked() {
                 action = Some(Action::Reformat);
             }
-            // 用文字包住選取：常用的（引號、括號、Markdown）一點就套用，也可以自己寫前後兩段文字
-            let wrap_button = icons::button(ui, Icon::Surround, t("用文字包住選取的內容（引號、括號、程式碼區塊…）；沒有選取就插入一對"), editable);
-            egui::Popup::menu(&wrap_button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                ui.set_min_width(230.0);
-                for preset in wrap_presets() {
-                    if ui.button(format!("{}   {}", preset.shown, preset.name)).clicked() {
-                        action = Some(Action::Wrap(preset.prefix.to_owned(), preset.suffix.to_owned()));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                ui.label(t("自訂（\\n 代表換行，\\t 代表 Tab）"));
-                ui.horizontal(|ui| {
-                    ui.label(t("前面"));
-                    ui.add(egui::TextEdit::singleline(&mut self.wrap_prefix).desired_width(70.0));
-                    ui.label(t("後面"));
-                    ui.add(egui::TextEdit::singleline(&mut self.wrap_suffix).desired_width(70.0));
-                });
-                let empty = self.wrap_prefix.is_empty() && self.wrap_suffix.is_empty();
-                if ui.add_enabled(!empty, egui::Button::new(t("套用"))).clicked() {
-                    action = Some(Action::Wrap(unescape_wrap_text(&self.wrap_prefix), unescape_wrap_text(&self.wrap_suffix)));
-                    ui.close();
-                }
-            });
-        }
-        2 => {
-            let find_tip =t("尋找與取代 (Ctrl+F，取代 Ctrl+H，在資料夾中尋找 Ctrl+Shift+F)");
-            if icons::toggle(ui, Icon::Search, find_tip, self.folder.open).clicked() {
-                action = Some(if self.folder.open {
-                    Action::CloseFind
-                } else {
-                    Action::Find { replace: false }
-                });
-            }
-        }
-        3 => {
-            // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式；
-            // 按下去用設定裡的預設終端機，旁邊的下拉清單可以改選別的 shell 來新增
-            // 主按鈕和下拉箭頭之間不留縫（間距是放在每個元件「後面」的，所以主按鈕放之前先設成 0、
-            // 放完再還原），看起來才是同一組
-            let gap = ui.spacing().item_spacing.x;
-            if !self.shells.is_empty() {
-                ui.spacing_mut().item_spacing.x = 0.0;
-            }
-            if icons::button(ui, Icon::Terminal, t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"), true).clicked() {
-                action = Some(Action::NewTerminal);
-            }
-            ui.spacing_mut().item_spacing.x = gap;
-            if !self.shells.is_empty() {
-                // 下拉箭頭的高度和其他工具按鈕一樣（灰底對齊），每一項前面是那個 shell 的圖示
-                let choose = icons::dropdown_button(ui, Icon::ChevronDown, t("選擇 shell 來新增終端機"), true);
-                let (configured, system) = (self.settings.terminal_shell.clone(), terminal::system_default_shell());
-                let ctx = ui.ctx().clone();
-                egui::Popup::menu(&choose).show(|ui| {
-                    no_hover_outline(ui);
-                    flat_list(ui, |ui| {
-                        for option in &self.shells {
-                            let selected = terminal::is_default_shell(option, &configured, &system); // 目前的預設終端機有選取的底色
-                            let texture = self.shell_icons.get(&ctx, option);
-                            if shell_icons::shell_row(ui, texture.as_ref(), &option.label, selected).clicked() {
-                                action = Some(Action::NewTerminalWith(option.command.clone()));
+                // 用文字包住選取：常用的（引號、括號、Markdown）一點就套用，也可以自己寫前後兩段文字
+                let wrap_button = icons::button(
+                    ui,
+                    Icon::Surround,
+                    t("用文字包住選取的內容（引號、括號、程式碼區塊…）；沒有選取就插入一對"),
+                    editable,
+                );
+                egui::Popup::menu(&wrap_button)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.set_min_width(230.0);
+                        for preset in wrap_presets() {
+                            if ui
+                                .button(format!("{}   {}", preset.shown, preset.name))
+                                .clicked()
+                            {
+                                action = Some(Action::Wrap(
+                                    preset.prefix.to_owned(),
+                                    preset.suffix.to_owned(),
+                                ));
                                 ui.close();
                             }
                         }
+                        ui.separator();
+                        ui.label(t("自訂（\\n 代表換行，\\t 代表 Tab）"));
+                        ui.horizontal(|ui| {
+                            ui.label(t("前面"));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.wrap_prefix)
+                                    .desired_width(70.0),
+                            );
+                            ui.label(t("後面"));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.wrap_suffix)
+                                    .desired_width(70.0),
+                            );
+                        });
+                        let empty = self.wrap_prefix.is_empty() && self.wrap_suffix.is_empty();
+                        if ui
+                            .add_enabled(!empty, egui::Button::new(t("套用")))
+                            .clicked()
+                        {
+                            action = Some(Action::Wrap(
+                                unescape_wrap_text(&self.wrap_prefix),
+                                unescape_wrap_text(&self.wrap_suffix),
+                            ));
+                            ui.close();
+                        }
                     });
-                });
             }
-            // 在終端機執行目前的檔案：存成檔案、而且語言有執行環境規則（Python、shell 腳本），或找得到專案命令才能按
-            let can_run = self.can_run(ui.ctx());
-            let run_tip = if can_run {
-                t("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）")
-            } else {
-                t("在終端機執行目前的檔案（要先儲存成檔案，而且是 Python、有 shebang 或副檔名明確的 shell 腳本，或有專案設定檔的 Rust、Python 專案）")
-            };
-            ui.spacing_mut().item_spacing.x = 0.0; // 和下拉箭頭同一組：中間不留縫
-            if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
-                action = Some(Action::RunFile);
+            2 => {
+                let find_tip = t("尋找與取代 (Ctrl+F，取代 Ctrl+H，在資料夾中尋找 Ctrl+Shift+F)");
+                if icons::toggle(ui, Icon::Search, find_tip, self.folder.open).clicked() {
+                    action = Some(if self.folder.open {
+                        Action::CloseFind
+                    } else {
+                        Action::Find { replace: false }
+                    });
+                }
             }
-            ui.spacing_mut().item_spacing.x = gap;
-            // 旁邊的下拉清單：這個檔案執行時的命令列參數（依檔案記住）
-            let args_button = icons::dropdown_button(ui, Icon::ChevronDown, t("設定執行時的命令列參數"), can_run);
-            let file_key = self.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-            let current_args = self.settings.run_args.get(&file_key).cloned().unwrap_or_default();
-            // 裡面有文字欄：點在欄位上不能收合，只有點到外面（或按 Esc、按「執行」）才關
-            egui::Popup::menu(&args_button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                no_hover_outline(ui);
-                ui.label(t("命令列參數（接在檔案後面，交給終端機的 shell 解析）"));
-                let mut text = current_args.clone();
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut text)
-                        .desired_width(320.0)
-                        .hint_text(t("例如 --port 8080 \"a b\"")),
+            3 => {
+                // 這是「新增終端機」的動作鈕，不是顯示終端機的開關，所以不會有啟用狀態的樣式；
+                // 按下去用設定裡的預設終端機，旁邊的下拉清單可以改選別的 shell 來新增
+                // 主按鈕和下拉箭頭之間不留縫（間距是放在每個元件「後面」的，所以主按鈕放之前先設成 0、
+                // 放完再還原），看起來才是同一組
+                let gap = ui.spacing().item_spacing.x;
+                if !self.shells.is_empty() {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                }
+                if icons::button(
+                    ui,
+                    Icon::Terminal,
+                    t("新增終端機 (Ctrl+Shift+`)；Ctrl+` 在編輯區與各終端機之間切換焦點"),
+                    true,
+                )
+                .clicked()
+                {
+                    action = Some(Action::NewTerminal);
+                }
+                ui.spacing_mut().item_spacing.x = gap;
+                if !self.shells.is_empty() {
+                    // 下拉箭頭的高度和其他工具按鈕一樣（灰底對齊），每一項前面是那個 shell 的圖示
+                    let choose = icons::dropdown_button(
+                        ui,
+                        Icon::ChevronDown,
+                        t("選擇 shell 來新增終端機"),
+                        true,
+                    );
+                    let (configured, system) = (
+                        self.settings.terminal_shell.clone(),
+                        terminal::system_default_shell(),
+                    );
+                    let ctx = ui.ctx().clone();
+                    egui::Popup::menu(&choose).show(|ui| {
+                        no_hover_outline(ui);
+                        flat_list(ui, |ui| {
+                            for option in &self.shells {
+                                let selected =
+                                    terminal::is_default_shell(option, &configured, &system); // 目前的預設終端機有選取的底色
+                                let texture = self.shell_icons.get(&ctx, option);
+                                if shell_icons::shell_row(
+                                    ui,
+                                    texture.as_ref(),
+                                    &option.label,
+                                    selected,
+                                )
+                                .clicked()
+                                {
+                                    action = Some(Action::NewTerminalWith(option.command.clone()));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                }
+                // 在終端機執行目前的檔案：存成檔案、而且語言有執行環境規則（Python、shell 腳本），或找得到專案命令才能按
+                let can_run = self.can_run(ui.ctx());
+                let run_tip = if can_run {
+                    t("在終端機執行目前的檔案（用狀態列上的執行環境；有未儲存的修改會先存檔）")
+                } else {
+                    t(
+                        "在終端機執行目前的檔案（要先儲存成檔案，而且是 Python、有 shebang 或副檔名明確的 shell 腳本，或有專案設定檔的 Rust、Python 專案）",
+                    )
+                };
+                ui.spacing_mut().item_spacing.x = 0.0; // 和下拉箭頭同一組：中間不留縫
+                if icons::button(ui, Icon::RunFile, run_tip, can_run).clicked() {
+                    action = Some(Action::RunFile);
+                }
+                ui.spacing_mut().item_spacing.x = gap;
+                // 旁邊的下拉清單：這個檔案執行時的命令列參數（依檔案記住）
+                let args_button = icons::dropdown_button(
+                    ui,
+                    Icon::ChevronDown,
+                    t("設定執行時的命令列參數"),
+                    can_run,
                 );
-                if field.changed() {
-                    action = Some(Action::SetRunArgs(file_key.clone(), text));
-                }
-                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    if ui.button(t("執行")).clicked() || enter {
-                        action = Some(Action::RunFile);
-                        ui.close();
-                    }
-                    if ui.add_enabled(!current_args.is_empty(), egui::Button::new(t("清除"))).clicked() {
-                        action = Some(Action::SetRunArgs(file_key.clone(), String::new()));
-                    }
-                });
-            });
-        }
-        4 => {
-            let preview_on = self.preview_id().is_some();
-            if icons::toggle(ui, Icon::Preview, t("預覽 (Ctrl+Shift+P)"), preview_on).clicked() {
-                action = Some(Action::TogglePreview);
+                let file_key = self
+                    .doc
+                    .path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let current_args = self
+                    .settings
+                    .run_args
+                    .get(&file_key)
+                    .cloned()
+                    .unwrap_or_default();
+                // 裡面有文字欄：點在欄位上不能收合，只有點到外面（或按 Esc、按「執行」）才關
+                egui::Popup::menu(&args_button)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        no_hover_outline(ui);
+                        ui.label(t("命令列參數（接在檔案後面，交給終端機的 shell 解析）"));
+                        let mut text = current_args.clone();
+                        let field = ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .desired_width(320.0)
+                                .hint_text(t("例如 --port 8080 \"a b\"")),
+                        );
+                        if field.changed() {
+                            action = Some(Action::SetRunArgs(file_key.clone(), text));
+                        }
+                        let enter =
+                            field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        ui.horizontal(|ui| {
+                            if ui.button(t("執行")).clicked() || enter {
+                                action = Some(Action::RunFile);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(!current_args.is_empty(), egui::Button::new(t("清除")))
+                                .clicked()
+                            {
+                                action = Some(Action::SetRunArgs(file_key.clone(), String::new()));
+                            }
+                        });
+                    });
             }
-        }
-        5 => {
-            let run =icons::toggle(ui, Icon::Run, t("巨集：執行、設快捷鍵、編輯"), self.macro_open);
-            self.macro_anchor = Some(run.rect);
-            if run.clicked() {
-                action = Some(Action::ToggleMacroMenu);
-            }
-            let can_rerun = self.last_macro.is_some();
-            if icons::button(ui, Icon::Rerun, t("重新執行上一個巨集 (F5)"), can_rerun).clicked() {
-                action = Some(Action::RerunMacro);
-            }
-            let recording = self.editor.is_recording();
-            let (icon, tip) = if recording {
-                (Icon::Stop, t("停止錄製，並把錄下的操作存成巨集"))
-            } else {
-                (Icon::Record, t("錄製巨集：記下之後的按鍵與輸入，可重複播放（滑鼠操作不會錄）"))
-            };
-            if icons::toggle(ui, icon, tip, recording).clicked() {
-                action = Some(Action::ToggleRecord);
-            }
-        }
-        _ => {
-            // 設定：固定在工具列最右邊。按下後展開設定面板（配色、字型、字級）。
-            // 面板不用 egui 的 Popup：Popup 與下拉選單共用「同一時間只開一個」的狀態，
-            // 面板裡一打開字型下拉，整個面板就被關掉了。所以面板用 Area 畫，自己決定何時關閉。
-            let more = icons::toggle(ui, Icon::More, t("設定（配色、字型、字級）"), self.settings_open);
-            self.settings_anchor = Some(more.rect);
-            if more.clicked() {
-                self.settings_open = !self.settings_open;
-                if self.settings_open {
-                    // 使用者可能剛在 themes 資料夾放了新的配色檔
-                    self.refresh_schemes();
-                    self.refresh_preview_plugins();
-                    self.shells = terminal::detect_shells(); // 使用者可能剛裝了新的 shell
-                    self.apply_schemes(ui.ctx());
+            4 => {
+                let preview_on = self.preview_id().is_some();
+                if icons::toggle(ui, Icon::Preview, t("預覽 (Ctrl+Shift+P)"), preview_on).clicked()
+                {
+                    action = Some(Action::TogglePreview);
                 }
             }
-        }
+            5 => {
+                let run = icons::toggle(
+                    ui,
+                    Icon::Run,
+                    t("巨集：執行、設快捷鍵、編輯"),
+                    self.macro_open,
+                );
+                self.macro_anchor = Some(run.rect);
+                if run.clicked() {
+                    action = Some(Action::ToggleMacroMenu);
+                }
+                let can_rerun = self.last_macro.is_some();
+                if icons::button(ui, Icon::Rerun, t("重新執行上一個巨集 (F5)"), can_rerun).clicked()
+                {
+                    action = Some(Action::RerunMacro);
+                }
+                let recording = self.editor.is_recording();
+                let (icon, tip) = if recording {
+                    (Icon::Stop, t("停止錄製，並把錄下的操作存成巨集"))
+                } else {
+                    (
+                        Icon::Record,
+                        t("錄製巨集：記下之後的按鍵與輸入，可重複播放（滑鼠操作不會錄）"),
+                    )
+                };
+                if icons::toggle(ui, icon, tip, recording).clicked() {
+                    action = Some(Action::ToggleRecord);
+                }
+            }
+            _ => {
+                // 設定：固定在工具列最右邊。按下後展開設定面板（配色、字型、字級）。
+                // 面板不用 egui 的 Popup：Popup 與下拉選單共用「同一時間只開一個」的狀態，
+                // 面板裡一打開字型下拉，整個面板就被關掉了。所以面板用 Area 畫，自己決定何時關閉。
+                let more = icons::toggle(
+                    ui,
+                    Icon::More,
+                    t("設定（配色、字型、字級）"),
+                    self.settings_open,
+                );
+                self.settings_anchor = Some(more.rect);
+                if more.clicked() {
+                    self.settings_open = !self.settings_open;
+                    if self.settings_open {
+                        // 使用者可能剛在 themes 資料夾放了新的配色檔
+                        self.refresh_schemes();
+                        self.refresh_preview_plugins();
+                        self.shells = terminal::detect_shells(); // 使用者可能剛裝了新的 shell
+                        self.apply_schemes(ui.ctx());
+                    }
+                }
+            }
         }
         action
     }
@@ -3432,7 +4028,8 @@ impl App {
 
     /// 把目前選的配色套到 egui：淺色、深色各用自己選的；正在編輯的配色蓋過它所屬主題的選擇。
     fn apply_schemes(&self, ctx: &egui::Context) {
-        let mut light = scheme::pick(&self.schemes, false, self.settings.scheme_name(false)).clone();
+        let mut light =
+            scheme::pick(&self.schemes, false, self.settings.scheme_name(false)).clone();
         let mut dark = scheme::pick(&self.schemes, true, self.settings.scheme_name(true)).clone();
         if let Some(edit) = &self.scheme_edit {
             if edit.dark {
@@ -3459,7 +4056,9 @@ impl App {
 
     /// 儲存正在編輯的自訂配色（寫回原檔）。
     fn save_scheme_edit(&mut self) {
-        let Some(edit) = self.scheme_edit.clone() else { return };
+        let Some(edit) = self.scheme_edit.clone() else {
+            return;
+        };
         let Some(dir) = scheme::themes_dir() else {
             self.push(LogKind::Error, t("找不到設定資料夾，無法儲存配色"));
             return;
@@ -3474,14 +4073,20 @@ impl App {
     }
 
     fn ask_scheme_name(&mut self, text: Option<String>, error: Option<String>) {
-        let Some(edit) = &self.scheme_edit else { return };
+        let Some(edit) = &self.scheme_edit else {
+            return;
+        };
         let text = text.unwrap_or_else(|| tf!("{} 自訂", edit.name));
         let mode = if edit.dark { t("深色") } else { t("淺色") };
-        let mut spec = modal::Spec::new(t("另存為自訂配色"), tf!("為這套{mode}配色取個名字：", mode = mode))
-            .button(t("儲存"), modal::Answer::Yes)
-            .button(t("取消"), modal::Answer::Cancel);
+        let mut spec = modal::Spec::new(
+            t("另存為自訂配色"),
+            tf!("為這套{mode}配色取個名字：", mode = mode),
+        )
+        .button(t("儲存"), modal::Answer::Yes)
+        .button(t("取消"), modal::Answer::Cancel);
         spec.error = error;
-        self.modal = Some(Pending::new(spec, Then::SaveSchemeAs).with_input(modal::Input::new(text)));
+        self.modal =
+            Some(Pending::new(spec, Then::SaveSchemeAs).with_input(modal::Input::new(text)));
     }
 
     /// 把正在編輯的配色以 `name` 另存成自訂配色檔（存在 `dir`），並設為這個主題使用的配色。
@@ -3491,7 +4096,10 @@ impl App {
         if name.trim().is_empty() {
             return Err(t("名稱不能是空的").to_owned());
         }
-        if scheme::builtins().iter().any(|s| s.dark == edit.dark && s.name == name) {
+        if scheme::builtins()
+            .iter()
+            .any(|s| s.dark == edit.dark && s.name == name)
+        {
             return Err(tf!("「{name}」是內建配色的名稱，請換一個", name = name));
         }
         let mut new = edit.clone();
@@ -3501,7 +4109,10 @@ impl App {
         let same_as_edit = !edit.builtin && edit.name == name;
         if !same_as_edit {
             new.path = None;
-            let taken = self.schemes.iter().any(|s| s.dark == edit.dark && !s.builtin && s.name == name);
+            let taken = self
+                .schemes
+                .iter()
+                .any(|s| s.dark == edit.dark && !s.builtin && s.name == name);
             if taken {
                 return Err(tf!("已經有名為「{name}」的自訂配色", name = name));
             }
@@ -3511,14 +4122,23 @@ impl App {
         self.settings.set_scheme_name(edit.dark, name);
         self.mark_settings_dirty();
         self.scheme_edit = None;
-        self.push(LogKind::Info, tf!("已儲存自訂配色「{}」，並設為{}主題的配色", name, if edit.dark { t("深色") } else { t("淺色") }));
+        self.push(
+            LogKind::Info,
+            tf!(
+                "已儲存自訂配色「{}」，並設為{}主題的配色",
+                name,
+                if edit.dark { t("深色") } else { t("淺色") }
+            ),
+        );
         Ok(())
     }
 
     /// 配色編輯視窗：每種顏色一個色塊，改了立刻預覽。
     fn scheme_editor(&mut self, ctx: &egui::Context) {
         use scheme::{Group, Role};
-        let Some(mut edit) = self.scheme_edit.take() else { return };
+        let Some(mut edit) = self.scheme_edit.take() else {
+            return;
+        };
         let mut open = true;
         let (mut changed, mut save, mut save_as, mut revert) = (false, false, false, false);
         let mode = if edit.dark { t("深色") } else { t("淺色") };
@@ -3617,7 +4237,10 @@ impl App {
             doc.buffer = feditor_core::Buffer::from_text(&source);
             self.tabs.push(&mut self.doc, &mut self.editor, doc);
             self.tab_changed();
-            self.push(LogKind::Warn, t("找不到設定資料夾，錄好的巨集開在新分頁，請自行另存"));
+            self.push(
+                LogKind::Warn,
+                t("找不到設定資料夾，錄好的巨集開在新分頁，請自行另存"),
+            );
             return;
         }
         // 先問名稱再存檔（按「放棄」就不存）
@@ -3634,8 +4257,17 @@ impl App {
     /// 不在巨集庫裡的檔案（「從檔案執行」選的）沒有適用範圍，照常執行。
     fn run_macro_if_applicable(&mut self, path: PathBuf) {
         let lang = self.doc_lang();
-        if let Some(entry) = self.macros.iter().find(|m| m.path == path).filter(|m| !m.applies_to(lang)) {
-            let message = tf!("巨集「{}」只適用於 {}，目前的檔案不是", entry.name, entry.langs.join(", "));
+        if let Some(entry) = self
+            .macros
+            .iter()
+            .find(|m| m.path == path)
+            .filter(|m| !m.applies_to(lang))
+        {
+            let message = tf!(
+                "巨集「{}」只適用於 {}，目前的檔案不是",
+                entry.name,
+                entry.langs.join(", ")
+            );
             self.push(LogKind::Warn, message);
             return;
         }
@@ -3661,7 +4293,10 @@ impl App {
         };
         match std::fs::remove_file(&entry.path) {
             Ok(()) => self.push(LogKind::Info, tf!("已刪除巨集 {}", entry.name)),
-            Err(e) => self.push(LogKind::Error, tf!("無法刪除 {}：{}", entry.path.display(), e)),
+            Err(e) => self.push(
+                LogKind::Error,
+                tf!("無法刪除 {}：{}", entry.path.display(), e),
+            ),
         }
         self.refresh_macros();
     }
@@ -3695,8 +4330,22 @@ impl App {
     /// 內建的全域快捷鍵：巨集不能用，不然永遠觸發不到。
     fn builtin_shortcuts() -> [egui::KeyboardShortcut; 16] {
         [
-            NEW, OPEN, SAVE, SAVE_AS, FIND, REPLACE, UNDO, REDO, REDO_Y, CLOSE_TAB, RERUN,
-            FIND_NEXT, FIND_PREV, NEXT_TAB, PREV_TAB, FIND_IN_FILES,
+            NEW,
+            OPEN,
+            SAVE,
+            SAVE_AS,
+            FIND,
+            REPLACE,
+            UNDO,
+            REDO,
+            REDO_Y,
+            CLOSE_TAB,
+            RERUN,
+            FIND_NEXT,
+            FIND_PREV,
+            NEXT_TAB,
+            PREV_TAB,
+            FIND_IN_FILES,
         ]
     }
 
@@ -3721,7 +4370,11 @@ impl App {
                 .iter()
                 .enumerate()
                 // 適用範圍沒有重疊的巨集（Rust 專用的和 Python 專用的）可以共用同一個快捷鍵
-                .find(|(j, m)| *j != i && m.shortcut.as_ref().is_some_and(same) && macro_lib::scopes_overlap(&entry.langs, &m.langs))
+                .find(|(j, m)| {
+                    *j != i
+                        && m.shortcut.as_ref().is_some_and(same)
+                        && macro_lib::scopes_overlap(&entry.langs, &m.langs)
+                })
             {
                 self.push(
                     LogKind::Warn,
@@ -3736,7 +4389,10 @@ impl App {
         }
         let text = shortcut.as_ref().map(macro_lib::format_shortcut);
         let result = std::fs::read_to_string(&entry.path).and_then(|src| {
-            std::fs::write(&entry.path, macro_lib::set_header_shortcut(&src, text.as_deref()))
+            std::fs::write(
+                &entry.path,
+                macro_lib::set_header_shortcut(&src, text.as_deref()),
+            )
         });
         match result {
             Ok(()) => {
@@ -3746,7 +4402,10 @@ impl App {
                 };
                 self.push(LogKind::Info, msg);
             }
-            Err(e) => self.push(LogKind::Error, tf!("無法更新 {}：{}", entry.path.display(), e)),
+            Err(e) => self.push(
+                LogKind::Error,
+                tf!("無法更新 {}：{}", entry.path.display(), e),
+            ),
         }
         self.refresh_macros();
     }
@@ -3795,7 +4454,13 @@ impl App {
     }
 
     /// 巨集面板裡的一列：執行、名稱、適用的檔案類型、快捷鍵、編輯、刪除。`applicable` 為假（適用別種檔案）時不能執行。
-    fn macro_row(&self, ui: &mut egui::Ui, i: usize, applicable: bool, shortcut_width: f32) -> Option<Action> {
+    fn macro_row(
+        &self,
+        ui: &mut egui::Ui,
+        i: usize,
+        applicable: bool,
+        shortcut_width: f32,
+    ) -> Option<Action> {
         let entry = &self.macros[i];
         let mut action = None;
         ui.horizontal(|ui| {
@@ -3803,7 +4468,10 @@ impl App {
             let run_tip = if applicable {
                 t("執行這支巨集").to_owned()
             } else {
-                tf!("這支巨集只適用於 {}，目前的檔案不是", entry.langs.join(", "))
+                tf!(
+                    "這支巨集只適用於 {}，目前的檔案不是",
+                    entry.langs.join(", ")
+                )
             };
             if icons::small_button(ui, Icon::Run, &run_tip, applicable).clicked() {
                 action = Some(Action::RunMacroEntry(i));
@@ -3820,10 +4488,13 @@ impl App {
                 if icons::small_button(ui, Icon::Clear, t("刪除這支巨集"), true).clicked() {
                     action = Some(Action::DeleteMacro(i));
                 }
-                if icons::small_button(ui, Icon::Rename, t("重新命名這支巨集"), true).clicked() {
+                if icons::small_button(ui, Icon::Rename, t("重新命名這支巨集"), true).clicked()
+                {
                     action = Some(Action::RenameMacro(i));
                 }
-                if icons::small_button(ui, Icon::Edit, t("編輯原始碼（開在新分頁）"), true).clicked() {
+                if icons::small_button(ui, Icon::Edit, t("編輯原始碼（開在新分頁）"), true)
+                    .clicked()
+                {
                     action = Some(Action::EditMacro(i));
                 }
                 let capturing = self.capturing_shortcut == Some(i);
@@ -3834,7 +4505,11 @@ impl App {
                 let label = if capturing {
                     t("請按下快捷鍵…").to_owned()
                 } else {
-                    entry.shortcut.as_ref().map(macro_lib::format_shortcut).unwrap_or_default()
+                    entry
+                        .shortcut
+                        .as_ref()
+                        .map(macro_lib::format_shortcut)
+                        .unwrap_or_default()
                 };
                 // 快捷鍵文字放在固定寬度的欄位裡（靠右）：每一列的欄位一樣寬，右邊的圖示與左邊的下拉清單才會上下對齊
                 ui.allocate_ui_with_layout(
@@ -3848,7 +4523,11 @@ impl App {
                 );
                 // 適用的檔案類型：直接顯示成下拉清單，目前的選擇就寫在上面（沒限定就是「所有檔案」）；
                 // 清單裡勾選目前支援的檔案類型，可以多選，勾選後立刻存進檔頭的 `@lang`，清單不關
-                let current = if entry.langs.is_empty() { t("所有檔案").to_owned() } else { entry.langs.join(", ") };
+                let current = if entry.langs.is_empty() {
+                    t("所有檔案").to_owned()
+                } else {
+                    entry.langs.join(", ")
+                };
                 egui::ComboBox::from_id_salt(("macro_types", i))
                     .icon(icons::combo_chevron)
                     .width(MACRO_TYPES_WIDTH)
@@ -3863,7 +4542,9 @@ impl App {
                         })
                     })
                     .response
-                    .on_hover_text(t("這支巨集適用的檔案類型：勾選目前支援的類型，可以多選；都不勾就是所有檔案"));
+                    .on_hover_text(t(
+                        "這支巨集適用的檔案類型：勾選目前支援的類型，可以多選；都不勾就是所有檔案",
+                    ));
             });
         });
         action
@@ -3876,15 +4557,22 @@ impl App {
         if self.macros.is_empty() {
             ui.set_min_width(380.0);
             ui.label(
-                egui::RichText::new(t("還沒有巨集。按工具列的錄製鈕錄一個，或把 .js 檔放進巨集資料夾。"))
-                    .color(ui.visuals().weak_text_color()),
+                egui::RichText::new(t(
+                    "還沒有巨集。按工具列的錄製鈕錄一個，或把 .js 檔放進巨集資料夾。",
+                ))
+                .color(ui.visuals().weak_text_color()),
             );
         }
         // 適用於目前檔案的（通用的、和限定了這種檔案類型的）在最上面；限定了別種檔案類型的收在下面，
         // 不會因為換了檔案就找不到，照樣能改名、改適用範圍、刪除
         // 快捷鍵欄的寬度：所有巨集裡最寬的快捷鍵（或「請按下快捷鍵…」）決定，每一列都用同一個寬度，欄位才對得齊
         let font = egui::TextStyle::Body.resolve(ui.style());
-        let text_width = |text: &str| ui.painter().layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE).size().x;
+        let text_width = |text: &str| {
+            ui.painter()
+                .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        };
         let shortcut_width = self
             .macros
             .iter()
@@ -3896,30 +4584,47 @@ impl App {
         // 面板寬度：由內容決定，不讓每一列的靠右排列撐滿到畫面邊緣（名稱和下拉清單之間會空出一大段）。
         // 一列 = 執行鈕 + 名稱 + 檔案類型下拉 + 快捷鍵欄 + 四個小圖示（含間距與「其他檔案類型」的縮排）；
         // 下面那排按鈕也要放得下
-        let names_width = self.macros.iter().map(|m| text_width(&m.name)).fold(0.0, f32::max);
+        let names_width = self
+            .macros
+            .iter()
+            .map(|m| text_width(&m.name))
+            .fold(0.0, f32::max);
         let rows_width = names_width + shortcut_width + MACRO_TYPES_WIDTH + 174.0;
         let padding = ui.spacing().button_padding.x * 2.0;
-        let footer_labels = [t("從檔案執行…"), t("開啟巨集資料夾"), t("查看快捷鍵"), t("巨集說明文件")];
-        let footer_width = footer_labels.iter().map(|s| text_width(s) + padding).sum::<f32>() + ui.spacing().item_spacing.x * 3.0;
+        let footer_labels = [
+            t("從檔案執行…"),
+            t("開啟巨集資料夾"),
+            t("查看快捷鍵"),
+            t("巨集說明文件"),
+        ];
+        let footer_width = footer_labels
+            .iter()
+            .map(|s| text_width(s) + padding)
+            .sum::<f32>()
+            + ui.spacing().item_spacing.x * 3.0;
         ui.set_width(rows_width.max(footer_width).max(260.0));
         let lang = self.doc_lang();
-        let (here, elsewhere): (Vec<usize>, Vec<usize>) = (0..self.macros.len()).partition(|&i| self.macros[i].applies_to(lang));
+        let (here, elsewhere): (Vec<usize>, Vec<usize>) =
+            (0..self.macros.len()).partition(|&i| self.macros[i].applies_to(lang));
         for i in here {
             if let Some(a) = self.macro_row(ui, i, true, shortcut_width) {
                 action = Some(a);
             }
         }
         if !elsewhere.is_empty() {
-            egui::CollapsingHeader::new(egui::RichText::new(tf!("其他檔案類型的巨集（{}）", elsewhere.len())).color(ui.visuals().weak_text_color()))
-                .id_salt("macros_elsewhere")
-                .default_open(false)
-                .show(ui, |ui| {
-                    for i in elsewhere {
-                        if let Some(a) = self.macro_row(ui, i, false, shortcut_width) {
-                            action = Some(a);
-                        }
+            egui::CollapsingHeader::new(
+                egui::RichText::new(tf!("其他檔案類型的巨集（{}）", elsewhere.len()))
+                    .color(ui.visuals().weak_text_color()),
+            )
+            .id_salt("macros_elsewhere")
+            .default_open(false)
+            .show(ui, |ui| {
+                for i in elsewhere {
+                    if let Some(a) = self.macro_row(ui, i, false, shortcut_width) {
+                        action = Some(a);
                     }
-                });
+                }
+            });
         }
         ui.separator();
         ui.horizontal(|ui| {
@@ -3929,10 +4634,20 @@ impl App {
             if ui.button(t("開啟巨集資料夾")).clicked() {
                 action = Some(Action::OpenMacroDir);
             }
-            if ui.button(t("查看快捷鍵")).on_hover_text(t("列出內建的快捷鍵，以及已經設給巨集的快捷鍵")).clicked() {
+            if ui
+                .button(t("查看快捷鍵"))
+                .on_hover_text(t("列出內建的快捷鍵，以及已經設給巨集的快捷鍵"))
+                .clicked()
+            {
                 action = Some(Action::ShowShortcuts);
             }
-            if ui.button(t("巨集說明文件")).on_hover_text(t("在瀏覽器開啟巨集的說明文件：巨集庫、錄製、快捷鍵與 JavaScript API")).clicked() {
+            if ui
+                .button(t("巨集說明文件"))
+                .on_hover_text(t(
+                    "在瀏覽器開啟巨集的說明文件：巨集庫、錄製、快捷鍵與 JavaScript API",
+                ))
+                .clicked()
+            {
                 action = Some(Action::OpenMacroDocs);
             }
         });
@@ -3989,12 +4704,17 @@ impl App {
     /// 開好的檔案跳到指定的行、欄（從 1 起算；超出範圍就停在最後）。
     fn goto_position(&mut self, target: &cli::Target) {
         let Some(line) = target.line else { return };
-        let Some((pane, i)) = self.find_open_path(&target.path) else { return };
+        let Some((pane, i)) = self.find_open_path(&target.path) else {
+            return;
+        };
         self.focus_pane(pane);
         self.switch_tab(i);
         let buf = &mut self.doc.buffer;
         let line = (line - 1).min(buf.line_count().saturating_sub(1));
-        let col = target.col.map_or(0, |c| c - 1).min(buf.line_len_chars(line));
+        let col = target
+            .col
+            .map_or(0, |c| c - 1)
+            .min(buf.line_len_chars(line));
         let pos = buf.line_start(line) + col;
         self.editor.set_caret(buf, pos, false);
         self.editor.scroll_to_caret = true;
@@ -4011,9 +4731,11 @@ impl App {
         if !self.folder.text_scope {
             self.open_path(&hit.path);
             // 檔案開失敗（open_path 已經記錄原因）：目前文件不是那個檔案就不要亂選
-            let same = self.doc.path.as_deref().is_some_and(|p| {
-                p.canonicalize().ok() == hit.path.canonicalize().ok()
-            });
+            let same = self
+                .doc
+                .path
+                .as_deref()
+                .is_some_and(|p| p.canonicalize().ok() == hit.path.canonicalize().ok());
             if !same {
                 return;
             }
@@ -4072,8 +4794,8 @@ impl App {
                 i.key_pressed(egui::Key::Escape),
             )
         });
-        let clicked_outside = clicked
-            && pointer.is_some_and(|p| !panel_rect.contains(p) && !anchor.contains(p));
+        let clicked_outside =
+            clicked && pointer.is_some_and(|p| !panel_rect.contains(p) && !anchor.contains(p));
         if !dropdown_open && (clicked_outside || escape) {
             self.settings_open = false;
         }
@@ -4082,7 +4804,9 @@ impl App {
     /// 某個主題（深色或淺色）可以選的配色清單。
     fn scheme_combo(&self, ui: &mut egui::Ui, dark: bool) -> Option<Action> {
         let mut action = None;
-        let current = scheme::pick(&self.schemes, dark, self.settings.scheme_name(dark)).name.clone();
+        let current = scheme::pick(&self.schemes, dark, self.settings.scheme_name(dark))
+            .name
+            .clone();
         egui::ComboBox::from_id_salt(if dark { "scheme_dark" } else { "scheme_light" })
             .icon(icons::combo_chevron)
             .width(190.0)
@@ -4091,7 +4815,11 @@ impl App {
                 flat_list(ui, |ui| {
                     for s in scheme::names_for(&self.schemes, dark) {
                         let shown = scheme::display_name(&s.name);
-                        let label = if s.builtin { shown } else { tf!("{}（自訂）", shown) };
+                        let label = if s.builtin {
+                            shown
+                        } else {
+                            tf!("{}（自訂）", shown)
+                        };
                         if ui.selectable_label(s.name == current, label).clicked() {
                             action = Some(Action::SetScheme(dark, s.name.clone()));
                         }
@@ -4116,18 +4844,30 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, name) in SETTINGS_TABS.iter().enumerate() {
                     let label = t(name);
-                    if ui.add_sized([76.0, icons::BUTTON_HEIGHT], egui::Button::selectable(tab == i, label)).clicked() {
+                    if ui
+                        .add_sized(
+                            [76.0, icons::BUTTON_HEIGHT],
+                            egui::Button::selectable(tab == i, label),
+                        )
+                        .clicked()
+                    {
                         tab = i;
                     }
                 }
             });
             // 標籤與內容之間的分隔線：不用 `ui.separator()`，它會撐滿「可用的高度」，而面板上次有多高
             // 可用高度就有多高，於是看過高的頁次之後，面板再也縮不回來。這裡先留位置，內容排完再依實際高度畫線。
-            let (gap, _) = ui.allocate_exact_size(egui::vec2(ui.spacing().item_spacing.x * 2.0, 0.0), egui::Sense::hover());
+            let (gap, _) = ui.allocate_exact_size(
+                egui::vec2(ui.spacing().item_spacing.x * 2.0, 0.0),
+                egui::Sense::hover(),
+            );
             let top = list.response.rect.top();
             // 各頁的內容寬度不一樣：記下看過最寬的那一頁，之後每一頁都至少那麼寬，切換標籤時面板寬度才一致
             let width_id = ui.make_persistent_id("settings_page_width");
-            let min_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(0.0).max(SETTINGS_PAGE_MIN_WIDTH);
+            let min_width = ui
+                .data(|d| d.get_temp::<f32>(width_id))
+                .unwrap_or(0.0)
+                .max(SETTINGS_PAGE_MIN_WIDTH);
             let page = ui.vertical(|ui| {
                 ui.set_min_width(min_width);
                 ui.set_min_height(300.0);
@@ -4135,7 +4875,11 @@ impl App {
             });
             let bottom = page.response.rect.bottom().max(list.response.rect.bottom());
             let x = gap.center().x;
-            ui.painter().vline(x, top..=bottom, ui.visuals().widgets.noninteractive.bg_stroke);
+            ui.painter().vline(
+                x,
+                top..=bottom,
+                ui.visuals().widgets.noninteractive.bg_stroke,
+            );
             let width = page.response.rect.width();
             if width > min_width + 0.5 {
                 ui.data_mut(|d| d.insert_temp(width_id, width));
@@ -4158,314 +4902,398 @@ impl App {
 
         // ── 介面 ──
         if tab == 0 {
-        group_title(ui, t("介面"));
-        settings_grid(ui, "settings_ui", |ui| {
-            // 介面語言：三態狀態鈕（跟隨系統＝地球、中文＝「中」、英文＝「En」），旁邊寫出目前的選擇。
-            // 選項名稱用各自的語言寫（中文、English），在看不懂的介面裡也找得到
-            form_row(ui, t("介面語言"), |ui| {
-                let current = self.settings.language;
-                let next = current.next();
-                let tip = tf!("介面語言：{}（點擊切換為「{}」）", current.label(), next.label());
-                if icons::button(ui, language_icon(current), &tip, true).clicked() {
-                    action = Some(Action::SetLanguage(next));
-                }
-                ui.label(current.label());
-            });
+            group_title(ui, t("介面"));
+            settings_grid(ui, "settings_ui", |ui| {
+                // 介面語言：三態狀態鈕（跟隨系統＝地球、中文＝「中」、英文＝「En」），旁邊寫出目前的選擇。
+                // 選項名稱用各自的語言寫（中文、English），在看不懂的介面裡也找得到
+                form_row(ui, t("介面語言"), |ui| {
+                    let current = self.settings.language;
+                    let next = current.next();
+                    let tip = tf!(
+                        "介面語言：{}（點擊切換為「{}」）",
+                        current.label(),
+                        next.label()
+                    );
+                    if icons::button(ui, language_icon(current), &tip, true).clicked() {
+                        action = Some(Action::SetLanguage(next));
+                    }
+                    ui.label(current.label());
+                });
 
-            // 外觀：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
-            form_row(ui, t("外觀"), |ui| {
-                let current = self.settings.theme;
-                let next = current.next();
-                let tip = tf!(
-                    "外觀：{}（點擊切換為「{}」）",
-                    theme_label(current),
-                    theme_label(next)
-                );
-                if icons::button(ui, theme_icon(current), &tip, true).clicked() {
-                    action = Some(Action::SetTheme(next));
-                }
-                ui.label(theme_label(current));
-            });
+                // 外觀：三態狀態鈕（從工具列搬進來），旁邊寫出目前的狀態
+                form_row(ui, t("外觀"), |ui| {
+                    let current = self.settings.theme;
+                    let next = current.next();
+                    let tip = tf!(
+                        "外觀：{}（點擊切換為「{}」）",
+                        theme_label(current),
+                        theme_label(next)
+                    );
+                    if icons::button(ui, theme_icon(current), &tip, true).clicked() {
+                        action = Some(Action::SetTheme(next));
+                    }
+                    ui.label(theme_label(current));
+                });
 
-            form_row(ui, t("輸出窗格"), |ui| {
-                let mut on = self.settings.output_pane;
-                let response = ui
+                form_row(ui, t("輸出窗格"), |ui| {
+                    let mut on = self.settings.output_pane;
+                    let response = ui
                     .checkbox(&mut on, t("顯示"))
                     .on_hover_text(t("視窗下方記錄巨集輸出與錯誤的窗格；關掉後連收合的標題列也不顯示，輸出照樣記錄"));
-                if response.changed() {
-                    action = Some(Action::SetOutputPane(on));
-                }
-            });
-            // 右鍵選單整合（只有支援的系統才有這一列）
-            if shell_integration::supported() {
-                form_row(ui, file_manager_name(), |ui| {
-                    let mut on = self.settings.shell_menu;
-                    let labels = shell_menu_labels();
-                    let response = ui
-                        .checkbox(&mut on, t("加入右鍵選單"))
-                        .on_hover_text(tf!("在{}的右鍵選單加入「{}」（檔案）與「{}」（資料夾）；取消勾選就移除", file_manager_name(), labels.open, labels.pick));
                     if response.changed() {
-                        action = Some(Action::SetShellMenu(on));
+                        action = Some(Action::SetOutputPane(on));
                     }
                 });
-            }
-            // 預設開啟：雙按選到的類別的檔案時直接用 FEditor 開啟；類別在下面一個一個勾
-            if file_assoc::supported() {
-                form_row_tall(ui, t("預設開啟"), |ui| {
-                    let mut on = self.settings.file_assoc;
-                    let response = ui
+                // 右鍵選單整合（只有支援的系統才有這一列）
+                if shell_integration::supported() {
+                    form_row(ui, file_manager_name(), |ui| {
+                        let mut on = self.settings.shell_menu;
+                        let labels = shell_menu_labels();
+                        let response = ui.checkbox(&mut on, t("加入右鍵選單")).on_hover_text(tf!(
+                            "在{}的右鍵選單加入「{}」（檔案）與「{}」（資料夾）；取消勾選就移除",
+                            file_manager_name(),
+                            labels.open,
+                            labels.pick
+                        ));
+                        if response.changed() {
+                            action = Some(Action::SetShellMenu(on));
+                        }
+                    });
+                }
+                // 預設開啟：雙按選到的類別的檔案時直接用 FEditor 開啟；類別在下面一個一個勾
+                if file_assoc::supported() {
+                    form_row_tall(ui, t("預設開啟"), |ui| {
+                        let mut on = self.settings.file_assoc;
+                        let response = ui
                         .checkbox(&mut on, t("雙按檔案時用 FEditor 開啟"))
                         .on_hover_text(t("雙按選到的類別的檔案時，直接用 FEditor 開啟（Windows 登記在「預設應用程式」、macOS 設定預設處理程式、Linux 寫 mimeapps.list）；取消勾選就還原"));
-                    if response.changed() {
-                        action = Some(Action::SetFileAssoc(on));
-                    }
-                    for group in file_assoc::GROUPS {
-                        let mut checked = self.settings.file_assoc_groups.contains(group.key);
-                        let extensions: Vec<String> = group.extensions.iter().map(|e| format!(".{e}")).collect();
-                        let response = ui
-                            .add_enabled(self.settings.file_assoc, egui::Checkbox::new(&mut checked, group.label()))
-                            .on_hover_text(extensions.join(" "));
                         if response.changed() {
-                            action = Some(Action::SetFileAssocGroup(group.key.to_owned(), checked));
+                            action = Some(Action::SetFileAssoc(on));
                         }
-                    }
-                });
-            }
-            // 終端機指令：macOS、Linux 在 ~/.local/bin 放一個 feditor 指令；Windows 把程式資料夾加進使用者的 PATH
-            if cli_command::supported() {
-                form_row(ui, t("終端機指令"), |ui| {
-                    let mut on = self.settings.cli_command;
-                    let tip = if cfg!(windows) {
-                        t("把 FEditor 所在的資料夾加進使用者的 PATH（已經在 PATH 裡就不重複加入），之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就從使用者的 PATH 移除")
-                    } else {
-                        t("在 ~/.local/bin 建立 feditor 指令，之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就移除（需要把 ~/.local/bin 加入 PATH）")
-                    };
-                    let response = ui.checkbox(&mut on, t("加入 feditor 指令")).on_hover_text(tip);
-                    if response.changed() {
-                        action = Some(Action::SetCliCommand(on));
-                    }
-                });
-            }
-        });
-        group_gap(ui);
-
-        // ── 配色：淺色、深色各選一套，互不影響 ──
-        group_title(ui, t("配色"));
-        settings_grid(ui, "settings_schemes", |ui| {
-            for dark in [false, true] {
-                form_row(ui, if dark { t("深色配色") } else { t("淺色配色") }, |ui| {
-                    if let Some(a) = self.scheme_combo(ui, dark) {
-                        action = Some(a);
-                    }
-                });
-            }
-            form_row(ui, "", |ui| {
-                ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-                if ui
-                    .button(t("編輯目前配色…"))
-                    .on_hover_text(t("改目前主題（深色或淺色）正在用的配色，可以另存成自訂配色"))
-                    .clicked()
-                {
-                    action = Some(Action::EditScheme);
+                        for group in file_assoc::GROUPS {
+                            let mut checked = self.settings.file_assoc_groups.contains(group.key);
+                            let extensions: Vec<String> =
+                                group.extensions.iter().map(|e| format!(".{e}")).collect();
+                            let response = ui
+                                .add_enabled(
+                                    self.settings.file_assoc,
+                                    egui::Checkbox::new(&mut checked, group.label()),
+                                )
+                                .on_hover_text(extensions.join(" "));
+                            if response.changed() {
+                                action =
+                                    Some(Action::SetFileAssocGroup(group.key.to_owned(), checked));
+                            }
+                        }
+                    });
                 }
-                if ui
-                    .button(t("配色資料夾"))
-                    .on_hover_text(t("自訂配色檔（*.conf）放在這裡；開啟設定面板時會重新讀取"))
-                    .clicked()
-                {
-                    action = Some(Action::OpenThemesDir);
+                // 終端機指令：macOS、Linux 在 ~/.local/bin 放一個 feditor 指令；Windows 把程式資料夾加進使用者的 PATH
+                if cli_command::supported() {
+                    form_row(ui, t("終端機指令"), |ui| {
+                        let mut on = self.settings.cli_command;
+                        let tip = if cfg!(windows) {
+                            t(
+                                "把 FEditor 所在的資料夾加進使用者的 PATH（已經在 PATH 裡就不重複加入），之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就從使用者的 PATH 移除",
+                            )
+                        } else {
+                            t(
+                                "在 ~/.local/bin 建立 feditor 指令，之後可以在終端機輸入 feditor 檔案 開啟；取消勾選就移除（需要把 ~/.local/bin 加入 PATH）",
+                            )
+                        };
+                        let response = ui
+                            .checkbox(&mut on, t("加入 feditor 指令"))
+                            .on_hover_text(tip);
+                        if response.changed() {
+                            action = Some(Action::SetCliCommand(on));
+                        }
+                    });
                 }
             });
-        });
+            group_gap(ui);
+
+            // ── 配色：淺色、深色各選一套，互不影響 ──
+            group_title(ui, t("配色"));
+            settings_grid(ui, "settings_schemes", |ui| {
+                for dark in [false, true] {
+                    form_row(
+                        ui,
+                        if dark {
+                            t("深色配色")
+                        } else {
+                            t("淺色配色")
+                        },
+                        |ui| {
+                            if let Some(a) = self.scheme_combo(ui, dark) {
+                                action = Some(a);
+                            }
+                        },
+                    );
+                }
+                form_row(ui, "", |ui| {
+                    ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+                    if ui
+                        .button(t("編輯目前配色…"))
+                        .on_hover_text(t(
+                            "改目前主題（深色或淺色）正在用的配色，可以另存成自訂配色",
+                        ))
+                        .clicked()
+                    {
+                        action = Some(Action::EditScheme);
+                    }
+                    if ui
+                        .button(t("配色資料夾"))
+                        .on_hover_text(t("自訂配色檔（*.conf）放在這裡；開啟設定面板時會重新讀取"))
+                        .clicked()
+                    {
+                        action = Some(Action::OpenThemesDir);
+                    }
+                });
+            });
         }
         if tab == 1 {
-        // ── 編輯區 ──
-        group_title(ui, t("編輯區"));
-        settings_grid(ui, "settings_editor", |ui| {
-            // 字型：只列等寬字型
-            form_row(ui, t("字型"), |ui| match &scan {
-                None => {
-                    ui.label(
-                        egui::RichText::new(t("正在找出系統上的等寬字型…"))
-                            .color(ui.visuals().weak_text_color()),
+            // ── 編輯區 ──
+            group_title(ui, t("編輯區"));
+            settings_grid(ui, "settings_editor", |ui| {
+                // 字型：只列等寬字型
+                form_row(ui, t("字型"), |ui| match &scan {
+                    None => {
+                        ui.label(
+                            egui::RichText::new(t("正在找出系統上的等寬字型…"))
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.ctx().request_repaint_after(Duration::from_millis(150));
+                    }
+                    Some((families, default_name)) => {
+                        let default_label = match default_name {
+                            Some(name) => tf!("系統預設（{name}）", name = name),
+                            None => t("系統預設").to_owned(),
+                        };
+                        // 面板要顯示「實際生效」的字型：設定檔裡的字型若不在清單裡（沒安裝了，
+                        // 或是畫不出拉丁字母的老字型），編輯區實際用的是系統預設，這裡也要顯示預設。
+                        let current = self
+                            .settings
+                            .font_family
+                            .as_deref()
+                            .filter(|name| families.iter().any(|f| f == name));
+                        let shown = current.map_or_else(|| default_label.clone(), str::to_owned);
+                        egui::ComboBox::from_id_salt("font_family")
+                            .icon(icons::combo_chevron)
+                            .width(250.0)
+                            .height(320.0)
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                flat_list(ui, |ui| {
+                                    if ui
+                                        .selectable_label(current.is_none(), &default_label)
+                                        .clicked()
+                                    {
+                                        action = Some(Action::SetFontFamily(None));
+                                    }
+                                    for name in families {
+                                        let selected = current == Some(name.as_str());
+                                        if ui.selectable_label(selected, name).clicked() {
+                                            action =
+                                                Some(Action::SetFontFamily(Some(name.clone())));
+                                        }
+                                    }
+                                })
+                            });
+                    }
+                });
+
+                // 字級：與快捷鍵共用同一個設定值，所以兩邊永遠同步
+                form_row(ui, t("字級"), |ui| {
+                    let mut size = self.settings.font_size;
+                    let response = ui.add(
+                        egui::DragValue::new(&mut size)
+                            .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
+                            .speed(0.1)
+                            .max_decimals(1),
                     );
-                    ui.ctx().request_repaint_after(Duration::from_millis(150));
-                }
-                Some((families, default_name)) => {
-                    let default_label = match default_name {
-                        Some(name) => tf!("系統預設（{name}）", name = name),
-                        None => t("系統預設").to_owned(),
-                    };
-                    // 面板要顯示「實際生效」的字型：設定檔裡的字型若不在清單裡（沒安裝了，
-                    // 或是畫不出拉丁字母的老字型），編輯區實際用的是系統預設，這裡也要顯示預設。
-                    let current = self
-                        .settings
-                        .font_family
-                        .as_deref()
-                        .filter(|name| families.iter().any(|f| f == name));
-                    let shown = current.map_or_else(|| default_label.clone(), str::to_owned);
-                    egui::ComboBox::from_id_salt("font_family")
-                        .icon(icons::combo_chevron)
-                        .width(250.0)
-                        .height(320.0)
-                        .selected_text(shown)
-                        .show_ui(ui, |ui| flat_list(ui, |ui| {
-                            if ui.selectable_label(current.is_none(), &default_label).clicked() {
-                                action = Some(Action::SetFontFamily(None));
-                            }
-                            for name in families {
-                                let selected = current == Some(name.as_str());
-                                if ui.selectable_label(selected, name).clicked() {
-                                    action = Some(Action::SetFontFamily(Some(name.clone())));
-                                }
-                            }
-                        }));
-                }
-            });
+                    unit_label(ui, "pt");
+                    if response.changed() {
+                        action = Some(Action::SetFontSize(size));
+                    }
+                });
 
-            // 字級：與快捷鍵共用同一個設定值，所以兩邊永遠同步
-            form_row(ui, t("字級"), |ui| {
-                let mut size = self.settings.font_size;
-                let response = ui.add(egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1));
-                unit_label(ui, "pt");
-                if response.changed() {
-                    action = Some(Action::SetFontSize(size));
-                }
-            });
-
-            // 安全界線：勾選啟用，再設定從第幾欄起換色；單位寫在輸入欄位的外面，欄位裡只有數字
-            form_row(ui, t("安全界線"), |ui| {
-                let v = self.settings.view;
-                let mut on = v.ruler;
-                let mut column = v.ruler_column;
-                let toggled = ui.add(egui::Checkbox::without_text(&mut on)).on_hover_text(t("啟用安全界線")).changed();
-                let dragged = ui
+                // 安全界線：勾選啟用，再設定從第幾欄起換色；單位寫在輸入欄位的外面，欄位裡只有數字
+                form_row(ui, t("安全界線"), |ui| {
+                    let v = self.settings.view;
+                    let mut on = v.ruler;
+                    let mut column = v.ruler_column;
+                    let toggled = ui
+                        .add(egui::Checkbox::without_text(&mut on))
+                        .on_hover_text(t("啟用安全界線"))
+                        .changed();
+                    let dragged = ui
                     .add_enabled(
                         on,
                         egui::DragValue::new(&mut column).range(settings::MIN_RULER_COLUMN..=settings::MAX_RULER_COLUMN).speed(0.5),
                     )
                     .on_hover_text(t("從這一欄的右緣起，右邊的區域換成淡淡的顏色，提醒一行不要寫得比它寬（全形字算兩欄）"))
                     .changed();
-                unit_label(ui, t("欄"));
-                if toggled || dragged {
-                    action = Some(Action::SetView(settings::ViewOptions { ruler: on, ruler_column: column, ..v }));
-                }
-            });
-            // Tab：預設的欄數、輸入 Tab 時是否改用空白（全部檔案類型共用），以及依檔案類型個別設定的欄數
-            form_row(ui, t("Tab 欄數"), |ui| {
-                let mut width = self.settings.tab_width;
-                let response = ui
-                    .add(egui::DragValue::new(&mut width).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
-                    .on_hover_text(t("一個 Tab 佔幾欄（沒有個別設定的檔案類型都用這個）"));
-                unit_label(ui, t("欄"));
-                if response.changed() {
-                    action = Some(Action::SetTabWidth(width));
-                }
-            });
-            form_row(ui, t("輸入 Tab"), |ui| {
-                let mut on = self.settings.tab_spaces;
-                let response = ui
-                    .checkbox(&mut on, t("改用空白"))
-                    .on_hover_text(t("按 Tab 鍵與縮排時輸入空白，不輸入 Tab 字元（檔案裡原有的 Tab 不會被改）"));
-                if response.changed() {
-                    action = Some(Action::SetTabSpaces(on));
-                }
-            });
-            form_row(ui, t("自動縮排"), |ui| {
-                let mut on = self.settings.auto_indent;
-                let response = ui
+                    unit_label(ui, t("欄"));
+                    if toggled || dragged {
+                        action = Some(Action::SetView(settings::ViewOptions {
+                            ruler: on,
+                            ruler_column: column,
+                            ..v
+                        }));
+                    }
+                });
+                // Tab：預設的欄數、輸入 Tab 時是否改用空白（全部檔案類型共用），以及依檔案類型個別設定的欄數
+                form_row(ui, t("Tab 欄數"), |ui| {
+                    let mut width = self.settings.tab_width;
+                    let response = ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS)
+                                .speed(0.1),
+                        )
+                        .on_hover_text(t("一個 Tab 佔幾欄（沒有個別設定的檔案類型都用這個）"));
+                    unit_label(ui, t("欄"));
+                    if response.changed() {
+                        action = Some(Action::SetTabWidth(width));
+                    }
+                });
+                form_row(ui, t("輸入 Tab"), |ui| {
+                    let mut on = self.settings.tab_spaces;
+                    let response = ui.checkbox(&mut on, t("改用空白")).on_hover_text(t(
+                        "按 Tab 鍵與縮排時輸入空白，不輸入 Tab 字元（檔案裡原有的 Tab 不會被改）",
+                    ));
+                    if response.changed() {
+                        action = Some(Action::SetTabSpaces(on));
+                    }
+                });
+                form_row(ui, t("自動縮排"), |ui| {
+                    let mut on = self.settings.auto_indent;
+                    let response = ui
                     .checkbox(&mut on, t("按 Enter 時依語言縮排"))
                     .on_hover_text(t("行尾是左括號（Python 還有冒號）就多縮排一層，在一對括號之間按 Enter 會展開成三行，輸入右括號時自動少一層；關閉時只沿用上一行的縮排"));
-                if response.changed() {
-                    action = Some(Action::SetAutoIndent(on));
-                }
-            });
-            // 自動換行的全域預設值：沒有個別設定的檔案類型都跟著它
-            form_row(ui, t("自動換行"), |ui| {
-                let v = self.settings.view;
-                let mut on = v.word_wrap;
-                let response = ui
+                    if response.changed() {
+                        action = Some(Action::SetAutoIndent(on));
+                    }
+                });
+                // 自動換行的全域預設值：沒有個別設定的檔案類型都跟著它
+                form_row(ui, t("自動換行"), |ui| {
+                    let v = self.settings.view;
+                    let mut on = v.word_wrap;
+                    let response = ui
                     .checkbox(&mut on, t("預設開啟"))
                     .on_hover_text(t("沒有個別設定的檔案類型是否自動換行；個別類型可在「檔案類型」頁覆寫，工具列的自動換行鈕也只改目前的類型"));
-                if response.changed() {
-                    action = Some(Action::SetView(settings::ViewOptions { word_wrap: on, ..v }));
-                }
+                    if response.changed() {
+                        action = Some(Action::SetView(settings::ViewOptions {
+                            word_wrap: on,
+                            ..v
+                        }));
+                    }
+                });
+                // 顯示：開關按鈕，圖示加 tooltip
+                form_row(ui, t("顯示"), |ui| {
+                    tight_buttons(ui);
+                    let v = self.settings.view;
+                    let mut next = v;
+                    if icons::toggle(ui, Icon::LineNumbers, t("顯示行號"), v.show_line_numbers)
+                        .clicked()
+                    {
+                        next.show_line_numbers = !v.show_line_numbers;
+                    }
+                    if icons::toggle(ui, Icon::CurrentLine, t("標示目前這一行"), v.highlight_line)
+                        .clicked()
+                    {
+                        next.highlight_line = !v.highlight_line;
+                    }
+                    if icons::toggle(
+                        ui,
+                        Icon::Whitespace,
+                        t("顯示空白、Tab 與換行符號"),
+                        v.show_whitespace,
+                    )
+                    .clicked()
+                    {
+                        next.show_whitespace = !v.show_whitespace;
+                    }
+                    if icons::toggle(ui, Icon::Syntax, t("語法上色（依副檔名）"), v.syntax)
+                        .clicked()
+                    {
+                        next.syntax = !v.syntax;
+                    }
+                    // 自動換行跟著目前這份文件的檔案類型：按下去只改這個類型（其他類型不受影響）
+                    let wrap_lang = if self.doc.terminal.is_some() {
+                        None
+                    } else {
+                        syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer)
+                            .map(|l| l.name)
+                    };
+                    let kind = wrap_lang.unwrap_or(t("純文字"));
+                    let too_big = self.doc.buffer.line_count() > editor::wrap::MAX_LINES;
+                    let tip = if too_big {
+                        tf!(
+                            "自動換行（超過 {} 行的檔案不支援）",
+                            editor::wrap::MAX_LINES
+                        )
+                    } else {
+                        tf!("自動換行（只套用在「{}」檔案）", kind)
+                    };
+                    let wrap_now = self.settings.word_wrap_for(wrap_lang);
+                    let on = wrap_now && !too_big;
+                    if icons::toggle(ui, Icon::WordWrap, &tip, on).clicked() && !too_big {
+                        action = Some(Action::SetLanguageWordWrap(
+                            wrap_lang.map(str::to_owned),
+                            Some(!wrap_now),
+                        ));
+                    }
+                    if next != v {
+                        action = Some(Action::SetView(next));
+                    }
+                });
             });
-            // 顯示：開關按鈕，圖示加 tooltip
-            form_row(ui, t("顯示"), |ui| {
-                tight_buttons(ui);
-                let v = self.settings.view;
-                let mut next = v;
-                if icons::toggle(ui, Icon::LineNumbers, t("顯示行號"), v.show_line_numbers).clicked() {
-                    next.show_line_numbers = !v.show_line_numbers;
-                }
-                if icons::toggle(ui, Icon::CurrentLine, t("標示目前這一行"), v.highlight_line).clicked() {
-                    next.highlight_line = !v.highlight_line;
-                }
-                if icons::toggle(ui, Icon::Whitespace, t("顯示空白、Tab 與換行符號"), v.show_whitespace).clicked() {
-                    next.show_whitespace = !v.show_whitespace;
-                }
-                if icons::toggle(ui, Icon::Syntax, t("語法上色（依副檔名）"), v.syntax).clicked() {
-                    next.syntax = !v.syntax;
-                }
-                // 自動換行跟著目前這份文件的檔案類型：按下去只改這個類型（其他類型不受影響）
-                let wrap_lang = if self.doc.terminal.is_some() {
-                    None
-                } else {
-                    syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).map(|l| l.name)
-                };
-                let kind = wrap_lang.unwrap_or(t("純文字"));
-                let too_big = self.doc.buffer.line_count() > editor::wrap::MAX_LINES;
-                let tip = if too_big {
-                    tf!("自動換行（超過 {} 行的檔案不支援）", editor::wrap::MAX_LINES)
-                } else {
-                    tf!("自動換行（只套用在「{}」檔案）", kind)
-                };
-                let wrap_now = self.settings.word_wrap_for(wrap_lang);
-                let on = wrap_now && !too_big;
-                if icons::toggle(ui, Icon::WordWrap, &tip, on).clicked() && !too_big {
-                    action = Some(Action::SetLanguageWordWrap(wrap_lang.map(str::to_owned), Some(!wrap_now)));
-                }
-                if next != v {
-                    action = Some(Action::SetView(next));
-                }
-            });
-        });
-        ui.add_space(2.0);
-        ui.label(
+            ui.add_space(2.0);
+            ui.label(
             // 說明文字和其他設定項目一樣大：縮小的字加上淡灰色，在設定面板裡幾乎看不清楚
             egui::RichText::new(t("調整字級：Ctrl + / - 或 Ctrl + 滾輪；Ctrl + 0 還原預設（點在預覽窗格或終端機上時，調的是它們各自的字級）"))
                 .color(ui.visuals().weak_text_color()),
         );
         }
         if tab == 2 {
-        // ── 檔案類型：用下拉清單選一個檔案類型，只設定這一個類型的 Tab 欄數與換行風格 ──
-        group_title(ui, t("檔案類型"));
-        let langs = syntax::all_languages();
-        let pick_id = ui.make_persistent_id("settings_file_type");
-        let active_name = if self.doc.terminal.is_some() {
-            None
-        } else {
-            syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer).map(|l| l.name)
-        };
-        // 預設選目前這份文件的檔案類型
-        let chosen: String = ui
-            .data(|d| d.get_temp::<String>(pick_id))
-            .filter(|n| langs.iter().any(|l| l.name == n))
-            .or_else(|| active_name.map(str::to_owned))
-            .unwrap_or_else(|| langs[0].name.to_owned());
-        let lang = langs.iter().copied().find(|l| l.name == chosen).unwrap_or(langs[0]);
-        let customized = |name: &str| {
-            self.settings.tab_widths.contains_key(name) || self.settings.wrap_styles.contains_key(name) || self.settings.wrap_langs.contains_key(name)
-        };
-        let wrap_label = |style: syntax::WrapStyle| match style {
-            syntax::WrapStyle::Align => t("對齊第一個參數"),
-            syntax::WrapStyle::Hang => t("換行後縮排"),
-        };
-        settings_grid(ui, "settings_file_type", |ui| {
-            form_row(ui, t("檔案類型"), |ui| {
-                let shown = if customized(lang.name) { format!("● {}", lang.name) } else { lang.name.to_owned() };
-                egui::ComboBox::from_id_salt("settings_file_type_pick")
+            // ── 檔案類型：用下拉清單選一個檔案類型，只設定這一個類型的 Tab 欄數與換行風格 ──
+            group_title(ui, t("檔案類型"));
+            let langs = syntax::all_languages();
+            let pick_id = ui.make_persistent_id("settings_file_type");
+            let active_name = if self.doc.terminal.is_some() {
+                None
+            } else {
+                syntax::resolve(self.doc.lang, self.doc.path.as_deref(), &self.doc.buffer)
+                    .map(|l| l.name)
+            };
+            // 預設選目前這份文件的檔案類型
+            let chosen: String = ui
+                .data(|d| d.get_temp::<String>(pick_id))
+                .filter(|n| langs.iter().any(|l| l.name == n))
+                .or_else(|| active_name.map(str::to_owned))
+                .unwrap_or_else(|| langs[0].name.to_owned());
+            let lang = langs
+                .iter()
+                .copied()
+                .find(|l| l.name == chosen)
+                .unwrap_or(langs[0]);
+            let customized = |name: &str| {
+                self.settings.tab_widths.contains_key(name)
+                    || self.settings.wrap_styles.contains_key(name)
+                    || self.settings.wrap_langs.contains_key(name)
+            };
+            let wrap_label = |style: syntax::WrapStyle| match style {
+                syntax::WrapStyle::Align => t("對齊第一個參數"),
+                syntax::WrapStyle::Hang => t("換行後縮排"),
+            };
+            settings_grid(ui, "settings_file_type", |ui| {
+                form_row(ui, t("檔案類型"), |ui| {
+                    let shown = if customized(lang.name) {
+                        format!("● {}", lang.name)
+                    } else {
+                        lang.name.to_owned()
+                    };
+                    egui::ComboBox::from_id_salt("settings_file_type_pick")
                     .icon(icons::combo_chevron)
                     .width(220.0)
                     .height(320.0)
@@ -4482,70 +5310,104 @@ impl App {
                     })
                     .response
                     .on_hover_text(t("選一個檔案類型，下面設定只對這個類型有效；● 表示這個類型已經有個別設定"));
-            });
-            // Tab 欄數：沒有個別設定時顯示預設的欄數；改了就成為這個類型的個別設定
-            form_row(ui, t("Tab 欄數"), |ui| {
-                let custom = self.settings.tab_widths.get(lang.name).copied();
-                let mut width = custom.unwrap_or(self.settings.tab_width);
-                let response = ui
-                    .add(egui::DragValue::new(&mut width).range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS).speed(0.1))
-                    .on_hover_text(t("這個檔案類型一個 Tab 佔幾欄"));
-                unit_label(ui, t("欄"));
-                if response.changed() {
-                    action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), Some(width)));
-                }
-                if custom.is_some() {
-                    if icons::small_button(ui, Icon::Close, t("移除個別設定，改用「編輯區」的預設 Tab 欄數"), true).clicked() {
-                        action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), None));
+                });
+                // Tab 欄數：沒有個別設定時顯示預設的欄數；改了就成為這個類型的個別設定
+                form_row(ui, t("Tab 欄數"), |ui| {
+                    let custom = self.settings.tab_widths.get(lang.name).copied();
+                    let mut width = custom.unwrap_or(self.settings.tab_width);
+                    let response = ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .range(settings::MIN_TAB_COLUMNS..=settings::MAX_TAB_COLUMNS)
+                                .speed(0.1),
+                        )
+                        .on_hover_text(t("這個檔案類型一個 Tab 佔幾欄"));
+                    unit_label(ui, t("欄"));
+                    if response.changed() {
+                        action = Some(Action::SetLanguageTabWidth(
+                            lang.name.to_owned(),
+                            Some(width),
+                        ));
                     }
-                } else {
-                    ui.label(egui::RichText::new(t("（預設）")).color(ui.visuals().weak_text_color()));
-                }
-            });
-            // 自動換行：預設（跟著「顯示」的預設值，沒有個別設定時）、開、關；工具列上的自動換行鈕改的也是這個類型的設定
-            form_row(ui, t("自動換行"), |ui| {
-                let custom = self.settings.wrap_langs.get(lang.name).copied();
-                let on_off = |on: bool| if on { t("開") } else { t("關") };
-                let default_text = tf!("預設（{}）", on_off(self.settings.view.word_wrap));
-                let shown = custom.map_or_else(|| default_text.clone(), |on| on_off(on).to_owned());
-                egui::ComboBox::from_id_salt("settings_word_wrap")
-                    .icon(icons::combo_chevron)
-                    .width(220.0)
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        flat_list(ui, |ui| {
-                            if ui.selectable_label(custom.is_none(), &default_text).clicked() {
-                                action = Some(Action::SetLanguageWordWrap(Some(lang.name.to_owned()), None));
-                            }
-                            for on in [true, false] {
-                                if ui.selectable_label(custom == Some(on), on_off(on)).clicked() {
-                                    action = Some(Action::SetLanguageWordWrap(Some(lang.name.to_owned()), Some(on)));
+                    if custom.is_some() {
+                        if icons::small_button(
+                            ui,
+                            Icon::Close,
+                            t("移除個別設定，改用「編輯區」的預設 Tab 欄數"),
+                            true,
+                        )
+                        .clicked()
+                        {
+                            action = Some(Action::SetLanguageTabWidth(lang.name.to_owned(), None));
+                        }
+                    } else {
+                        ui.label(
+                            egui::RichText::new(t("（預設）"))
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                });
+                // 自動換行：預設（跟著「顯示」的預設值，沒有個別設定時）、開、關；工具列上的自動換行鈕改的也是這個類型的設定
+                form_row(ui, t("自動換行"), |ui| {
+                    let custom = self.settings.wrap_langs.get(lang.name).copied();
+                    let on_off = |on: bool| if on { t("開") } else { t("關") };
+                    let default_text = tf!("預設（{}）", on_off(self.settings.view.word_wrap));
+                    let shown =
+                        custom.map_or_else(|| default_text.clone(), |on| on_off(on).to_owned());
+                    egui::ComboBox::from_id_salt("settings_word_wrap")
+                        .icon(icons::combo_chevron)
+                        .width(220.0)
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            flat_list(ui, |ui| {
+                                if ui
+                                    .selectable_label(custom.is_none(), &default_text)
+                                    .clicked()
+                                {
+                                    action = Some(Action::SetLanguageWordWrap(
+                                        Some(lang.name.to_owned()),
+                                        None,
+                                    ));
                                 }
-                            }
+                                for on in [true, false] {
+                                    if ui
+                                        .selectable_label(custom == Some(on), on_off(on))
+                                        .clicked()
+                                    {
+                                        action = Some(Action::SetLanguageWordWrap(
+                                            Some(lang.name.to_owned()),
+                                            Some(on),
+                                        ));
+                                    }
+                                }
+                            })
                         })
-                    })
-                    .response
-                    .on_hover_text(t("這個檔案類型要不要自動換行"));
-            });
-            // 縮排規則：語言本身的（自訂語言檔用 indent 指定），唯讀
-            form_row(ui, t("縮排規則"), |ui| {
-                let text = match lang.indent {
-                    syntax::IndentStyle::Brace => t("依括號決定"),
-                    syntax::IndentStyle::Python => t("依行尾冒號與括號決定"),
-                    syntax::IndentStyle::None => t("只沿用上一行的縮排"),
-                };
-                ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
-            });
-            // 換行風格：排列格式在括號內斷行時，下一行怎麼排。沒有縮排規則的類型用不到
-            form_row(ui, t("換行風格"), |ui| {
-                if lang.indent == syntax::IndentStyle::None {
-                    ui.label(egui::RichText::new(t("沒有縮排規則，不適用")).color(ui.visuals().weak_text_color()));
-                    return;
-                }
-                let custom = self.settings.wrap_styles.get(lang.name).copied();
-                let default_text = tf!("預設（{}）", wrap_label(lang.wrap));
-                let shown = custom.map_or_else(|| default_text.clone(), |s| wrap_label(s).to_owned());
-                egui::ComboBox::from_id_salt("settings_wrap_style")
+                        .response
+                        .on_hover_text(t("這個檔案類型要不要自動換行"));
+                });
+                // 縮排規則：語言本身的（自訂語言檔用 indent 指定），唯讀
+                form_row(ui, t("縮排規則"), |ui| {
+                    let text = match lang.indent {
+                        syntax::IndentStyle::Brace => t("依括號決定"),
+                        syntax::IndentStyle::Python => t("依行尾冒號與括號決定"),
+                        syntax::IndentStyle::None => t("只沿用上一行的縮排"),
+                    };
+                    ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
+                });
+                // 換行風格：排列格式在括號內斷行時，下一行怎麼排。沒有縮排規則的類型用不到
+                form_row(ui, t("換行風格"), |ui| {
+                    if lang.indent == syntax::IndentStyle::None {
+                        ui.label(
+                            egui::RichText::new(t("沒有縮排規則，不適用"))
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        return;
+                    }
+                    let custom = self.settings.wrap_styles.get(lang.name).copied();
+                    let default_text = tf!("預設（{}）", wrap_label(lang.wrap));
+                    let shown =
+                        custom.map_or_else(|| default_text.clone(), |s| wrap_label(s).to_owned());
+                    egui::ComboBox::from_id_salt("settings_wrap_style")
                     .icon(icons::combo_chevron)
                     .width(220.0)
                     .selected_text(shown)
@@ -4563,166 +5425,221 @@ impl App {
                     })
                     .response
                     .on_hover_text(t("排列格式在括號內斷行時，下一行怎麼排：對齊第一個參數，或換行後縮排一層"));
+                });
             });
-        });
         }
         if tab == 3 {
-        // ── 預覽 ──
-        group_title(ui, t("預覽"));
-        settings_grid(ui, "settings_preview", |ui| {
-            form_row(ui, t("預覽外掛"), |ui| {
-                if ui
-                    .button(t("預覽資料夾"))
-                    .on_hover_text(t("預覽外掛（*.js）放在這裡；開啟設定面板時會重新讀取"))
-                    .clicked()
-                {
-                    action = Some(Action::OpenPreviewsDir);
-                }
-                ui.label(egui::RichText::new(tf!("已載入 {} 個外掛", self.preview_plugins.len())).weak());
+            // ── 預覽 ──
+            group_title(ui, t("預覽"));
+            settings_grid(ui, "settings_preview", |ui| {
+                form_row(ui, t("預覽外掛"), |ui| {
+                    if ui
+                        .button(t("預覽資料夾"))
+                        .on_hover_text(t("預覽外掛（*.js）放在這裡；開啟設定面板時會重新讀取"))
+                        .clicked()
+                    {
+                        action = Some(Action::OpenPreviewsDir);
+                    }
+                    ui.label(
+                        egui::RichText::new(tf!("已載入 {} 個外掛", self.preview_plugins.len()))
+                            .weak(),
+                    );
+                });
+                // 預覽字級：點在預覽窗格上時，縮放快捷鍵調的也是它，所以兩邊永遠同步
+                form_row(ui, t("預覽字級"), |ui| {
+                    let mut size = self.settings.preview_font_size;
+                    let response = ui.add(
+                        egui::DragValue::new(&mut size)
+                            .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
+                            .speed(0.1)
+                            .max_decimals(1),
+                    );
+                    unit_label(ui, "pt");
+                    if response.changed() {
+                        action = Some(Action::SetPreviewFontSize(size));
+                    }
+                });
+                form_row(ui, t("同步捲動"), |ui| {
+                    let mut on = self.settings.preview_sync_scroll;
+                    let response = ui
+                        .checkbox(&mut on, t("預覽與編輯區一起捲"))
+                        .on_hover_text(t(
+                            "捲動其中一邊，另一邊跟著捲到對應的段落；目前支援 Markdown 檔案的預覽",
+                        ));
+                    if response.changed() {
+                        action = Some(Action::SetPreviewSync(on));
+                    }
+                });
             });
-            // 預覽字級：點在預覽窗格上時，縮放快捷鍵調的也是它，所以兩邊永遠同步
-            form_row(ui, t("預覽字級"), |ui| {
-                let mut size = self.settings.preview_font_size;
-                let response = ui.add(egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1));
-                unit_label(ui, "pt");
-                if response.changed() {
-                    action = Some(Action::SetPreviewFontSize(size));
-                }
-            });
-            form_row(ui, t("同步捲動"), |ui| {
-                let mut on = self.settings.preview_sync_scroll;
-                let response = ui
-                    .checkbox(&mut on, t("預覽與編輯區一起捲"))
-                    .on_hover_text(t("捲動其中一邊，另一邊跟著捲到對應的段落；目前支援 Markdown 檔案的預覽"));
-                if response.changed() {
-                    action = Some(Action::SetPreviewSync(on));
-                }
-            });
-        });
         }
         if tab == 4 {
-        // ── 終端機 ──
-        group_title(ui, t("終端機"));
-        settings_grid(ui, "settings_terminal", |ui| {
-            // 終端機字型：預設跟著編輯區，也可以另外指定
-            form_row(ui, t("終端機字型"), |ui| match &scan {
-                None => {
-                    ui.label(egui::RichText::new(t("正在找出系統上的等寬字型…")).color(ui.visuals().weak_text_color()));
-                    ui.ctx().request_repaint_after(Duration::from_millis(150));
-                }
-                Some((families, _)) => {
-                    let follow = t("跟隨編輯區").to_owned();
-                    let current = self.settings.terminal_font_family.as_deref().filter(|name| families.iter().any(|f| f == name));
-                    egui::ComboBox::from_id_salt("terminal_font_family")
-                        .icon(icons::combo_chevron)
-                        .width(250.0)
-                        .height(320.0)
-                        .selected_text(current.map_or_else(|| follow.clone(), str::to_owned))
-                        .show_ui(ui, |ui| flat_list(ui, |ui| {
-                            if ui.selectable_label(current.is_none(), &follow).clicked() {
-                                action = Some(Action::SetTerminalFontFamily(None));
-                            }
-                            for name in families {
-                                if ui.selectable_label(current == Some(name.as_str()), name).clicked() {
-                                    action = Some(Action::SetTerminalFontFamily(Some(name.clone())));
-                                }
-                            }
-                        }));
-                }
-            });
-            // 終端機字級：點在終端機上時，縮放快捷鍵調的也是它
-            form_row(ui, t("終端機字級"), |ui| {
-                let mut size = self.settings.terminal_font_size;
-                let response = ui.add(egui::DragValue::new(&mut size).range(MIN_FONT_SIZE..=MAX_FONT_SIZE).speed(0.1).max_decimals(1));
-                unit_label(ui, "pt");
-                if response.changed() {
-                    action = Some(Action::SetTerminalFontSize(size));
-                }
-            });
-            form_row(ui, t("最低對比度"), |ui| {
-                let mut ratio = self.settings.terminal_min_contrast;
-                let response = ui
+            // ── 終端機 ──
+            group_title(ui, t("終端機"));
+            settings_grid(ui, "settings_terminal", |ui| {
+                // 終端機字型：預設跟著編輯區，也可以另外指定
+                form_row(ui, t("終端機字型"), |ui| match &scan {
+                    None => {
+                        ui.label(
+                            egui::RichText::new(t("正在找出系統上的等寬字型…"))
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.ctx().request_repaint_after(Duration::from_millis(150));
+                    }
+                    Some((families, _)) => {
+                        let follow = t("跟隨編輯區").to_owned();
+                        let current = self
+                            .settings
+                            .terminal_font_family
+                            .as_deref()
+                            .filter(|name| families.iter().any(|f| f == name));
+                        egui::ComboBox::from_id_salt("terminal_font_family")
+                            .icon(icons::combo_chevron)
+                            .width(250.0)
+                            .height(320.0)
+                            .selected_text(current.map_or_else(|| follow.clone(), str::to_owned))
+                            .show_ui(ui, |ui| {
+                                flat_list(ui, |ui| {
+                                    if ui.selectable_label(current.is_none(), &follow).clicked() {
+                                        action = Some(Action::SetTerminalFontFamily(None));
+                                    }
+                                    for name in families {
+                                        if ui
+                                            .selectable_label(current == Some(name.as_str()), name)
+                                            .clicked()
+                                        {
+                                            action = Some(Action::SetTerminalFontFamily(Some(
+                                                name.clone(),
+                                            )));
+                                        }
+                                    }
+                                })
+                            });
+                    }
+                });
+                // 終端機字級：點在終端機上時，縮放快捷鍵調的也是它
+                form_row(ui, t("終端機字級"), |ui| {
+                    let mut size = self.settings.terminal_font_size;
+                    let response = ui.add(
+                        egui::DragValue::new(&mut size)
+                            .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
+                            .speed(0.1)
+                            .max_decimals(1),
+                    );
+                    unit_label(ui, "pt");
+                    if response.changed() {
+                        action = Some(Action::SetTerminalFontSize(size));
+                    }
+                });
+                form_row(ui, t("最低對比度"), |ui| {
+                    let mut ratio = self.settings.terminal_min_contrast;
+                    let response = ui
                     .add(egui::DragValue::new(&mut ratio).range(MIN_TERMINAL_CONTRAST..=MAX_TERMINAL_CONTRAST).speed(0.05).max_decimals(1))
                     .on_hover_text(t("終端機文字和底色的對比低於這個值時，自動把文字調整到看得清楚；拉到最小就是不調整"));
-                unit_label(ui, if ratio <= MIN_TERMINAL_CONTRAST { t("（不調整）") } else { ": 1" });
-                if response.changed() {
-                    action = Some(Action::SetTerminalMinContrast(ratio));
-                }
-            });
-            form_row(ui, t("分頁標題"), |ui| {
-                let mut on = self.settings.terminal_title_spinner;
-                let response = ui
+                    unit_label(
+                        ui,
+                        if ratio <= MIN_TERMINAL_CONTRAST {
+                            t("（不調整）")
+                        } else {
+                            ": 1"
+                        },
+                    );
+                    if response.changed() {
+                        action = Some(Action::SetTerminalMinContrast(ratio));
+                    }
+                });
+                form_row(ui, t("分頁標題"), |ui| {
+                    let mut on = self.settings.terminal_title_spinner;
+                    let response = ui
                     .checkbox(&mut on, t("顯示轉圈圈"))
                     .on_hover_text(t("Claude Code、Codex 忙碌時，標題開頭的轉圈動畫（⠂ ⠐）要不要顯示在終端機分頁上；關掉的話標籤不會跟著跳動"));
-                if response.changed() {
-                    action = Some(Action::SetTerminalTitleSpinner(on));
-                }
-            });
-            form_row(ui, t("Ctrl+W"), |ui| {
-                let mut on = self.settings.terminal_ctrl_w_closes;
-                let response = ui
+                    if response.changed() {
+                        action = Some(Action::SetTerminalTitleSpinner(on));
+                    }
+                });
+                form_row(ui, t("Ctrl+W"), |ui| {
+                    let mut on = self.settings.terminal_ctrl_w_closes;
+                    let response = ui
                     .checkbox(&mut on, t("關閉終端機分頁"))
                     .on_hover_text(t("終端機有焦點時按 Ctrl+W 關閉這個分頁；取消勾選的話，Ctrl+W 照舊送給 shell（刪除前一個字）"));
-                if response.changed() {
-                    action = Some(Action::SetTerminalCtrlW(on));
-                }
-            });
-            // 預設終端機：按工具列的終端機鈕時執行的 shell，從偵測到的清單選，也可以在下面自己寫指令
-            form_row(ui, t("預設終端機"), |ui| {
-                let configured = self.settings.terminal_shell.clone();
-                let system = terminal::system_default_shell();
-                let in_use = !configured.trim().is_empty();
-                let selected = if !in_use {
-                    t("系統預設").to_owned()
-                } else {
-                    self.shells
-                        .iter()
-                        .find(|o| terminal::is_default_shell(o, &configured, &system))
-                        .map(|o| o.label.clone())
-                        .unwrap_or_else(|| tf!("自訂：{cmd}", cmd = configured.trim()))
-                };
-                egui::ComboBox::from_id_salt("terminal_shell")
-                    .icon(icons::combo_chevron)
-                    .width(250.0)
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        flat_list(ui, |ui| {
-                            if shell_icons::shell_row(ui, None, t("系統預設"), !in_use).clicked() {
-                                action = Some(Action::SetTerminalShell(String::new()));
-                            }
-                            let ctx = ui.ctx().clone();
-                            for option in &self.shells {
-                                let selected = in_use && terminal::is_default_shell(option, &configured, &system);
-                                let texture = self.shell_icons.get(&ctx, option);
-                                if shell_icons::shell_row(ui, texture.as_ref(), &option.label, selected).clicked() {
-                                    action = Some(Action::SetTerminalShell(option.command.clone()));
+                    if response.changed() {
+                        action = Some(Action::SetTerminalCtrlW(on));
+                    }
+                });
+                // 預設終端機：按工具列的終端機鈕時執行的 shell，從偵測到的清單選，也可以在下面自己寫指令
+                form_row(ui, t("預設終端機"), |ui| {
+                    let configured = self.settings.terminal_shell.clone();
+                    let system = terminal::system_default_shell();
+                    let in_use = !configured.trim().is_empty();
+                    let selected = if !in_use {
+                        t("系統預設").to_owned()
+                    } else {
+                        self.shells
+                            .iter()
+                            .find(|o| terminal::is_default_shell(o, &configured, &system))
+                            .map(|o| o.label.clone())
+                            .unwrap_or_else(|| tf!("自訂：{cmd}", cmd = configured.trim()))
+                    };
+                    egui::ComboBox::from_id_salt("terminal_shell")
+                        .icon(icons::combo_chevron)
+                        .width(250.0)
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            flat_list(ui, |ui| {
+                                if shell_icons::shell_row(ui, None, t("系統預設"), !in_use)
+                                    .clicked()
+                                {
+                                    action = Some(Action::SetTerminalShell(String::new()));
                                 }
-                            }
+                                let ctx = ui.ctx().clone();
+                                for option in &self.shells {
+                                    let selected = in_use
+                                        && terminal::is_default_shell(option, &configured, &system);
+                                    let texture = self.shell_icons.get(&ctx, option);
+                                    if shell_icons::shell_row(
+                                        ui,
+                                        texture.as_ref(),
+                                        &option.label,
+                                        selected,
+                                    )
+                                    .clicked()
+                                    {
+                                        action =
+                                            Some(Action::SetTerminalShell(option.command.clone()));
+                                    }
+                                }
+                            })
                         })
-                    })
-                    .response
-                    .on_hover_text(t("按工具列的終端機鈕時執行的 shell；工具列旁的下拉清單可以臨時改選別的"));
-            });
-            form_row(ui, t("自訂指令"), |ui| {
-                let mut shell = self.settings.terminal_shell.clone();
-                let response = ui
+                        .response
+                        .on_hover_text(t(
+                            "按工具列的終端機鈕時執行的 shell；工具列旁的下拉清單可以臨時改選別的",
+                        ));
+                });
+                form_row(ui, t("自訂指令"), |ui| {
+                    let mut shell = self.settings.terminal_shell.clone();
+                    let response = ui
                     .add(egui::TextEdit::singleline(&mut shell).hint_text(t("留空使用系統預設")).desired_width(250.0))
                     .on_hover_text(t("新開的終端機要執行的程式，可以加參數（例如 pwsh -NoLogo）；路徑有空白要用雙引號包起來。已經開著的終端機不受影響"));
-                if response.changed() {
-                    action = Some(Action::SetTerminalShell(shell));
-                }
+                    if response.changed() {
+                        action = Some(Action::SetTerminalShell(shell));
+                    }
+                });
             });
-        });
         }
         if tab == 5 {
-        // ── 狀態列 ──
-        group_title(ui, t("狀態列"));
-        settings_grid(ui, "settings_status", |ui| {
-            // 欄號：狀態列的欄位置，全形字算 1 欄還是 2 欄
-            form_row(ui, t("欄號"), |ui| {
-                let wide = self.settings.wide_cols;
-                let wide_label = |n: u8| if n == 2 { t("全形字算 2 欄") } else { t("全形字算 1 欄") };
-                egui::ComboBox::from_id_salt("wide_cols")
+            // ── 狀態列 ──
+            group_title(ui, t("狀態列"));
+            settings_grid(ui, "settings_status", |ui| {
+                // 欄號：狀態列的欄位置，全形字算 1 欄還是 2 欄
+                form_row(ui, t("欄號"), |ui| {
+                    let wide = self.settings.wide_cols;
+                    let wide_label = |n: u8| {
+                        if n == 2 {
+                            t("全形字算 2 欄")
+                        } else {
+                            t("全形字算 1 欄")
+                        }
+                    };
+                    egui::ComboBox::from_id_salt("wide_cols")
                     .icon(icons::combo_chevron)
                     .width(250.0)
                     .selected_text(wide_label(wide))
@@ -4735,34 +5652,40 @@ impl App {
                     }))
                     .response
                     .on_hover_text(t("狀態列「行、欄」的欄號算法：1 是一個字一欄（多數編輯器），2 是和畫面寬度一致"));
+                });
             });
-        });
         }
         if tab == ABOUT_TAB {
-        // ── 關於：視窗標題列不顯示版本，看版本到這裡 ──
-        group_title(ui, t("關於"));
-        settings_grid(ui, "settings_about", |ui| {
-            form_row(ui, t("應用程式"), |ui| {
-                ui.label("FEditor");
+            // ── 關於：視窗標題列不顯示版本，看版本到這裡 ──
+            group_title(ui, t("關於"));
+            settings_grid(ui, "settings_about", |ui| {
+                form_row(ui, t("應用程式"), |ui| {
+                    ui.label("FEditor");
+                });
+                form_row(ui, t("版本"), |ui| {
+                    ui.label(env!("CARGO_PKG_VERSION"));
+                });
             });
-            form_row(ui, t("版本"), |ui| {
-                ui.label(env!("CARGO_PKG_VERSION"));
-            });
-        });
         }
         if tab == 6 {
-        // ── 快捷鍵：內建的與巨集的，只是看，要改巨集的在巨集面板 ──
-        group_title(ui, t("快捷鍵"));
-        let weak = |ui: &egui::Ui, text: &str| egui::RichText::new(text.to_owned()).color(ui.visuals().weak_text_color());
-        // 項目很多：超過一定高度就出現捲軸，面板不會比畫面還高；群組之間畫分隔線
-        // 唯一可以改的內建快捷鍵：移到上下左右窗格用的修飾鍵
-        settings_grid(ui, "settings_pane_nav", |ui| {
-            form_row(ui, t("切換到上、下、左、右的窗格"), |ui| {
-                let current = self.settings.pane_nav;
-                let label = |p: settings::PaneNav| {
-                    if p == settings::PaneNav::Off { t("不使用").to_owned() } else { format!("{}＋{}", p.name(), t("方向鍵")) }
-                };
-                egui::ComboBox::from_id_salt("pane_nav")
+            // ── 快捷鍵：內建的與巨集的，只是看，要改巨集的在巨集面板 ──
+            group_title(ui, t("快捷鍵"));
+            let weak = |ui: &egui::Ui, text: &str| {
+                egui::RichText::new(text.to_owned()).color(ui.visuals().weak_text_color())
+            };
+            // 項目很多：超過一定高度就出現捲軸，面板不會比畫面還高；群組之間畫分隔線
+            // 唯一可以改的內建快捷鍵：移到上下左右窗格用的修飾鍵
+            settings_grid(ui, "settings_pane_nav", |ui| {
+                form_row(ui, t("切換到上、下、左、右的窗格"), |ui| {
+                    let current = self.settings.pane_nav;
+                    let label = |p: settings::PaneNav| {
+                        if p == settings::PaneNav::Off {
+                            t("不使用").to_owned()
+                        } else {
+                            format!("{}＋{}", p.name(), t("方向鍵"))
+                        }
+                    };
+                    egui::ComboBox::from_id_salt("pane_nav")
                     .icon(icons::combo_chevron)
                     .width(250.0)
                     .selected_text(label(current))
@@ -4775,60 +5698,90 @@ impl App {
                     }))
                     .response
                     .on_hover_text(t("把輸入焦點移到那個方向最近的窗格；那個方向沒有窗格時，按鍵照常交給編輯區或終端機"));
+                });
             });
-        });
-        group_gap(ui);
-        egui::ScrollArea::vertical().id_salt("shortcuts_scroll").max_height(SHORTCUTS_MAX_HEIGHT).min_scrolled_height(SHORTCUTS_MAX_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
-        for (i, group) in shortcuts::builtin_groups(self.settings.pane_nav).iter().enumerate() {
-            if i > 0 {
-                group_gap(ui);
-            }
-            ui.label(egui::RichText::new(group.title.as_str()).strong());
-            settings_grid(ui, &format!("shortcuts_{i}"), |ui| {
-                for row in &group.rows {
-                    ui.label(row.action.as_str());
-                    ui.label(egui::RichText::new(row.keys.as_str()).monospace());
-                    ui.end_row();
-                }
-            });
-        }
-        group_gap(ui);
-        ui.label(egui::RichText::new(t("巨集的快捷鍵")).strong());
-        let rows = shortcuts::macro_rows(&self.macros, self.doc_lang());
-        if rows.is_empty() {
-            ui.label(weak(ui, t("還沒有替巨集設快捷鍵。到巨集面板點鍵盤圖示設定。")));
-        } else {
-            settings_grid(ui, "shortcuts_macros", |ui| {
-                for (name, langs, keys, applicable) in &rows {
-                    // 不適用於目前檔案的巨集用淡色，名稱後面註明適用的檔案類型
-                    let label = if langs.is_empty() { name.clone() } else { format!("{name} [{}]", langs.join(", ")) };
-                    let (label, keys) = (egui::RichText::new(label), egui::RichText::new(keys.as_str()).monospace());
-                    if *applicable {
-                        ui.label(label);
-                        ui.label(keys);
-                    } else {
-                        ui.label(label.color(ui.visuals().weak_text_color()));
-                        ui.label(keys.color(ui.visuals().weak_text_color()));
+            group_gap(ui);
+            egui::ScrollArea::vertical()
+                .id_salt("shortcuts_scroll")
+                .max_height(SHORTCUTS_MAX_HEIGHT)
+                .min_scrolled_height(SHORTCUTS_MAX_HEIGHT)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (i, group) in shortcuts::builtin_groups(self.settings.pane_nav)
+                        .iter()
+                        .enumerate()
+                    {
+                        if i > 0 {
+                            group_gap(ui);
+                        }
+                        ui.label(egui::RichText::new(group.title.as_str()).strong());
+                        settings_grid(ui, &format!("shortcuts_{i}"), |ui| {
+                            for row in &group.rows {
+                                ui.label(row.action.as_str());
+                                ui.label(egui::RichText::new(row.keys.as_str()).monospace());
+                                ui.end_row();
+                            }
+                        });
                     }
-                    ui.end_row();
-                }
-            });
-            ui.label(weak(ui, t("淡色的是只適用於別種檔案類型的巨集，在目前的檔案上不會觸發。")));
-        }
-        if cfg!(target_os = "macos") {
-            ui.add_space(6.0);
-            ui.label(weak(ui, t("在 macOS 上，這裡的 Ctrl 指的是 Command 鍵。")));
-        }
-        });
+                    group_gap(ui);
+                    ui.label(egui::RichText::new(t("巨集的快捷鍵")).strong());
+                    let rows = shortcuts::macro_rows(&self.macros, self.doc_lang());
+                    if rows.is_empty() {
+                        ui.label(weak(
+                            ui,
+                            t("還沒有替巨集設快捷鍵。到巨集面板點鍵盤圖示設定。"),
+                        ));
+                    } else {
+                        settings_grid(ui, "shortcuts_macros", |ui| {
+                            for (name, langs, keys, applicable) in &rows {
+                                // 不適用於目前檔案的巨集用淡色，名稱後面註明適用的檔案類型
+                                let label = if langs.is_empty() {
+                                    name.clone()
+                                } else {
+                                    format!("{name} [{}]", langs.join(", "))
+                                };
+                                let (label, keys) = (
+                                    egui::RichText::new(label),
+                                    egui::RichText::new(keys.as_str()).monospace(),
+                                );
+                                if *applicable {
+                                    ui.label(label);
+                                    ui.label(keys);
+                                } else {
+                                    ui.label(label.color(ui.visuals().weak_text_color()));
+                                    ui.label(keys.color(ui.visuals().weak_text_color()));
+                                }
+                                ui.end_row();
+                            }
+                        });
+                        ui.label(weak(
+                            ui,
+                            t("淡色的是只適用於別種檔案類型的巨集，在目前的檔案上不會觸發。"),
+                        ));
+                    }
+                    if cfg!(target_os = "macos") {
+                        ui.add_space(6.0);
+                        ui.label(weak(ui, t("在 macOS 上，這裡的 Ctrl 指的是 Command 鍵。")));
+                    }
+                });
         }
         action
     }
 
     /// 尋找面板的窗格：標題列（拖曳標題可以把它移到別的窗格旁邊）加面板內容。
-    pub(crate) fn show_search_pane(&mut self, ui: &mut egui::Ui, rect: egui::Rect) -> Option<Action> {
+    pub(crate) fn show_search_pane(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+    ) -> Option<Action> {
         let mut action = None;
         let framed = egui::Frame::new()
-            .inner_margin(egui::Margin { left: 12, right: 8, top: 5, bottom: 0 })
+            .inner_margin(egui::Margin {
+                left: 12,
+                right: 8,
+                top: 5,
+                bottom: 0,
+            })
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
@@ -4903,13 +5856,25 @@ impl App {
         let folder_scope = self.folder.folder;
         let running = self.folder.is_running();
         let query_empty = self.find.query.is_empty();
-        let can_step = if folder_scope { !self.folder.hits.is_empty() } else { !query_empty };
+        let can_step = if folder_scope {
+            !self.folder.hits.is_empty()
+        } else {
+            !query_empty
+        };
         // 資料夾範圍：目前的搜尋條件就是上一次搜尋用的（而且有結果）：Enter 走下一筆，不再重搜
         let search_is_current = folder_scope
             && !self.folder.hits.is_empty()
             && self.folder.is_current(&self.find.query, self.find.opts);
-        let can_replace_one = if folder_scope { self.folder.selected.is_some() } else { !query_empty };
-        let can_replace_all = if folder_scope { !self.folder.hits.is_empty() } else { !query_empty };
+        let can_replace_one = if folder_scope {
+            self.folder.selected.is_some()
+        } else {
+            !query_empty
+        };
+        let can_replace_all = if folder_scope {
+            !self.folder.hits.is_empty()
+        } else {
+            !query_empty
+        };
 
         // 第一列：搜尋框、三個選項、搜尋／停止、上一筆／下一筆。按鈕都是同一種尺寸、緊接在選項後面
         ui.horizontal(|ui| {
@@ -4919,7 +5884,8 @@ impl App {
             } else {
                 Icon::ChevronRight
             };
-            if icons::small_button(ui, chevron, t("顯示或隱藏取代 (Ctrl+H)"), true).clicked() {
+            if icons::small_button(ui, chevron, t("顯示或隱藏取代 (Ctrl+H)"), true).clicked()
+            {
                 self.find.show_replace = !self.find.show_replace;
             }
 
@@ -4928,10 +5894,9 @@ impl App {
                 let len = self.find.query.chars().count();
                 let mut state =
                     egui::TextEdit::load_state(ui.ctx(), find_input_id()).unwrap_or_default();
-                state.cursor.set_char_range(Some(CCursorRange::two(
-                    CCursor::new(0),
-                    CCursor::new(len),
-                )));
+                state
+                    .cursor
+                    .set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(len))));
                 state.store(ui.ctx(), find_input_id());
                 ui.memory_mut(|m| m.request_focus(find_input_id()));
                 self.focus_find = false;
@@ -4942,7 +5907,8 @@ impl App {
             // 精確扣掉它們需要的寬度：寬度夠就讓搜尋框維持原本的大小（選項緊接在後面、多餘的空間留在右邊），
             // 窄到沒有空間了才縮減搜尋框
             let buttons = if folder_scope { 7.0 } else { 6.0 };
-            let query_w = (visible_width(ui) - buttons * (SMALL_BUTTON_W + BUTTON_GAP) - 2.0).clamp(40.0, 260.0);
+            let query_w = (visible_width(ui) - buttons * (SMALL_BUTTON_W + BUTTON_GAP) - 2.0)
+                .clamp(40.0, 260.0);
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.find.query)
                     .id(find_input_id())
@@ -5015,7 +5981,10 @@ impl App {
             let (prev_tip, next_tip) = if folder_scope {
                 (t("上一筆結果 (Shift+F3)"), t("下一筆結果 (F3)"))
             } else {
-                (t("上一筆 (Shift+Enter 或 Shift+F3)"), t("下一筆 (Enter 或 F3)"))
+                (
+                    t("上一筆 (Shift+Enter 或 Shift+F3)"),
+                    t("下一筆 (Enter 或 F3)"),
+                )
             };
             if icons::small_button(ui, Icon::ChevronUp, prev_tip, can_step).clicked() {
                 action = Some(Action::FindPrev);
@@ -5165,7 +6134,10 @@ impl App {
         let mut action = None;
         // 滑鼠按在表格外面：表格不再有鍵盤焦點
         let pressed_outside = ui.input(|i| {
-            i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !self.folder.table_rect.contains(p))
+            i.pointer.any_pressed()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| !self.folder.table_rect.contains(p))
         });
         if pressed_outside {
             self.folder.table_focus = false;
@@ -5178,7 +6150,14 @@ impl App {
             let cur = self.folder.selected;
             let (up, down, pgup, pgdn, home, end) = ui.input_mut(|i| {
                 let k = |i: &mut egui::InputState, key| i.consume_key(egui::Modifiers::NONE, key);
-                (k(i, ArrowUp), k(i, ArrowDown), k(i, PageUp), k(i, PageDown), k(i, Home), k(i, End))
+                (
+                    k(i, ArrowUp),
+                    k(i, ArrowDown),
+                    k(i, PageUp),
+                    k(i, PageDown),
+                    k(i, Home),
+                    k(i, End),
+                )
             });
             let to = if down {
                 Some(cur.map_or(0, |c| (c + 1).min(total - 1)))
@@ -5200,7 +6179,8 @@ impl App {
             }
         }
         let groups = self.folder.file_groups();
-        let in_group = |g: &folder_search::FileGroup, i: usize| i >= g.start && i < g.start + g.count;
+        let in_group =
+            |g: &folder_search::FileGroup, i: usize| i >= g.start && i < g.start + g.count;
         let shown = self
             .folder
             .selected
@@ -5213,7 +6193,9 @@ impl App {
         let size = area.size();
         let side_by_side = size.x >= 560.0 && size.x > size.y * 1.3;
         let (start, count) = groups.get(shown).map_or((0, 0), |g| (g.start, g.count));
-        let rel = scroll.filter(|i| *i >= start && *i < start + count).map(|i| i - start);
+        let rel = scroll
+            .filter(|i| *i >= start && *i < start + count)
+            .map(|i| i - start);
         if self.folder.text_scope || groups.is_empty() {
             captioned_group(ui, t("命中項目"), true, |ui| {
                 if let Some(a) = self.hits_table(ui, start, count, rel) {
@@ -5227,7 +6209,8 @@ impl App {
         let mut new_split = None;
         let mut reset = false;
         if side_by_side {
-            let files_w = (size.x * self.folder.split.unwrap_or(0.4)).clamp(120.0, size.x - 120.0 - HANDLE);
+            let files_w =
+                (size.x * self.folder.split.unwrap_or(0.4)).clamp(120.0, size.x - 120.0 - HANDLE);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 // 水平排列的父容器裡，子區塊要明確指定由上往下排，標題才會在框的上面
@@ -5239,19 +6222,26 @@ impl App {
                         }
                     });
                 });
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(HANDLE, size.y), egui::Sense::click_and_drag());
+                let (rect, resp) = ui
+                    .allocate_exact_size(egui::vec2(HANDLE, size.y), egui::Sense::click_and_drag());
                 split_handle(ui, rect, &resp, false);
                 if resp.dragged() {
-                    new_split = ui.input(|i| i.pointer.interact_pos()).map(|p| (p.x - area.min.x) / size.x);
+                    new_split = ui
+                        .input(|i| i.pointer.interact_pos())
+                        .map(|p| (p.x - area.min.x) / size.x);
                 }
                 reset = resp.double_clicked();
-                ui.allocate_ui_with_layout(egui::vec2((size.x - files_w - HANDLE).max(60.0), size.y), down, |ui| {
-                    captioned_group(ui, t("命中項目"), true, |ui| {
-                        if let Some(a) = self.hits_table(ui, start, count, rel) {
-                            action = Some(a);
-                        }
-                    });
-                });
+                ui.allocate_ui_with_layout(
+                    egui::vec2((size.x - files_w - HANDLE).max(60.0), size.y),
+                    down,
+                    |ui| {
+                        captioned_group(ui, t("命中項目"), true, |ui| {
+                            if let Some(a) = self.hits_table(ui, start, count, rel) {
+                                action = Some(a);
+                            }
+                        });
+                    },
+                );
             });
         } else {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -5269,18 +6259,23 @@ impl App {
                 None => {
                     // 預設：檔案表格只要剛好放得下所有檔案的高度（有上限），命中表格緊接在後面
                     let pitch = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0 + 4.0;
-                    let body_h = (groups.len() as f32 * pitch).min((size.y * 0.4 - TABLE_HEADER_H).max(pitch * 2.0));
+                    let body_h = (groups.len() as f32 * pitch)
+                        .min((size.y * 0.4 - TABLE_HEADER_H).max(pitch * 2.0));
                     captioned_group(ui, t("檔案"), false, |ui| {
-                        if let Some(a) = self.files_table(ui, &groups, shown, target, Some(body_h)) {
+                        if let Some(a) = self.files_table(ui, &groups, shown, target, Some(body_h))
+                        {
                             action = Some(a);
                         }
                     });
                 }
             }
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(size.x, HANDLE), egui::Sense::click_and_drag());
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(size.x, HANDLE), egui::Sense::click_and_drag());
             split_handle(ui, rect, &resp, true);
             if resp.dragged() {
-                new_split = ui.input(|i| i.pointer.interact_pos()).map(|p| (p.y - area.min.y) / size.y);
+                new_split = ui
+                    .input(|i| i.pointer.interact_pos())
+                    .map(|p| (p.y - area.min.y) / size.y);
             }
             reset = resp.double_clicked();
             let hits_h = ui.available_height().max(60.0);
@@ -5328,7 +6323,13 @@ impl App {
             .column(Column::exact(name_w).clip(true))
             .column(Column::exact(COUNT_W));
         if let Some(i) = scroll {
-            table = table.vertical_scroll_offset(centered_offset(i, groups.len(), row_h, gap_y, avail_h));
+            table = table.vertical_scroll_offset(centered_offset(
+                i,
+                groups.len(),
+                row_h,
+                gap_y,
+                avail_h,
+            ));
         }
         if let Some(max_h) = max_height {
             // 上下排列：只要剛好放得下所有檔案的高度（有上限），不要撐滿
@@ -5352,13 +6353,22 @@ impl App {
                     let hit = &folder.hits[group.start];
                     row.set_selected(shown == i);
                     row.col(|ui| {
-                        ui.add(egui::Label::new(folder.display_path(hit)).truncate().selectable(false))
-                            .on_hover_text(hit.path.display().to_string());
+                        ui.add(
+                            egui::Label::new(folder.display_path(hit))
+                                .truncate()
+                                .selectable(false),
+                        )
+                        .on_hover_text(hit.path.display().to_string());
                     });
                     row.col(|ui| {
                         // 數字靠右對齊
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add(egui::Label::new(egui::RichText::new(group.count.to_string()).monospace()).selectable(false));
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(group.count.to_string()).monospace(),
+                                )
+                                .selectable(false),
+                            );
                         });
                     });
                     if row.response().clicked() {
@@ -5371,7 +6381,13 @@ impl App {
 
     /// 命中表格：目前選取的那個檔案的命中（`start` 起算 `count` 筆），行數與命中處附近的文字，命中的字標色。
     /// `scroll` 是要捲到的那一列（相對於這個檔案）。
-    fn hits_table(&mut self, ui: &mut egui::Ui, start: usize, count: usize, scroll: Option<usize>) -> Option<Action> {
+    fn hits_table(
+        &mut self,
+        ui: &mut egui::Ui,
+        start: usize,
+        count: usize,
+        scroll: Option<usize>,
+    ) -> Option<Action> {
         use egui_extras::{Column, TableBuilder};
         let mut action = None;
         let folder = &self.folder;
@@ -5407,12 +6423,18 @@ impl App {
                     row.set_selected(selected == Some(i));
                     row.col(|ui| {
                         ui.add(
-                            egui::Label::new(egui::RichText::new((hit.line + 1).to_string()).monospace())
-                                .selectable(false),
+                            egui::Label::new(
+                                egui::RichText::new((hit.line + 1).to_string()).monospace(),
+                            )
+                            .selectable(false),
                         );
                     });
                     row.col(|ui| {
-                        ui.add(egui::Label::new(hit_job(ui, hit)).truncate().selectable(false));
+                        ui.add(
+                            egui::Label::new(hit_job(ui, hit))
+                                .truncate()
+                                .selectable(false),
+                        );
                     });
                     if row.response().clicked() {
                         action = Some(Action::GotoHit(i));
@@ -5692,8 +6714,10 @@ impl App {
                                 LogKind::Warn => ui.visuals().warn_fg_color,
                                 _ => ui.visuals().weak_text_color(),
                             };
-                            ui.add(egui::Label::new(egui::RichText::new(text).color(color)).truncate())
-                                .on_hover_text(text);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).color(color)).truncate(),
+                            )
+                            .on_hover_text(text);
                         }
                     }
                 });
@@ -5757,7 +6781,8 @@ impl eframe::App for App {
                     continue;
                 }
                 let paths: Vec<PathBuf> = req.targets.iter().map(|t| t.path.clone()).collect();
-                self.startup_goto.extend(req.targets.into_iter().filter(|t| t.line.is_some()));
+                self.startup_goto
+                    .extend(req.targets.into_iter().filter(|t| t.line.is_some()));
                 if let Some(done) = req.done {
                     self.pending_waits.push((paths.clone(), done));
                 }
@@ -5823,15 +6848,23 @@ impl eframe::App for App {
         }
 
         // 從檔案總管拖進來的檔案：開起來；拖曳途中在視窗上蓋一層提示
-        let dropped: Vec<PathBuf> =
-            ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
         if !dropped.is_empty() {
             // 放在終端機上：把路徑貼進去（像一般終端機）；其他地方才開成分頁
-            let into_terminal = self.modal.is_none() && drop_position(&ctx).is_some_and(|pos| self.drop_into_terminal(pos, DropPayload::Paths(&dropped)));
+            let into_terminal = self.modal.is_none()
+                && drop_position(&ctx)
+                    .is_some_and(|pos| self.drop_into_terminal(pos, DropPayload::Paths(&dropped)));
             if !into_terminal {
                 // 開在放開位置的窗格（提示也標在那裡）
                 if self.modal.is_none()
-                    && let Some((id, _, _)) = drop_position(&ctx).and_then(|pos| self.drop_target_at(pos))
+                    && let Some((id, _, _)) =
+                        drop_position(&ctx).and_then(|pos| self.drop_target_at(pos))
                 {
                     self.focus_pane(id);
                 }
@@ -5859,7 +6892,9 @@ impl eframe::App for App {
         let hovering = ctx.input(|i| i.raw.hovered_files.len());
         if hovering > 0 && self.modal.is_none() {
             // 只在游標所在的窗格蓋提示：終端機是貼上路徑，其他窗格是開啟檔案
-            if let Some((_, rect, into_terminal)) = drop_position(&ctx).and_then(|pos| self.drop_target_at(pos)) {
+            if let Some((_, rect, into_terminal)) =
+                drop_position(&ctx).and_then(|pos| self.drop_target_at(pos))
+            {
                 drop_overlay(&ctx, rect, hovering, into_terminal);
             }
         }
@@ -5878,7 +6913,10 @@ impl eframe::App for App {
             // 在別的視窗（終端機等）建好了虛擬環境，回到編輯器就重新找一次
             self.runtime.refresh(None);
         }
-        if changed || (focused && !self.was_focused) || self.last_disk_check.elapsed() >= Duration::from_secs(5) {
+        if changed
+            || (focused && !self.was_focused)
+            || self.last_disk_check.elapsed() >= Duration::from_secs(5)
+        {
             self.last_disk_check = Instant::now();
             self.check_external_changes();
             self.check_background_docs();
@@ -5903,7 +6941,11 @@ impl eframe::App for App {
         self.apply_tab_settings();
         // 輸入法快速打字時偶爾把小寫字母變成大寫（沒按 Shift、Caps Lock 也沒開）：在任何人處理之前改回來
         // （有人用 Caps Lock 切換輸入法的中英文，所以要連輸入法送來的字母一起看，見 ime_case）
-        if ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_) | egui::Event::Ime(_)))) {
+        if ctx.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Text(_) | egui::Event::Ime(_)))
+        }) {
             let caps = ime_case::caps_lock_on();
             ctx.input_mut(|i| ime_case::fix(&mut i.events, caps));
         }
@@ -5936,11 +6978,18 @@ impl eframe::App for App {
             // 輸入焦點在搜尋面板裡（任何一個輸入框、或結果表格）時，按 Esc 關閉面板
             let in_panel = self.folder.table_focus
                 || ctx.memory(|m| {
-                    [find_input_id(), replace_input_id(), folder_dir_id(), folder_filter_id()]
-                        .into_iter()
-                        .any(|id| m.has_focus(id))
+                    [
+                        find_input_id(),
+                        replace_input_id(),
+                        folder_dir_id(),
+                        folder_filter_id(),
+                    ]
+                    .into_iter()
+                    .any(|id| m.has_focus(id))
                 });
-            if in_panel && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            if in_panel
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
                 self.close_find(&ctx);
             }
         }
@@ -5950,7 +6999,11 @@ impl eframe::App for App {
         // 點了預覽窗格之後，縮放調的是預覽的字級；否則調編輯區的
         let preview_zoom = self.preview_focused && self.preview_id().is_some();
         // 點了終端機之後（它有鍵盤焦點），縮放調的是終端機的字級
-        let terminal_zoom = self.doc.terminal.as_ref().is_some_and(|t| t.has_focus(&ctx));
+        let terminal_zoom = self
+            .doc
+            .terminal
+            .as_ref()
+            .is_some_and(|t| t.has_focus(&ctx));
         let (zoom_base, zoom_default) = if terminal_zoom {
             (self.settings.terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE)
         } else if preview_zoom {
@@ -6052,18 +7105,22 @@ impl eframe::App for App {
             }
         }
 
-        egui::Panel::top("toolbar").show_separator_line(false).show(ui, |ui| {
-            if let Some(a) = self.toolbar(ui) {
-                action = Some(a);
-            }
-        });
+        egui::Panel::top("toolbar")
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                if let Some(a) = self.toolbar(ui) {
+                    action = Some(a);
+                }
+            });
         // 下方的面板（狀態列、輸出面板）左右兩端對齊窗格卡片的外緣，不要比圓角框更寬
         let bottom_frame = aligned_panel_frame(ui.style());
-        egui::Panel::bottom("status").frame(bottom_frame.clone()).show(ui, |ui| {
-            if let Some(a) = self.status_bar(ui) {
-                action = Some(a);
-            }
-        });
+        egui::Panel::bottom("status")
+            .frame(bottom_frame.clone())
+            .show(ui, |ui| {
+                if let Some(a) = self.status_bar(ui) {
+                    action = Some(a);
+                }
+            });
         if !self.settings.output_pane {
             // 設定裡關掉了輸出面板：連收合的標題列也不顯示
         } else if self.output_expanded() {
@@ -6078,15 +7135,21 @@ impl eframe::App for App {
                 });
         } else {
             // 收合：只剩一條標題列。用另一個 id，這樣展開時會回到使用者調整過的高度
-            egui::Panel::bottom("output_bar").frame(bottom_frame.clone()).show(ui, |ui| {
-                if let Some(a) = self.output_header(ui, false) {
-                    action = Some(a);
-                }
-            });
+            egui::Panel::bottom("output_bar")
+                .frame(bottom_frame.clone())
+                .show(ui, |ui| {
+                    if let Some(a) = self.output_header(ui, false) {
+                        action = Some(a);
+                    }
+                });
         }
         // 窗格是有框線的卡片，不需要工具列下面的分隔線；上方也不多留邊，離工具列近一點（左右與下方維持原本的空隙）
-        let central = egui::Frame::central_panel(ui.style())
-            .inner_margin(egui::Margin { left: CENTRAL_SIDE_MARGIN, right: CENTRAL_SIDE_MARGIN, top: 0, bottom: 8 });
+        let central = egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin {
+            left: CENTRAL_SIDE_MARGIN,
+            right: CENTRAL_SIDE_MARGIN,
+            top: 0,
+            bottom: 8,
+        });
         egui::CentralPanel::default().frame(central).show(ui, |ui| {
             if let Some(a) = self.panes_ui(ui) {
                 action = Some(a);
@@ -6126,7 +7189,11 @@ impl eframe::App for App {
         }
 
         // 視窗標題只給工作列、Alt+Tab 用（自繪標題列不畫出來），版本放在設定面板
-        let title = format!("{}{} - FEditor", self.doc.name(), if self.doc.dirty { " ●" } else { "" });
+        let title = format!(
+            "{}{} - FEditor",
+            self.doc.name(),
+            if self.doc.dirty { " ●" } else { "" }
+        );
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.last_title = title;
@@ -6234,7 +7301,11 @@ mod tests {
         wait_search(&mut app);
         app.refresh_doc_search(&ctx);
         app.anchor_results();
-        assert_eq!(app.folder.scroll_to, Some((1, true)), "游標所在行之後的第一個命中，不是第一列");
+        assert_eq!(
+            app.folder.scroll_to,
+            Some((1, true)),
+            "游標所在行之後的第一個命中，不是第一列"
+        );
         app.folder.scroll_to = None;
         app.anchor_results();
         assert_eq!(app.folder.scroll_to, None, "每次搜尋只捲一次");
@@ -6256,7 +7327,11 @@ mod tests {
         app.handle(Action::RunFolderSearch, &ctx);
         wait_search(&mut app);
         app.anchor_results();
-        assert_eq!(app.doc.path.as_deref(), Some(b.as_path()), "開啟第一筆命中的檔案");
+        assert_eq!(
+            app.doc.path.as_deref(),
+            Some(b.as_path()),
+            "開啟第一筆命中的檔案"
+        );
         assert_eq!(app.folder.selected, Some(0));
         assert_eq!(app.folder.scroll_to, Some((0, true)));
         // 目前的檔案有命中：不換檔，表格選取跟著編輯區
@@ -6272,7 +7347,11 @@ mod tests {
         let mut app = app_with("x");
         assert_eq!(app.dock.edge, search_dock::DockEdge::Right, "預設在右邊");
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 600.0));
-        assert_eq!(app.split_search_dock(area), (None, area), "沒開的時候不佔空間");
+        assert_eq!(
+            app.split_search_dock(area),
+            (None, area),
+            "沒開的時候不佔空間"
+        );
         app.handle(Action::Find { replace: false }, &ctx);
         let (geom, rest) = app.split_search_dock(area);
         let geom = geom.expect("開了就佔一邊");
@@ -6325,7 +7404,10 @@ mod tests {
         app.folder.dir = "Z:\\elsewhere".into();
         app.folder.dir_custom = true;
         app.sync_search_dir();
-        assert_eq!(app.folder.dir, "Z:\\elsewhere", "使用者自己指定的不會被蓋掉");
+        assert_eq!(
+            app.folder.dir, "Z:\\elsewhere",
+            "使用者自己指定的不會被蓋掉"
+        );
     }
 
     #[test]
@@ -6379,7 +7461,11 @@ mod tests {
         assert_eq!(app.doc.text(), "dog\ncat");
         assert_eq!(app.folder.hits.len(), 1, "換掉的那一列拿掉了");
         assert_eq!(app.editor.sel.range(), 4..7, "接著選到下一筆");
-        assert_eq!(std::fs::read_to_string(&a).unwrap(), "cat\ncat", "只改分頁，沒有動磁碟");
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "cat\ncat",
+            "只改分頁，沒有動磁碟"
+        );
     }
 
     #[test]
@@ -6450,7 +7536,11 @@ mod tests {
             .leaves()
             .into_iter()
             .map(|id| {
-                let n = if id == app.layout.focus { app.tabs.len() } else { app.layout.others[&id].len() };
+                let n = if id == app.layout.focus {
+                    app.tabs.len()
+                } else {
+                    app.layout.others[&id].len()
+                };
                 let names = (0..n)
                     .map(|i| {
                         if id == app.layout.focus {
@@ -6490,7 +7580,11 @@ mod tests {
             app.move_tab(first, 1, Target::Split(first, side)); // 作用中的 b
             let panes = pane_names(&app);
             assert_eq!(panes.len(), 2, "{side:?}");
-            assert_eq!(expect_new_last, panes[1].0 == app.layout.focus, "{side:?}：新窗格在後面");
+            assert_eq!(
+                expect_new_last,
+                panes[1].0 == app.layout.focus,
+                "{side:?}：新窗格在後面"
+            );
             assert_eq!(panes[1].1, ["b.txt"]);
             assert_eq!(panes[0].1, ["a.txt"]);
             assert_eq!(app.doc.text(), "bbb");
@@ -6506,7 +7600,11 @@ mod tests {
         app.close_tab(0); // 只剩 b
         assert_eq!(app.tabs.len(), 1);
         app.move_tab(first, 0, Target::Split(first, Side::Left));
-        assert_eq!(app.layout.pane_count(), 1, "只剩一個分頁的窗格，切不出新窗格");
+        assert_eq!(
+            app.layout.pane_count(),
+            1,
+            "只剩一個分頁的窗格，切不出新窗格"
+        );
         assert_eq!(app.doc.text(), "bbb");
     }
 
@@ -6521,7 +7619,10 @@ mod tests {
         app.move_tab(second, 0, Target::Into(first));
         assert_eq!(app.layout.pane_count(), 1);
         assert_eq!(app.layout.focus, first);
-        assert_eq!(pane_names(&app), [(first, vec!["a.txt".to_owned(), "b.txt".to_owned()])]);
+        assert_eq!(
+            pane_names(&app),
+            [(first, vec!["a.txt".to_owned(), "b.txt".to_owned()])]
+        );
         assert_eq!(app.doc.text(), "bbb", "搬過去的分頁成為作用中分頁");
         assert!(app.layout.others.is_empty());
     }
@@ -6540,7 +7641,14 @@ mod tests {
     }
 
     fn modal_buttons(app: &App) -> Vec<modal::Answer> {
-        app.modal.as_ref().expect("要有對話框").spec.buttons.iter().map(|(_, a)| *a).collect()
+        app.modal
+            .as_ref()
+            .expect("要有對話框")
+            .spec
+            .buttons
+            .iter()
+            .map(|(_, a)| *a)
+            .collect()
     }
 
     #[test]
@@ -6552,7 +7660,11 @@ mod tests {
         app.request_close_pane(second);
         assert!(app.modal.is_none(), "沒有未儲存的修改，不問直接關");
         assert_eq!(app.layout.pane_count(), 1);
-        assert_eq!(pane_names(&app)[0].1, ["a.txt"], "b 跟著窗格關掉，沒有搬到相鄰的窗格");
+        assert_eq!(
+            pane_names(&app)[0].1,
+            ["a.txt"],
+            "b 跟著窗格關掉，沒有搬到相鄰的窗格"
+        );
         assert_eq!(app.doc.text(), "aaa");
         // 只剩一個窗格時關不掉
         app.request_close_pane(first);
@@ -6570,7 +7682,11 @@ mod tests {
         let ctx = egui::Context::default();
         app.request_close_pane(second);
         assert_eq!(app.layout.pane_count(), 2, "問完才關");
-        assert_eq!(modal_buttons(&app), [modal::Answer::Yes, modal::Answer::No, modal::Answer::Cancel], "只有一份沒存，沒有「全部不儲存」");
+        assert_eq!(
+            modal_buttons(&app),
+            [modal::Answer::Yes, modal::Answer::No, modal::Answer::Cancel],
+            "只有一份沒存，沒有「全部不儲存」"
+        );
         answer_close_pane(&mut app, modal::Answer::Cancel, &ctx);
         assert_eq!(app.layout.pane_count(), 2, "取消：窗格留著，修改還在");
         assert!(app.doc.dirty);
@@ -6581,7 +7697,11 @@ mod tests {
         assert_eq!(app.layout.pane_count(), 1);
         assert_eq!(pane_names(&app)[0].1, ["a.txt"]);
         assert!(app.all_dirty().is_empty());
-        assert_eq!(std::fs::read_to_string(_dir.path().join("b.txt")).unwrap(), "bbb", "沒有存檔");
+        assert_eq!(
+            std::fs::read_to_string(_dir.path().join("b.txt")).unwrap(),
+            "bbb",
+            "沒有存檔"
+        );
     }
 
     /// 回報的問題（有遇到）：按「不儲存」之後對話框又出現、窗格關不掉，「全部不儲存」才關得掉。
@@ -6598,7 +7718,10 @@ mod tests {
         make_active_tab_dirty(&mut app);
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1000.0, 700.0),
+        ));
         let frame = |app: &mut App, events: Vec<egui::Event>| {
             let mut r = raw.clone();
             r.events = events;
@@ -6611,22 +7734,43 @@ mod tests {
         };
         frame(&mut app, vec![]);
         frame(&mut app, vec![]);
-        let over_second = app.pane_rects.iter().find(|(id, _)| *id == second).map(|(_, r)| r.center()).unwrap();
+        let over_second = app
+            .pane_rects
+            .iter()
+            .find(|(id, _)| *id == second)
+            .map(|(_, r)| r.center())
+            .unwrap();
         let press = |pos: egui::Pos2| {
             vec![
                 egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
             ]
         };
         // 對話框開著（正在問 first 窗格的 a.txt）：按在 second 窗格上，焦點不能跑掉
         app.request_close_pane(first);
         assert!(app.modal.is_some());
         frame(&mut app, press(over_second));
-        assert_eq!(app.layout.focus, first, "對話框開著時，按在別的窗格上不換焦點");
+        assert_eq!(
+            app.layout.focus, first,
+            "對話框開著時，按在別的窗格上不換焦點"
+        );
         // 對話框關掉之後，點窗格照常換焦點
         app.modal = None;
         app.cancel_close_pane();
-        frame(&mut app, vec![egui::Event::PointerButton { pos: over_second, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+        frame(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: over_second,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        );
         frame(&mut app, press(over_second));
         assert_eq!(app.layout.focus, second);
     }
@@ -6673,7 +7817,15 @@ mod tests {
         }
         let ctx = egui::Context::default();
         app.request_close_pane(first);
-        assert_eq!(modal_buttons(&app), [modal::Answer::Yes, modal::Answer::No, modal::Answer::NoToAll, modal::Answer::Cancel]);
+        assert_eq!(
+            modal_buttons(&app),
+            [
+                modal::Answer::Yes,
+                modal::Answer::No,
+                modal::Answer::NoToAll,
+                modal::Answer::Cancel
+            ]
+        );
         // 「全部不儲存」：一次關掉整個窗格
         answer_close_pane(&mut app, modal::Answer::NoToAll, &ctx);
         assert_eq!(app.layout.pane_count(), 1);
@@ -6681,7 +7833,13 @@ mod tests {
         assert_eq!(pane_names(&app)[0].1, ["c.txt"]);
         assert!(app.modal.is_none() && app.all_dirty().is_empty());
         for name in ["a.txt", "b.txt"] {
-            assert!(std::fs::read_to_string(dir.path().join(name)).unwrap().find('x').is_none(), "{name} 沒有存檔");
+            assert!(
+                std::fs::read_to_string(dir.path().join(name))
+                    .unwrap()
+                    .find('x')
+                    .is_none(),
+                "{name} 沒有存檔"
+            );
         }
     }
 
@@ -6702,13 +7860,39 @@ mod tests {
         app.request_close_pane(first);
         assert_eq!(app.doc.name(), "a.txt", "先問 a");
         answer_close_pane(&mut app, modal::Answer::No, &ctx);
-        assert_eq!(pane_names(&app).iter().find(|(id, _)| *id == first).unwrap().1, ["b.txt"], "a 當場關掉了");
-        assert_eq!(modal_buttons(&app), [modal::Answer::Yes, modal::Answer::No, modal::Answer::Cancel], "只剩一份沒問，不再給「全部不儲存」");
+        assert_eq!(
+            pane_names(&app)
+                .iter()
+                .find(|(id, _)| *id == first)
+                .unwrap()
+                .1,
+            ["b.txt"],
+            "a 當場關掉了"
+        );
+        assert_eq!(
+            modal_buttons(&app),
+            [modal::Answer::Yes, modal::Answer::No, modal::Answer::Cancel],
+            "只剩一份沒問，不再給「全部不儲存」"
+        );
         answer_close_pane(&mut app, modal::Answer::Cancel, &ctx);
         assert_eq!(app.layout.pane_count(), 2, "取消：窗格還在");
-        assert_eq!(pane_names(&app).iter().find(|(id, _)| *id == first).unwrap().1, ["b.txt"], "a 沒有回來，b 留著");
+        assert_eq!(
+            pane_names(&app)
+                .iter()
+                .find(|(id, _)| *id == first)
+                .unwrap()
+                .1,
+            ["b.txt"],
+            "a 沒有回來，b 留著"
+        );
         assert!(app.doc.dirty && app.modal.is_none() && app.closing_pane.is_none());
-        assert!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap().find('x').is_none(), "a 沒有存檔");
+        assert!(
+            std::fs::read_to_string(dir.path().join("a.txt"))
+                .unwrap()
+                .find('x')
+                .is_none(),
+            "a 沒有存檔"
+        );
     }
 
     #[test]
@@ -6729,7 +7913,10 @@ mod tests {
         app.number_untitled_docs();
         app.new_document();
         let names: Vec<_> = pane_names(&app).into_iter().flat_map(|(_, n)| n).collect();
-        assert!(names.contains(&"未命名 1".to_owned()) && names.contains(&"未命名 2".to_owned()), "{names:?}");
+        assert!(
+            names.contains(&"未命名 1".to_owned()) && names.contains(&"未命名 2".to_owned()),
+            "{names:?}"
+        );
         // 存成檔案之後不再用編號，號碼讓出來
         let dir = tempfile::tempdir().unwrap();
         app.doc.path = Some(dir.path().join("x.txt"));
@@ -6760,7 +7947,10 @@ mod tests {
         assert_eq!(app.layout.focus, first, "焦點跳到開著 b 的窗格");
         assert_eq!(app.doc.text(), "bbb");
         assert_eq!(app.layout.pane_count(), 2, "沒有多開分頁或窗格");
-        assert_eq!(pane_names(&app).iter().map(|(_, n)| n.len()).sum::<usize>(), 2);
+        assert_eq!(
+            pane_names(&app).iter().map(|(_, n)| n.len()).sum::<usize>(),
+            2
+        );
         // 新開的檔案放進有焦點的窗格
         app.open_path(&dir.path().join("c.txt"));
         assert_eq!(app.tabs.len(), 2);
@@ -6772,7 +7962,13 @@ mod tests {
         let (mut app, _dir) = app_with_two_files();
         let ctx = egui::Context::default();
         let has_discard_all = |app: &App| {
-            app.modal.as_ref().expect("要先問").spec.buttons.iter().any(|(_, a)| *a == modal::Answer::NoToAll)
+            app.modal
+                .as_ref()
+                .expect("要先問")
+                .spec
+                .buttons
+                .iter()
+                .any(|(_, a)| *a == modal::Answer::NoToAll)
         };
         // 只有一份沒存：沒有「全部不儲存」
         app.doc.buffer.insert(0, "x");
@@ -6821,7 +8017,14 @@ mod tests {
             .collect();
         assert_eq!(names, ["a.txt", "b.txt"], "依畫面由左到右");
         assert_eq!(session.focus, app.layout.focus, "記住有焦點的窗格");
-        assert!(session.layout.as_deref().is_some_and(|l| l.starts_with('H')), "{:?}", session.layout);
+        assert!(
+            session
+                .layout
+                .as_deref()
+                .is_some_and(|l| l.starts_with('H')),
+            "{:?}",
+            session.layout
+        );
         let _ = dir;
     }
 
@@ -6833,7 +8036,10 @@ mod tests {
         app.editor.recording = Some(Vec::new());
         app.focus_pane(first);
         assert_eq!(app.layout.focus, first);
-        assert!(app.editor.recording.is_some(), "錄製跟著使用者走，不屬於某個窗格");
+        assert!(
+            app.editor.recording.is_some(),
+            "錄製跟著使用者走，不屬於某個窗格"
+        );
         assert!(app.layout.others.values().all(|s| s.len() >= 1));
     }
 
@@ -6842,9 +8048,16 @@ mod tests {
         let (mut app, _dir) = app_with_two_files();
         let first = app.layout.focus;
         app.begin_tab_drag(first, 0);
-        assert_eq!(app.tab_drag.as_ref().map(|d| d.label.as_str()), Some("a.txt"));
+        assert_eq!(
+            app.tab_drag.as_ref().map(|d| d.label.as_str()),
+            Some("a.txt")
+        );
         app.begin_tab_drag(first, 9);
-        assert_eq!(app.tab_drag.as_ref().unwrap().index, 0, "不存在的分頁不能拖");
+        assert_eq!(
+            app.tab_drag.as_ref().unwrap().index,
+            0,
+            "不存在的分頁不能拖"
+        );
     }
 
     // ── 預覽窗格與版面還原 ───────────────────────────────────
@@ -6852,7 +8065,11 @@ mod tests {
     /// 資料夾裡有 a.md、b.md、c.txt；回傳沒有使用者外掛的 App。
     fn app_for_preview() -> (App, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        for (name, text) in [("a.md", "# 甲標題\n\n內文"), ("b.md", "# 乙標題"), ("c.txt", "純文字")] {
+        for (name, text) in [
+            ("a.md", "# 甲標題\n\n內文"),
+            ("b.md", "# 乙標題"),
+            ("c.txt", "純文字"),
+        ] {
             std::fs::write(dir.path().join(name), text).unwrap();
         }
         let mut app = App::new(None, Settings::default());
@@ -6860,7 +8077,11 @@ mod tests {
         (app, dir)
     }
 
-    fn wait_for_preview(app: &mut App, id: panes::PaneId, done: impl Fn(&preview::Rendered) -> bool) -> preview::Rendered {
+    fn wait_for_preview(
+        app: &mut App,
+        id: panes::PaneId,
+        done: impl Fn(&preview::Rendered) -> bool,
+    ) -> preview::Rendered {
         let ctx = egui::Context::default();
         for _ in 0..250 {
             let _ = app.update_preview(id, &ctx);
@@ -6883,7 +8104,11 @@ mod tests {
         assert_eq!((app.layout.pane_count(), app.tab_pane_count()), (2, 1));
         let pv = app.preview_id().unwrap();
         assert!(app.is_preview(pv));
-        assert_eq!(app.layout.root.leaves(), vec![editor_pane, pv], "預覽在右邊");
+        assert_eq!(
+            app.layout.root.leaves(),
+            vec![editor_pane, pv],
+            "預覽在右邊"
+        );
         assert_eq!(app.layout.focus, editor_pane, "焦點留在編輯的窗格");
         // 再按一次關掉（整個程式只有一個預覽窗格，不會越開越多）
         app.toggle_preview();
@@ -6894,7 +8119,10 @@ mod tests {
         app.toggle_preview();
         assert_eq!(app.layout.pane_count(), 2);
         let pv = app.preview_id().unwrap();
-        assert_eq!(app.update_preview(pv, &egui::Context::default()), preview_pane::Status::NoRenderer);
+        assert_eq!(
+            app.update_preview(pv, &egui::Context::default()),
+            preview_pane::Status::NoRenderer
+        );
         app.toggle_preview();
         app.new_document();
         app.toggle_preview();
@@ -6907,21 +8135,32 @@ mod tests {
         app.toggle_preview();
         let pv = app.preview_id().unwrap();
         let r = wait_for_preview(&mut app, pv, |_| true);
-        assert!(matches!(&r, preview::Rendered::Markdown(b, _) if matches!(&b[0], preview::Block::Heading(1, _))), "{r:?}");
+        assert!(
+            matches!(&r, preview::Rendered::Markdown(b, _) if matches!(&b[0], preview::Block::Heading(1, _))),
+            "{r:?}"
+        );
         // 改了文字：停一下之後預覽跟著更新
         let at = app.doc.buffer.len_chars();
         app.doc.buffer.insert(at, "\n\n## 新增的小標題");
         app.doc.sync();
-        let r = wait_for_preview(&mut app, pv, |r| {
-            matches!(r, preview::Rendered::Markdown(b, _) if b.iter().any(|x| matches!(x, preview::Block::Heading(2, _))))
-        });
+        let r = wait_for_preview(
+            &mut app,
+            pv,
+            |r| matches!(r, preview::Rendered::Markdown(b, _) if b.iter().any(|x| matches!(x, preview::Block::Heading(2, _)))),
+        );
         assert!(matches!(r, preview::Rendered::Markdown(..)));
         // 換到沒有預覽的分頁：預覽窗格說沒有預覽；換回來又有
         let ctx = egui::Context::default();
         app.open_path(&dir.path().join("c.txt"));
-        assert_eq!(app.update_preview(pv, &ctx), preview_pane::Status::NoRenderer);
+        assert_eq!(
+            app.update_preview(pv, &ctx),
+            preview_pane::Status::NoRenderer
+        );
         app.open_path(&dir.path().join("a.md"));
-        assert!(matches!(app.update_preview(pv, &ctx), preview_pane::Status::Ready(_) | preview_pane::Status::Working));
+        assert!(matches!(
+            app.update_preview(pv, &ctx),
+            preview_pane::Status::Ready(_) | preview_pane::Status::Working
+        ));
     }
 
     /// 檔案被別的程式改了（例如終端機裡的 Claude Code）：編輯器自動重新載入，預覽也要跟著更新。
@@ -6944,7 +8183,12 @@ mod tests {
         assert_eq!(app.doc.buffer.revision(), 0, "沒改過的文件，修訂編號是 0");
         std::fs::write(&a, "# 外部改的標題\n").unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        std::fs::File::options().write(true).open(&a).unwrap().set_modified(later).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         app.check_external_changes();
         assert_eq!(app.doc.text(), "# 外部改的標題\n", "編輯器自動重新載入");
         let r = wait_for_preview(&mut app, pv, |r| heading(r) == "外部改的標題");
@@ -6962,7 +8206,11 @@ mod tests {
         let pv = app.preview_id().unwrap();
         // 放進預覽窗格：不行
         app.move_tab(a, 1, Target::Into(pv));
-        assert_eq!((app.layout.pane_count(), app.tabs.len()), (2, 2), "預覽窗格不收分頁");
+        assert_eq!(
+            (app.layout.pane_count(), app.tabs.len()),
+            (2, 2),
+            "預覽窗格不收分頁"
+        );
         // 放到預覽窗格的下側：把預覽窗格切開，分頁變成預覽下面的新窗格
         app.move_tab(a, 1, Target::Split(pv, Side::Bottom));
         let b = app.layout.focus;
@@ -6973,7 +8221,10 @@ mod tests {
         // 預覽沒有因為任何窗格被關掉而消失：關掉 A（連同它的分頁），預覽還在，只剩 B 的分頁
         app.close_pane(a);
         assert_eq!(app.tab_pane_count(), 1);
-        assert!(app.preview_id().is_some(), "預覽窗格是獨立的，不跟著某個窗格");
+        assert!(
+            app.preview_id().is_some(),
+            "預覽窗格是獨立的，不跟著某個窗格"
+        );
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.layout.pane_count(), 2);
     }
@@ -7009,7 +8260,11 @@ mod tests {
         assert_eq!(heading(&r), "甲標題");
         // 拖預覽的標題：開始拖曳，放到 B 的左側
         app.begin_preview_drag(pv);
-        assert!(app.tab_drag.as_ref().is_some_and(|d| d.preview && d.pane == pv));
+        assert!(
+            app.tab_drag
+                .as_ref()
+                .is_some_and(|d| d.preview && d.pane == pv)
+        );
         app.move_preview(pv, b, Side::Left);
         assert_eq!(app.layout.root.leaves(), vec![a, pv, b], "預覽在 B 的左邊");
         assert_eq!(app.layout.focus, a, "焦點不變");
@@ -7029,7 +8284,10 @@ mod tests {
         fresh.preview_plugins.clear();
         fresh.restore_from(&session);
         assert_eq!((fresh.layout.pane_count(), fresh.previews.len()), (3, 1));
-        assert_eq!(fresh.layout.root.to_spec(&|id| fresh.is_preview(id)), session.layout.clone().unwrap());
+        assert_eq!(
+            fresh.layout.root.to_spec(&|id| fresh.is_preview(id)),
+            session.layout.clone().unwrap()
+        );
     }
     #[test]
     fn closing_the_last_tab_next_to_a_preview_leaves_a_blank_document_and_keeps_the_preview_pane() {
@@ -7041,7 +8299,10 @@ mod tests {
         assert_eq!(app.layout.pane_count(), 2, "預覽窗格還在（顯示沒有預覽）");
         assert!(app.doc.path.is_none());
         let pv = app.preview_id().unwrap();
-        assert_eq!(app.update_preview(pv, &egui::Context::default()), preview_pane::Status::NoRenderer);
+        assert_eq!(
+            app.update_preview(pv, &egui::Context::default()),
+            preview_pane::Status::NoRenderer
+        );
     }
 
     /// 三個檔案、兩個窗格、一個預覽窗格：[a.md, c.txt] | [b.md][預覽]，焦點在 b.md 的窗格。
@@ -7084,9 +8345,19 @@ mod tests {
                 .into_iter()
                 .filter(|id| !a.is_preview(*id))
                 .map(|id| {
-                    let n = if id == a.layout.focus { a.tabs.len() } else { a.layout.others[&id].len() };
+                    let n = if id == a.layout.focus {
+                        a.tabs.len()
+                    } else {
+                        a.layout.others[&id].len()
+                    };
                     (0..n)
-                        .map(|i| if id == a.layout.focus { a.tabs.label(&a.doc, i).0 } else { a.layout.others[&id].label_stashed(i).0 })
+                        .map(|i| {
+                            if id == a.layout.focus {
+                                a.tabs.label(&a.doc, i).0
+                            } else {
+                                a.layout.others[&id].label_stashed(i).0
+                            }
+                        })
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>()
@@ -7094,12 +8365,19 @@ mod tests {
         assert_eq!(names(&fresh), names(&app));
         assert_eq!(names(&fresh), vec![vec!["a.md", "c.txt"], vec!["b.md"]]);
         let pv = *fresh.previews.keys().next().unwrap();
-        assert_eq!(fresh.previews[&pv].source, fresh.layout.focus, "預覽跟著有焦點的窗格（b.md）");
+        assert_eq!(
+            fresh.previews[&pv].source, fresh.layout.focus,
+            "預覽跟著有焦點的窗格（b.md）"
+        );
         // 版面也一樣（比例、分割方向）
         assert_eq!(fresh.session_all().layout, before.layout);
         // 還原之後還能正常新增窗格（編號不會撞到舊的）
         let before_ids = fresh.layout.root.leaves();
-        fresh.move_tab(fresh.layout.focus, 0, Target::Split(fresh.layout.focus, Side::Bottom)); // b.md 只有一個分頁：不動
+        fresh.move_tab(
+            fresh.layout.focus,
+            0,
+            Target::Split(fresh.layout.focus, Side::Bottom),
+        ); // b.md 只有一個分頁：不動
         assert_eq!(fresh.layout.root.leaves(), before_ids);
     }
 
@@ -7115,7 +8393,10 @@ mod tests {
         assert_eq!((fresh.tab_pane_count(), fresh.layout.pane_count()), (1, 2));
         assert_eq!(fresh.previews.len(), 1);
         assert_eq!(fresh.tabs.len(), 2);
-        assert_ne!(fresh.layout.focus, session.focus, "原本有焦點的窗格沒了，焦點移到還在的窗格");
+        assert_ne!(
+            fresh.layout.focus, session.focus,
+            "原本有焦點的窗格沒了，焦點移到還在的窗格"
+        );
         // c.txt 也不見了：只剩 a.md
         std::fs::remove_file(dir.path().join("c.txt")).unwrap();
         let mut fresh = App::new(None, Settings::default());
@@ -7134,18 +8415,28 @@ mod tests {
         let (_app, dir) = app_for_preview();
         let a = dir.path().join("a.md");
         let b = dir.path().join("b.md");
-        let old = session::Session::parse(&format!("active = 1\nfile = {}\t0\nfile = {}\t2\n", a.display(), b.display()));
+        let old = session::Session::parse(&format!(
+            "active = 1\nfile = {}\t0\nfile = {}\t2\n",
+            a.display(),
+            b.display()
+        ));
         let mut fresh = App::new(None, Settings::default());
         fresh.restore_from(&old);
         assert_eq!((fresh.layout.pane_count(), fresh.tabs.len()), (1, 2));
         assert_eq!(fresh.doc.name(), "b.md", "作用中的分頁");
         assert_eq!(fresh.editor.sel.head, 2);
         // 版面文字壞掉：退回單一窗格，檔案還是開起來
-        let mut broken = session::Session::parse(&format!("layout = H0.5[P0\nfocus = 0\npane = 0\nactive = 0\nfile = {}\t0\n", a.display()));
+        let mut broken = session::Session::parse(&format!(
+            "layout = H0.5[P0\nfocus = 0\npane = 0\nactive = 0\nfile = {}\t0\n",
+            a.display()
+        ));
         broken.focus = 0;
         let mut fresh = App::new(None, Settings::default());
         fresh.restore_from(&broken);
-        assert_eq!((fresh.layout.pane_count(), fresh.doc.name().as_str()), (1, "a.md"));
+        assert_eq!(
+            (fresh.layout.pane_count(), fresh.doc.name().as_str()),
+            (1, "a.md")
+        );
     }
 
     #[test]
@@ -7159,13 +8450,23 @@ mod tests {
         assert_eq!(app.settings.terminal_font_size, settings::MAX_FONT_SIZE);
         app.handle(Action::SetTerminalFontSize(f32::NAN), &ctx);
         assert_eq!(app.settings.terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE);
-        assert_eq!((app.settings.font_size, app.settings.preview_font_size), (editor_size, preview_size), "各自獨立");
+        assert_eq!(
+            (app.settings.font_size, app.settings.preview_font_size),
+            (editor_size, preview_size),
+            "各自獨立"
+        );
         app.handle(Action::SetTerminalMinContrast(4.5), &ctx);
         assert_eq!(app.settings.terminal_min_contrast, 4.5);
         app.handle(Action::SetTerminalMinContrast(0.0), &ctx);
-        assert_eq!(app.settings.terminal_min_contrast, MIN_TERMINAL_CONTRAST, "拉回範圍內，最小是不調整");
+        assert_eq!(
+            app.settings.terminal_min_contrast, MIN_TERMINAL_CONTRAST,
+            "拉回範圍內，最小是不調整"
+        );
         app.handle(Action::SetTerminalMinContrast(f32::INFINITY), &ctx);
-        assert_eq!(app.settings.terminal_min_contrast, DEFAULT_TERMINAL_MIN_CONTRAST);
+        assert_eq!(
+            app.settings.terminal_min_contrast,
+            DEFAULT_TERMINAL_MIN_CONTRAST
+        );
         // shell：邊打字邊存，所以前後的空白保留（下一個詞的開頭）；換行會被換成空白
         app.handle(Action::SetTerminalShell("pwsh ".into()), &ctx);
         assert_eq!(app.settings.terminal_shell, "pwsh ");
@@ -7183,8 +8484,18 @@ mod tests {
         assert!(app.run_rule().is_some(), "存成檔案的 .py 可以執行");
         app.run_in_terminal("/venv/bin/python", &[], &py, "--port 8080");
         assert_eq!(app.terminal_tabs().len(), 1, "第一次：開一個終端機");
-        let first = app.doc.terminal.as_ref().expect("終端機成為作用中的分頁").pending_text();
-        assert!(first.contains("/venv/bin/python") && first.contains("a.py") && first.ends_with("--port 8080\r"), "{first:?}");
+        let first = app
+            .doc
+            .terminal
+            .as_ref()
+            .expect("終端機成為作用中的分頁")
+            .pending_text();
+        assert!(
+            first.contains("/venv/bin/python")
+                && first.contains("a.py")
+                && first.ends_with("--port 8080\r"),
+            "{first:?}"
+        );
         assert!(!first.contains('\u{3}'), "新開的終端機不用先中斷");
         // 回到檔案再執行一次：還是同一個終端機（不會多開），先中斷上一次再切到檔案的資料夾
         app.open_path(&py);
@@ -7192,15 +8503,27 @@ mod tests {
         app.run_in_terminal("/venv/bin/python", &[], &py, "");
         assert_eq!(app.terminal_tabs().len(), 1, "不會多開");
         let second = app.doc.terminal.as_ref().unwrap().pending_text();
-        assert!(second.starts_with(&first) && second[first.len()..].starts_with('\u{3}'), "{second:?}");
+        assert!(
+            second.starts_with(&first) && second[first.len()..].starts_with('\u{3}'),
+            "{second:?}"
+        );
     }
     #[test]
     fn run_arguments_are_set_and_cleared_per_file_through_actions() {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
-        app.handle(Action::SetRunArgs("/a/x.py".to_owned(), "--debug".to_owned()), &ctx);
-        assert_eq!(app.settings.run_args.get("/a/x.py").map(String::as_str), Some("--debug"));
-        app.handle(Action::SetRunArgs("/a/x.py".to_owned(), "   ".to_owned()), &ctx);
+        app.handle(
+            Action::SetRunArgs("/a/x.py".to_owned(), "--debug".to_owned()),
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.run_args.get("/a/x.py").map(String::as_str),
+            Some("--debug")
+        );
+        app.handle(
+            Action::SetRunArgs("/a/x.py".to_owned(), "   ".to_owned()),
+            &ctx,
+        );
         assert!(app.settings.run_args.is_empty(), "空白就是沒有參數");
     }
 
@@ -7209,20 +8532,54 @@ mod tests {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
         let key = project_cmd::command_choice_key("Python", "/proj");
-        app.handle(Action::SetProjectCommand(key.clone(), Some("uv:file".to_owned())), &ctx);
-        assert_eq!(app.settings.runtime_choices.get(&key).map(String::as_str), Some("uv:file"));
+        app.handle(
+            Action::SetProjectCommand(key.clone(), Some("uv:file".to_owned())),
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.runtime_choices.get(&key).map(String::as_str),
+            Some("uv:file")
+        );
         assert!(app.settings_dirty_since.is_some(), "要寫進設定");
         // 手動選了直譯器：不再用手動選的專案命令；別的專案的選擇不受影響
-        app.handle(Action::SetProjectCommand(project_cmd::command_choice_key("Python", "/other"), Some("uv:file".to_owned())), &ctx);
-        app.handle(Action::SetRuntime("/proj".to_owned(), Some("/usr/bin/python3".to_owned())), &ctx);
+        app.handle(
+            Action::SetProjectCommand(
+                project_cmd::command_choice_key("Python", "/other"),
+                Some("uv:file".to_owned()),
+            ),
+            &ctx,
+        );
+        app.handle(
+            Action::SetRuntime("/proj".to_owned(), Some("/usr/bin/python3".to_owned())),
+            &ctx,
+        );
         assert!(!app.settings.runtime_choices.contains_key(&key));
-        assert_eq!(app.settings.runtime_choices.get("/proj").map(String::as_str), Some("/usr/bin/python3"));
-        assert!(app.settings.runtime_choices.contains_key(&project_cmd::command_choice_key("Python", "/other")));
+        assert_eq!(
+            app.settings
+                .runtime_choices
+                .get("/proj")
+                .map(String::as_str),
+            Some("/usr/bin/python3")
+        );
+        assert!(
+            app.settings
+                .runtime_choices
+                .contains_key(&project_cmd::command_choice_key("Python", "/other"))
+        );
         // 回到自動：直譯器與專案命令的手動選擇都清掉
-        app.handle(Action::SetProjectCommand(key.clone(), Some("uv:file".to_owned())), &ctx);
+        app.handle(
+            Action::SetProjectCommand(key.clone(), Some("uv:file".to_owned())),
+            &ctx,
+        );
         app.handle(Action::SetRuntime("/proj".to_owned(), None), &ctx);
-        assert!(!app.settings.runtime_choices.contains_key(&key) && !app.settings.runtime_choices.contains_key("/proj"));
-        app.handle(Action::SetProjectCommand(project_cmd::command_choice_key("Python", "/other"), None), &ctx);
+        assert!(
+            !app.settings.runtime_choices.contains_key(&key)
+                && !app.settings.runtime_choices.contains_key("/proj")
+        );
+        app.handle(
+            Action::SetProjectCommand(project_cmd::command_choice_key("Python", "/other"), None),
+            &ctx,
+        );
         assert!(app.settings.runtime_choices.is_empty());
     }
 
@@ -7242,7 +8599,10 @@ mod tests {
             if let Some(found) = app.project_commands(&ctx) {
                 break found;
             }
-            assert!(start.elapsed() < std::time::Duration::from_secs(20), "背景搜尋太久");
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(20),
+                "背景搜尋太久"
+            );
             std::thread::sleep(std::time::Duration::from_millis(20));
         };
         assert!(found.is_empty());
@@ -7281,11 +8641,19 @@ mod tests {
         app.open_path(&write("tool", "#!/usr/bin/env python3\nprint(1)\n"));
         assert_eq!(label(&app), Some("Python"), "沒有副檔名的 Python 腳本也行");
         app.open_path(&write("notes", "echo hi\n"));
-        assert_eq!(label(&app), None, "沒有副檔名、也沒有 shebang：不是可以執行的腳本");
+        assert_eq!(
+            label(&app),
+            None,
+            "沒有副檔名、也沒有 shebang：不是可以執行的腳本"
+        );
         app.open_path(&write("a.txt", "just notes\n"));
         assert_eq!(label(&app), None, "不是 shell 的副檔名、也沒有 shebang");
         app.open_path(&write("b.txt", "#!/bin/bash\necho hi\n"));
-        assert_eq!(label(&app), Some("bash"), "有明確的 shebang 就算，不管副檔名");
+        assert_eq!(
+            label(&app),
+            Some("bash"),
+            "有明確的 shebang 就算，不管副檔名"
+        );
         // 手動指定純文字：不猜
         app.open_path(&write("plain", "#!/bin/bash\n"));
         assert_eq!(label(&app), Some("bash"));
@@ -7297,7 +8665,10 @@ mod tests {
         static ASSOC_CALLS: std::cell::RefCell<Vec<(Vec<String>, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
-    fn record_assoc(groups: &std::collections::BTreeSet<String>, on: bool) -> Result<file_assoc::Outcome, String> {
+    fn record_assoc(
+        groups: &std::collections::BTreeSet<String>,
+        on: bool,
+    ) -> Result<file_assoc::Outcome, String> {
         ASSOC_CALLS.with(|c| c.borrow_mut().push((groups.iter().cloned().collect(), on)));
         Ok(file_assoc::Outcome::default())
     }
@@ -7310,11 +8681,19 @@ mod tests {
         PAGE_OPENS.with(|c| c.set(c.get() + 1));
     }
 
-    fn blocked_assoc(_: &std::collections::BTreeSet<String>, _: bool) -> Result<file_assoc::Outcome, String> {
-        Ok(file_assoc::Outcome { blocked: vec![".py".to_owned(), ".json".to_owned()] })
+    fn blocked_assoc(
+        _: &std::collections::BTreeSet<String>,
+        _: bool,
+    ) -> Result<file_assoc::Outcome, String> {
+        Ok(file_assoc::Outcome {
+            blocked: vec![".py".to_owned(), ".json".to_owned()],
+        })
     }
 
-    fn failing_assoc(_: &std::collections::BTreeSet<String>, _: bool) -> Result<file_assoc::Outcome, String> {
+    fn failing_assoc(
+        _: &std::collections::BTreeSet<String>,
+        _: bool,
+    ) -> Result<file_assoc::Outcome, String> {
         Err("寫不進去".to_owned())
     }
 
@@ -7328,7 +8707,11 @@ mod tests {
         app.assoc_backend = record_assoc;
         app.handle(Action::SetFileAssoc(true), &ctx);
         assert!(app.settings.file_assoc);
-        assert_eq!(PAGE_OPENS.with(|c| c.get()), 0, "沒有副檔名被擋：不用開系統設定");
+        assert_eq!(
+            PAGE_OPENS.with(|c| c.get()),
+            0,
+            "沒有副檔名被擋：不用開系統設定"
+        );
         // 取消勾選一類、再勾選另一類：每次都用目前的總開關與類別重新套用
         app.handle(Action::SetFileAssocGroup("config".to_owned(), false), &ctx);
         app.handle(Action::SetFileAssocGroup("text".to_owned(), true), &ctx);
@@ -7346,14 +8729,22 @@ mod tests {
             ]
         );
         assert!(!app.settings.file_assoc);
-        assert_eq!(app.settings.file_assoc_groups.len(), 2, "關掉總開關之後類別的勾選還在");
+        assert_eq!(
+            app.settings.file_assoc_groups.len(),
+            2,
+            "關掉總開關之後類別的勾選還在"
+        );
         assert!(app.modal.is_none());
         // 有副檔名程式沒辦法設定（使用者已經自己選過）：提示使用者自己確認，列出是哪些
         app.assoc_backend = blocked_assoc;
         app.handle(Action::SetFileAssoc(true), &ctx);
         let message = &app.modal.as_ref().expect("要提示").spec.message;
         assert!(message.contains(".py .json"), "{message}");
-        assert_eq!(PAGE_OPENS.with(|c| c.get()), 1, "剛打開、有副檔名被擋：開啟系統的預設應用程式頁");
+        assert_eq!(
+            PAGE_OPENS.with(|c| c.get()),
+            1,
+            "剛打開、有副檔名被擋：開啟系統的預設應用程式頁"
+        );
         app.modal = None;
         // 已經開著時再勾選類別、又有副檔名被擋：只提示，不再開系統設定
         app.handle(Action::SetFileAssocGroup("text".to_owned(), false), &ctx);
@@ -7364,7 +8755,11 @@ mod tests {
         app.assoc_backend = failing_assoc;
         app.handle(Action::SetFileAssoc(true), &ctx);
         assert!(!app.settings.file_assoc);
-        assert!(app.log.iter().any(|(k, m)| *k == LogKind::Error && m.contains("寫不進去")));
+        assert!(
+            app.log
+                .iter()
+                .any(|(k, m)| *k == LogKind::Error && m.contains("寫不進去"))
+        );
     }
 
     #[test]
@@ -7385,10 +8780,16 @@ mod tests {
         assert_eq!(message.contains("export PATH"), !cfg!(windows), "{message}");
         app.modal = None;
         app.handle(Action::SetCliCommand(false), &ctx);
-        assert!(!app.settings.cli_command && app.modal.is_none(), "移除時不用提醒");
+        assert!(
+            !app.settings.cli_command && app.modal.is_none(),
+            "移除時不用提醒"
+        );
         app.cli_backend = fails;
         app.handle(Action::SetCliCommand(true), &ctx);
-        assert!(!app.settings.cli_command && app.modal.is_none(), "加入失敗：不記成已開啟，也不顯示提醒");
+        assert!(
+            !app.settings.cli_command && app.modal.is_none(),
+            "加入失敗：不記成已開啟，也不顯示提醒"
+        );
     }
 
     #[test]
@@ -7414,7 +8815,11 @@ mod tests {
         assert_eq!(LAST.load(Ordering::SeqCst), 1);
         LAST.store(0, Ordering::SeqCst);
         app.sync_shell_menu();
-        assert_eq!(LAST.load(Ordering::SeqCst), 1, "開著時啟動會更新成目前的位置與語言");
+        assert_eq!(
+            LAST.load(Ordering::SeqCst),
+            1,
+            "開著時啟動會更新成目前的位置與語言"
+        );
         app.handle(Action::SetShellMenu(false), &ctx);
         assert!(!app.settings.shell_menu);
         assert_eq!(LAST.load(Ordering::SeqCst), -1);
@@ -7437,37 +8842,70 @@ mod tests {
         app.pick_files_in = |d| vec![d.join("c.txt")];
         app.open_dropped(vec![a.clone(), b.clone()]);
         assert!(app.find_open_path(&a).is_some(), "檔案直接開");
-        assert!(app.find_open_path(&b.join("c.txt")).is_some(), "資料夾：從交談窗選的檔案");
+        assert!(
+            app.find_open_path(&b.join("c.txt")).is_some(),
+            "資料夾：從交談窗選的檔案"
+        );
     }
 
     #[test]
     fn tab_settings_change_through_actions_and_the_active_documents_file_type_decides_the_width() {
         let dir = tempfile::tempdir().unwrap();
-        let (rs, py, txt) = (dir.path().join("a.rs"), dir.path().join("b.py"), dir.path().join("c.txt"));
+        let (rs, py, txt) = (
+            dir.path().join("a.rs"),
+            dir.path().join("b.py"),
+            dir.path().join("c.txt"),
+        );
         for p in [&rs, &py, &txt] {
             std::fs::write(p, "x").unwrap();
         }
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
         app.handle(Action::SetTabWidth(8), &ctx);
-        app.handle(Action::SetLanguageTabWidth("Rust".to_owned(), Some(2)), &ctx);
-        app.handle(Action::SetLanguageTabWidth("Python".to_owned(), Some(4)), &ctx);
+        app.handle(
+            Action::SetLanguageTabWidth("Rust".to_owned(), Some(2)),
+            &ctx,
+        );
+        app.handle(
+            Action::SetLanguageTabWidth("Python".to_owned(), Some(4)),
+            &ctx,
+        );
         app.handle(Action::SetTabSpaces(true), &ctx);
         assert_eq!((app.settings.tab_width, app.settings.tab_spaces), (8, true));
         // 作用中的文件是什麼檔案類型，Tab 欄寬就是那一類的
         let width_after_opening = |app: &mut App, path: &std::path::Path| {
             app.open_path(path);
             app.apply_tab_settings();
-            (feditor_core::motion::tab_width(), feditor_core::motion::tab_uses_spaces())
+            (
+                feditor_core::motion::tab_width(),
+                feditor_core::motion::tab_uses_spaces(),
+            )
         };
         assert_eq!(width_after_opening(&mut app, &rs), (2, true));
         assert_eq!(width_after_opening(&mut app, &py), (4, true));
-        assert_eq!(width_after_opening(&mut app, &txt), (8, true), "沒有個別設定的用預設的");
+        assert_eq!(
+            width_after_opening(&mut app, &txt),
+            (8, true),
+            "沒有個別設定的用預設的"
+        );
         // 拿掉個別設定就回到預設；範圍也會拉回
-        app.handle(Action::SetLanguageWrapStyle("Python".to_owned(), Some(syntax::WrapStyle::Hang)), &ctx);
-        assert_eq!(app.settings.wrap_style_for("Python"), Some(syntax::WrapStyle::Hang));
-        app.handle(Action::SetLanguageWrapStyle("Python".to_owned(), None), &ctx);
-        assert_eq!(app.settings.wrap_style_for("Python"), None, "移除之後用語言本身的預設");
+        app.handle(
+            Action::SetLanguageWrapStyle("Python".to_owned(), Some(syntax::WrapStyle::Hang)),
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.wrap_style_for("Python"),
+            Some(syntax::WrapStyle::Hang)
+        );
+        app.handle(
+            Action::SetLanguageWrapStyle("Python".to_owned(), None),
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.wrap_style_for("Python"),
+            None,
+            "移除之後用語言本身的預設"
+        );
         app.handle(Action::SetLanguageTabWidth("Rust".to_owned(), None), &ctx);
         assert!(!app.settings.tab_widths.contains_key("Rust"));
         app.handle(Action::SetTabWidth(200), &ctx);
@@ -7483,18 +8921,43 @@ mod tests {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
         let d = app.settings.view;
-        assert_eq!((d.ruler, d.ruler_column), (true, settings::DEFAULT_RULER_COLUMN));
-        app.handle(Action::SetView(settings::ViewOptions { ruler_column: 72, ..d }), &ctx);
+        assert_eq!(
+            (d.ruler, d.ruler_column),
+            (true, settings::DEFAULT_RULER_COLUMN)
+        );
+        app.handle(
+            Action::SetView(settings::ViewOptions {
+                ruler_column: 72,
+                ..d
+            }),
+            &ctx,
+        );
         assert_eq!(app.settings.view.ruler_column, 72);
-        app.handle(Action::SetView(settings::ViewOptions { ruler: false, ..app.settings.view }), &ctx);
+        app.handle(
+            Action::SetView(settings::ViewOptions {
+                ruler: false,
+                ..app.settings.view
+            }),
+            &ctx,
+        );
         let v = app.settings.view;
         assert_eq!((v.ruler, v.ruler_column), (false, 72), "沒啟用時欄數還在");
-        app.handle(Action::SetView(settings::ViewOptions { ruler: true, ..v }), &ctx);
-        assert_eq!(app.settings.view.ruler_column, 72, "再勾選回來還是原本的欄數");
-        assert_eq!(app.settings.view.word_wrap, d.word_wrap, "其他的顯示選項不受影響");
+        app.handle(
+            Action::SetView(settings::ViewOptions { ruler: true, ..v }),
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.view.ruler_column, 72,
+            "再勾選回來還是原本的欄數"
+        );
+        assert_eq!(
+            app.settings.view.word_wrap, d.word_wrap,
+            "其他的顯示選項不受影響"
+        );
     }
     #[test]
-    fn the_plain_terminal_button_uses_the_default_shell_and_the_dropdown_picks_another_one_for_that_terminal_only() {
+    fn the_plain_terminal_button_uses_the_default_shell_and_the_dropdown_picks_another_one_for_that_terminal_only()
+     {
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
         let shell_of = |app: &App| app.doc.terminal.as_ref().map(|t| t.shell().to_owned());
@@ -7507,21 +8970,40 @@ mod tests {
         assert_eq!(shell_of(&app).as_deref(), Some("pwsh -NoLogo"));
         app.handle(Action::NewTerminalWith("cmd".to_owned()), &ctx);
         assert_eq!(shell_of(&app).as_deref(), Some("cmd"));
-        assert_eq!(app.settings.terminal_shell, "pwsh -NoLogo", "預設沒有被改掉");
+        assert_eq!(
+            app.settings.terminal_shell, "pwsh -NoLogo",
+            "預設沒有被改掉"
+        );
         app.handle(Action::NewTerminal, &ctx);
-        assert_eq!(shell_of(&app).as_deref(), Some("pwsh -NoLogo"), "下一次按鈕還是用預設的");
+        assert_eq!(
+            shell_of(&app).as_deref(),
+            Some("pwsh -NoLogo"),
+            "下一次按鈕還是用預設的"
+        );
         // 標籤上的 shell 圖示要知道這個分頁跑的是哪個 shell；文字分頁沒有
         let (pane, idx) = app.terminal_tabs()[0];
         assert_eq!(app.pane_tab_terminal_shell(pane, idx).as_deref(), Some(""));
-        assert_eq!(app.pane_tab_terminal_shell(app.layout.focus, app.tabs.active()).as_deref(), Some("pwsh -NoLogo"));
+        assert_eq!(
+            app.pane_tab_terminal_shell(app.layout.focus, app.tabs.active())
+                .as_deref(),
+            Some("pwsh -NoLogo")
+        );
         let text_pane = app.layout.root.leaves()[0];
-        assert_eq!(app.pane_tab_terminal_shell(text_pane, 0), None, "文字分頁沒有 shell");
+        assert_eq!(
+            app.pane_tab_terminal_shell(text_pane, 0),
+            None,
+            "文字分頁沒有 shell"
+        );
         // 開著的終端機不受之後改的設定影響
         let first = app.terminal_tabs()[0];
         app.focus_pane(first.0);
         app.switch_tab(first.1);
         app.settings.terminal_shell = "nu".to_owned();
-        assert_eq!(shell_of(&app).as_deref(), Some(""), "已經開著的還是當初的 shell");
+        assert_eq!(
+            shell_of(&app).as_deref(),
+            Some(""),
+            "已經開著的還是當初的 shell"
+        );
     }
 
     #[test]
@@ -7534,9 +9016,16 @@ mod tests {
         assert_eq!(app.settings.font_size, editor_size, "編輯區的字級不受影響");
         assert!(app.settings_dirty_since.is_some(), "要寫進設定");
         app.handle(Action::SetPreviewFontSize(9999.0), &ctx);
-        assert_eq!(app.settings.preview_font_size, settings::MAX_FONT_SIZE, "拉回範圍內");
+        assert_eq!(
+            app.settings.preview_font_size,
+            settings::MAX_FONT_SIZE,
+            "拉回範圍內"
+        );
         app.handle(Action::SetPreviewFontSize(f32::NAN), &ctx);
-        assert_eq!(app.settings.preview_font_size, DEFAULT_PREVIEW_FONT_SIZE, "不是數字就用預覽自己的預設");
+        assert_eq!(
+            app.settings.preview_font_size, DEFAULT_PREVIEW_FONT_SIZE,
+            "不是數字就用預覽自己的預設"
+        );
     }
 
     /// 設定面板「介面」頁：「預設開啟」那一列有一串勾選框（比一般列高），
@@ -7549,7 +9038,10 @@ mod tests {
         let (app, _dir) = app_for_preview();
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(900.0, 900.0),
+        ));
         let mut shapes = Vec::new();
         for _ in 0..3 {
             let mut output = ctx.run_ui(raw.clone(), |ui| {
@@ -7563,7 +9055,10 @@ mod tests {
         fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
             match shape {
                 egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
-                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.galley.rect.translate(t.pos.to_vec2()))),
+                egui::Shape::Text(t) => out.push((
+                    t.galley.job.text.clone(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
                 _ => {}
             }
         }
@@ -7576,11 +9071,15 @@ mod tests {
         let (Some(last), Some(cli)) = (rect_of(&last_group), rect_of(&t("終端機指令"))) else {
             panic!("找不到文字：{found:?}");
         };
-        assert!(cli.top() >= last.bottom(), "「終端機指令」（{cli:?}）疊在「{last_group}」（{last:?}）上");
+        assert!(
+            cli.top() >= last.bottom(),
+            "「終端機指令」（{cli:?}）疊在「{last_group}」（{last:?}）上"
+        );
     }
 
     #[test]
-    fn clicking_the_preview_pane_gives_it_the_input_focus_and_clicking_an_editor_pane_takes_it_back() {
+    fn clicking_the_preview_pane_gives_it_the_input_focus_and_clicking_an_editor_pane_takes_it_back()
+     {
         let (mut app, dir) = app_for_preview();
         app.open_path(&dir.path().join("a.md"));
         app.toggle_preview();
@@ -7588,7 +9087,10 @@ mod tests {
         let editor_pane = app.layout.focus;
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1000.0, 700.0),
+        ));
         let frame = |app: &mut App, events: Vec<egui::Event>| {
             let mut r = raw.clone();
             r.events = events;
@@ -7602,19 +9104,41 @@ mod tests {
         let press = |pos: egui::Pos2| {
             vec![
                 egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
             ]
         };
         frame(&mut app, vec![]); // 先排一次版面，才知道每個窗格在哪
         frame(&mut app, vec![]);
-        let rect_of = |app: &App, id| app.pane_rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r).unwrap();
+        let rect_of = |app: &App, id| {
+            app.pane_rects
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, r)| *r)
+                .unwrap()
+        };
         assert!(!app.preview_focused, "一開始焦點在編輯區");
         // 點預覽窗格
         let pv_rect = rect_of(&app, pv);
         frame(&mut app, press(pv_rect.center()));
         assert!(app.preview_focused, "預覽窗格取得輸入焦點");
-        assert_eq!(app.layout.focus, editor_pane, "一般窗格的焦點（預覽跟著它）不變");
-        frame(&mut app, vec![egui::Event::PointerButton { pos: pv_rect.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+        assert_eq!(
+            app.layout.focus, editor_pane,
+            "一般窗格的焦點（預覽跟著它）不變"
+        );
+        frame(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: pv_rect.center(),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        );
         // 點編輯的窗格：焦點回來
         let ed_rect = rect_of(&app, editor_pane);
         frame(&mut app, press(ed_rect.center()));
@@ -7637,7 +9161,10 @@ mod tests {
         let ctx = egui::Context::default();
         let frame = |app: &mut App, events: Vec<egui::Event>| {
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 600.0),
+            ));
             raw.events = events;
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::Panel::top("find").show(ui, |ui| {
@@ -7653,7 +9180,11 @@ mod tests {
                 physical_key: Some(egui::Key::Tab),
                 pressed: true,
                 repeat: false,
-                modifiers: if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE },
+                modifiers: if shift {
+                    egui::Modifiers::SHIFT
+                } else {
+                    egui::Modifiers::NONE
+                },
             }]
         };
         let focus = |ctx: &egui::Context| {
@@ -7696,7 +9227,10 @@ mod tests {
     fn icon_buttons_drawn_in_mouse_only_mode_are_not_reachable_with_tab() {
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 200.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(300.0, 200.0),
+        ));
         let mut output = ctx.run_ui(raw, |ui| {
             let normal = icons::small_button(ui, Icon::Close, "x", true);
             let mouse = icons::mouse_only(|| icons::small_button(ui, Icon::Close, "x", true));
@@ -7738,14 +9272,32 @@ mod tests {
         let mut frame = |app: &mut App, events: Vec<egui::Event>| {
             time += 0.016;
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 400.0),
+            ));
             raw.events = events;
             raw.time = Some(time);
             raw.focused = true;
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let App { doc, editor, settings, .. } = &mut *app;
-                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, None, false, settings);
+                    let App {
+                        doc,
+                        editor,
+                        settings,
+                        ..
+                    } = &mut *app;
+                    pane_ops::show_pane_editor(
+                        ui,
+                        pane,
+                        doc,
+                        editor,
+                        settings.view,
+                        None,
+                        None,
+                        false,
+                        settings,
+                    );
                 });
             });
             output.textures_delta.clear();
@@ -7755,18 +9307,37 @@ mod tests {
         frame(&mut app, vec![]);
         frame(&mut app, vec![egui::Event::Text("x".into())]);
         assert!(app.doc.dirty, "打了字：未儲存");
-        let z = |pressed| egui::Event::Key { key: egui::Key::Z, physical_key: Some(egui::Key::Z), pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        let z = |pressed| egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: Some(egui::Key::Z),
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
         frame(&mut app, vec![z(true)]);
         assert_eq!(app.doc.text(), "hello\nworld\n", "復原回原本的內容");
         assert!(!app.doc.dirty, "回到檔案的內容：不該再是未儲存");
         // 用輸入法輸入（Caps Lock 切換的英文模式：一個字母一個「確認」事件）：連續打的字，一次 Ctrl+Z 也要整段復原
         for c in ["a", "b", "c"] {
-            frame(&mut app, vec![egui::Event::Ime(egui::ImeEvent::Preedit { text: String::new(), active_range_chars: None }), egui::Event::Ime(egui::ImeEvent::Commit(c.into()))]);
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: String::new(),
+                        active_range_chars: None,
+                    }),
+                    egui::Event::Ime(egui::ImeEvent::Commit(c.into())),
+                ],
+            );
         }
         assert_eq!(app.doc.text(), "abchello\nworld\n");
         assert!(app.doc.dirty);
         frame(&mut app, vec![z(true)]);
-        assert_eq!(app.doc.text(), "hello\nworld\n", "一次 Ctrl+Z 把剛打的 abc 整段復原");
+        assert_eq!(
+            app.doc.text(),
+            "hello\nworld\n",
+            "一次 Ctrl+Z 把剛打的 abc 整段復原"
+        );
         assert!(!app.doc.dirty);
         // 一個字一個畫面（真的打字的樣子）
         for c in ["h", "i", " ", "t", "h", "e", "r", "e"] {
@@ -7775,7 +9346,11 @@ mod tests {
         }
         assert!(app.doc.dirty);
         frame(&mut app, vec![z(true)]);
-        assert_eq!(app.doc.text(), "hello\nworld\n", "一個字一個畫面打的字，一次 Ctrl+Z 也整段復原");
+        assert_eq!(
+            app.doc.text(),
+            "hello\nworld\n",
+            "一個字一個畫面打的字，一次 Ctrl+Z 也整段復原"
+        );
         assert!(!app.doc.dirty);
         let i = app.tabs.active();
         assert!(!app.pane_label(pane, i).2, "分頁標籤也不再標未儲存");
@@ -7784,7 +9359,10 @@ mod tests {
 
     #[test]
     fn undoing_typing_in_an_opened_file_clears_the_unsaved_mark_for_every_file_type() {
-        for name in ["a.py", "b.md", "c.rs", "d.js", "e.json", "f.html", "g.c", "h.txt", "i.yaml", "j.toml", "k.css", "l.sh", "m.ps1"] {
+        for name in [
+            "a.py", "b.md", "c.rs", "d.js", "e.json", "f.html", "g.c", "h.txt", "i.yaml", "j.toml",
+            "k.css", "l.sh", "m.ps1",
+        ] {
             undo_clears_mark_for(name);
         }
     }
@@ -7802,14 +9380,32 @@ mod tests {
         let mut frame = |app: &mut App, events: Vec<egui::Event>| {
             time += 0.016;
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 400.0),
+            ));
             raw.events = events;
             raw.time = Some(time);
             raw.focused = true;
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let App { doc, editor, settings, .. } = &mut *app;
-                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, None, false, settings);
+                    let App {
+                        doc,
+                        editor,
+                        settings,
+                        ..
+                    } = &mut *app;
+                    pane_ops::show_pane_editor(
+                        ui,
+                        pane,
+                        doc,
+                        editor,
+                        settings.view,
+                        None,
+                        None,
+                        false,
+                        settings,
+                    );
                 });
             });
             output.textures_delta.clear();
@@ -7819,18 +9415,37 @@ mod tests {
         frame(&mut app, vec![]);
         frame(&mut app, vec![egui::Event::Text("x".into())]);
         assert!(app.doc.dirty, "打了字：未儲存");
-        let z = |pressed| egui::Event::Key { key: egui::Key::Z, physical_key: Some(egui::Key::Z), pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        let z = |pressed| egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: Some(egui::Key::Z),
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
         frame(&mut app, vec![z(true)]);
         assert_eq!(app.doc.text(), "hello\nworld\n", "復原回原本的內容");
         assert!(!app.doc.dirty, "回到檔案的內容：不該再是未儲存");
         // 用輸入法輸入（Caps Lock 切換的英文模式：一個字母一個「確認」事件）：連續打的字，一次 Ctrl+Z 也要整段復原
         for c in ["a", "b", "c"] {
-            frame(&mut app, vec![egui::Event::Ime(egui::ImeEvent::Preedit { text: String::new(), active_range_chars: None }), egui::Event::Ime(egui::ImeEvent::Commit(c.into()))]);
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: String::new(),
+                        active_range_chars: None,
+                    }),
+                    egui::Event::Ime(egui::ImeEvent::Commit(c.into())),
+                ],
+            );
         }
         assert_eq!(app.doc.text(), "abchello\nworld\n");
         assert!(app.doc.dirty);
         frame(&mut app, vec![z(true)]);
-        assert_eq!(app.doc.text(), "hello\nworld\n", "一次 Ctrl+Z 把剛打的 abc 整段復原");
+        assert_eq!(
+            app.doc.text(),
+            "hello\nworld\n",
+            "一次 Ctrl+Z 把剛打的 abc 整段復原"
+        );
         assert!(!app.doc.dirty);
         // 一個字一個畫面（真的打字的樣子）
         for c in ["h", "i", " ", "t", "h", "e", "r", "e"] {
@@ -7839,13 +9454,16 @@ mod tests {
         }
         assert!(app.doc.dirty);
         frame(&mut app, vec![z(true)]);
-        assert_eq!(app.doc.text(), "hello\nworld\n", "一個字一個畫面打的字，一次 Ctrl+Z 也整段復原");
+        assert_eq!(
+            app.doc.text(),
+            "hello\nworld\n",
+            "一個字一個畫面打的字，一次 Ctrl+Z 也整段復原"
+        );
         assert!(!app.doc.dirty);
         let i = app.tabs.active();
         assert!(!app.pane_label(pane, i).2, "分頁標籤也不再標未儲存");
         assert!(!app.pane_tab_text(pane, i).contains('●'));
     }
-
 
     /// 自動換行跟著檔案類型：只有設定過的類型換行，其他類型照預設；編輯區真的依文件的類型決定。
     #[test]
@@ -7857,30 +9475,64 @@ mod tests {
         std::fs::write(&py, &long).unwrap();
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
-        app.handle(Action::SetLanguageWordWrap(Some("Markdown".to_owned()), Some(true)), &ctx);
+        app.handle(
+            Action::SetLanguageWordWrap(Some("Markdown".to_owned()), Some(true)),
+            &ctx,
+        );
         assert!(app.settings.word_wrap_for(Some("Markdown")));
-        assert!(!app.settings.word_wrap_for(Some("Python")), "別的類型不受影響");
+        assert!(
+            !app.settings.word_wrap_for(Some("Python")),
+            "別的類型不受影響"
+        );
         assert!(!app.settings.view.word_wrap, "預設值沒有被動到");
         let pane = app.layout.focus;
         let rows_of = |app: &mut App, path: &std::path::Path| -> usize {
             app.open_path(path);
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(600.0, 400.0),
+            ));
             let mut output = ctx.run_ui(raw, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let App { doc, editor, settings, .. } = &mut *app;
-                    pane_ops::show_pane_editor(ui, pane, doc, editor, settings.view, None, None, false, settings);
+                    let App {
+                        doc,
+                        editor,
+                        settings,
+                        ..
+                    } = &mut *app;
+                    pane_ops::show_pane_editor(
+                        ui,
+                        pane,
+                        doc,
+                        editor,
+                        settings.view,
+                        None,
+                        None,
+                        false,
+                        settings,
+                    );
                 });
             });
             output.textures_delta.clear();
             // 畫面上排了幾列文字：換行時一行會佔很多列
-            output.shapes.iter().filter(|s| matches!(s.shape, egui::epaint::Shape::Text(_))).count()
+            output
+                .shapes
+                .iter()
+                .filter(|s| matches!(s.shape, egui::epaint::Shape::Text(_)))
+                .count()
         };
         let wrapped = rows_of(&mut app, &md);
         let plain = rows_of(&mut app, &py);
-        assert!(wrapped > plain, "Markdown 換行排成多列（{wrapped}），Python 一行到底（{plain}）");
+        assert!(
+            wrapped > plain,
+            "Markdown 換行排成多列（{wrapped}），Python 一行到底（{plain}）"
+        );
         // 移除個別設定：回到預設（不換行）
-        app.handle(Action::SetLanguageWordWrap(Some("Markdown".to_owned()), None), &ctx);
+        app.handle(
+            Action::SetLanguageWordWrap(Some("Markdown".to_owned()), None),
+            &ctx,
+        );
         assert!(!app.settings.word_wrap_for(Some("Markdown")));
     }
 
@@ -7910,11 +9562,19 @@ mod tests {
         app.doc.buffer.insert(0, "hi");
         app.doc.sync();
         assert!(app.save());
-        assert_eq!(std::fs::read_to_string(dir.path().join("second.txt")).unwrap(), "hi");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("second.txt")).unwrap(),
+            "hi"
+        );
         assert!(!app.doc.dirty);
         // 資料夾不存在：還是開，但提醒存檔會失敗
         app.open_dropped(vec![dir.path().join("no such dir").join("x.txt")]);
-        assert!(app.log.iter().any(|(k, m)| *k == LogKind::Warn && m.contains("不存在")), "要有警告");
+        assert!(
+            app.log
+                .iter()
+                .any(|(k, m)| *k == LogKind::Warn && m.contains("不存在")),
+            "要有警告"
+        );
         // 檔名不合法（Windows 保留名）：不開
         let tabs = app.tabs.len();
         app.open_dropped(vec![dir.path().join("CON")]);
@@ -7950,7 +9610,10 @@ mod tests {
         app.move_tab(first, 0, Target::Split(first, Side::Left));
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1000.0, 700.0),
+        ));
         for _ in 0..3 {
             let mut output = ctx.run_ui(raw.clone(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -7983,12 +9646,20 @@ mod tests {
             app.open_path(&p);
         }
         let pane = app.layout.focus;
-        let order = |app: &App| (0..app.tabs.len()).map(|i| app.pane_label(pane, i).0).collect::<Vec<_>>();
+        let order = |app: &App| {
+            (0..app.tabs.len())
+                .map(|i| app.pane_label(pane, i).0)
+                .collect::<Vec<_>>()
+        };
         assert_eq!(order(&app), ["c.txt", "a.txt", "b.txt"]);
         assert_eq!(app.doc.text(), "bbb");
         app.reorder_tab(pane, 2, 0); // b 拖到最前面
         assert_eq!(order(&app), ["b.txt", "c.txt", "a.txt"]);
-        assert_eq!((app.tabs.active(), app.doc.text()), (0, "bbb"), "作用中的還是 b");
+        assert_eq!(
+            (app.tabs.active(), app.doc.text()),
+            (0, "bbb"),
+            "作用中的還是 b"
+        );
         app.sort_tabs(pane, false);
         assert_eq!(order(&app), ["a.txt", "b.txt", "c.txt"]);
         assert_eq!((app.tabs.active(), app.doc.text()), (1, "bbb"));
@@ -8016,7 +9687,11 @@ mod tests {
         app.new_document();
         assert_eq!(app.tabs.len(), 3);
         app.new_document();
-        assert_eq!(app.tabs.len(), 4, "已經在空白文件上，「新增」照樣多開一份（各有序號）");
+        assert_eq!(
+            app.tabs.len(),
+            4,
+            "已經在空白文件上，「新增」照樣多開一份（各有序號）"
+        );
         // 開檔案時才會用掉作用中的空白分頁：不會因此多出空分頁
         let c = dir.path().join("c.txt");
         std::fs::write(&c, "ccc").unwrap();
@@ -8043,7 +9718,11 @@ mod tests {
         ]);
         assert_eq!(app.tabs.len(), 2, "a、b 各一個分頁（空白文件被 a 用掉）");
         assert_eq!(app.doc.text(), "bbb", "最後一個成為作用中分頁");
-        let warns = app.log.iter().filter(|(kind, _)| *kind == LogKind::Warn).count();
+        let warns = app
+            .log
+            .iter()
+            .filter(|(kind, _)| *kind == LogKind::Warn)
+            .count();
         assert_eq!(warns, 0, "資料夾不再被略過");
         // 再拖一次已經開著的檔案：切過去，不重複開
         app.open_dropped(vec![a.clone()]);
@@ -8057,7 +9736,11 @@ mod tests {
         let a = dir.path().join("a.txt");
         std::fs::write(&a, "aaa").unwrap();
         let mut app = App::new(None, Settings::default());
-        assert_eq!(app.dialog_dir(), None, "還沒存檔的文件沒有資料夾，交給系統決定");
+        assert_eq!(
+            app.dialog_dir(),
+            None,
+            "還沒存檔的文件沒有資料夾，交給系統決定"
+        );
         app.open_path(&a);
         assert_eq!(app.dialog_dir().as_deref(), Some(dir.path()));
         std::fs::remove_dir_all(dir.path()).unwrap();
@@ -8101,7 +9784,10 @@ mod tests {
         assert!(app.settings_dirty_since.is_some());
         app.push(LogKind::Output, "巨集輸出");
         app.toggle_output();
-        assert!(!app.output_expanded() && !app.settings.show_output, "再按一次收合，連暫時展開也一併清掉");
+        assert!(
+            !app.output_expanded() && !app.settings.show_output,
+            "再按一次收合，連暫時展開也一併清掉"
+        );
         app.push(LogKind::Output, "console.log");
         assert!(app.output_expanded(), "巨集輸出也會暫時展開");
     }
@@ -8116,7 +9802,10 @@ mod tests {
         assert!(!app.output_expanded(), "錯誤也不會把面板彈開");
         assert_eq!(app.log.len(), 1, "輸出照樣記錄");
         app.toggle_output();
-        assert!(!app.output_expanded() && !app.settings.show_output, "快速鍵也展不開");
+        assert!(
+            !app.output_expanded() && !app.settings.show_output,
+            "快速鍵也展不開"
+        );
         // 再打開：之前暫時展開的狀態不會冒出來，面板回到收合
         app.handle(Action::SetOutputPane(true), &ctx);
         assert!(!app.output_expanded());
@@ -8150,7 +9839,10 @@ mod tests {
         let p = app.modal.as_ref().expect("要先問名稱");
         assert!(p.input.is_some(), "有文字框");
         assert_eq!(p.input.as_ref().unwrap().text, "錄製的巨集", "預設名稱");
-        assert_eq!(p.spec.dismiss, None, "Esc 不能關掉，免得錄好的東西不小心丟掉");
+        assert_eq!(
+            p.spec.dismiss, None,
+            "Esc 不能關掉，免得錄好的東西不小心丟掉"
+        );
         let ctx = egui::Context::default();
         let Pending { then, .. } = app.modal.take().unwrap();
         // 空白名稱：不存檔，換一個帶錯誤訊息的新對話框，來源碼還在
@@ -8184,7 +9876,10 @@ mod tests {
     fn macro_file(dir: &std::path::Path, file: &str, header: &str) -> macro_lib::MacroEntry {
         let path = dir.join(file);
         std::fs::write(&path, format!("{header}run();\n")).unwrap();
-        macro_lib::scan(dir).into_iter().find(|m| m.path == path).unwrap()
+        macro_lib::scan(dir)
+            .into_iter()
+            .find(|m| m.path == path)
+            .unwrap()
     }
 
     #[test]
@@ -8197,19 +9892,29 @@ mod tests {
             ("重跑上一個巨集", Action::RerunMacro),
             ("開關預覽", Action::TogglePreview),
             ("改選執行環境", Action::SetRuntime("/p".into(), None)),
-            ("改選專案命令", Action::SetProjectCommand("/p#cmd:Rust".into(), None)),
+            (
+                "改選專案命令",
+                Action::SetProjectCommand("/p#cmd:Rust".into(), None),
+            ),
             ("重新搜尋執行環境", Action::RefreshRuntime(PathBuf::new())),
             ("用文字包住選取", Action::Wrap("(".into(), ")".into())),
         ];
         for (what, action) in actions {
             app.pending_editor_focus = false;
             app.handle(action, &ctx);
-            assert!(app.pending_editor_focus, "{what}之後鍵盤焦點要回到編輯區，不然得點編輯區才能打字，點了就會清掉選取");
+            assert!(
+                app.pending_editor_focus,
+                "{what}之後鍵盤焦點要回到編輯區，不然得點編輯區才能打字，點了就會清掉選取"
+            );
         }
         // 巨集相關的對話框關掉之後也是
         let macros = tempfile::tempdir().unwrap();
         app.macros = vec![macro_file(macros.path(), "m.js", "// @name M\n")];
-        for then in [Then::SaveRecording("x;".into()), Then::RenameMacro(0), Then::DeleteMacro(0)] {
+        for then in [
+            Then::SaveRecording("x;".into()),
+            Then::RenameMacro(0),
+            Then::DeleteMacro(0),
+        ] {
             app.pending_editor_focus = false;
             app.resolve_modal(then, modal::Answer::Cancel, None, &ctx);
             assert!(app.pending_editor_focus);
@@ -8229,12 +9934,19 @@ mod tests {
         app.open_path(&rs);
         app.macros = vec![
             macro_file(dir.path(), "a.js", "// @name 短\n// @shortcut Alt+M\n"),
-            macro_file(dir.path(), "b.js", "// @name 名稱很長很長很長很長的巨集\n// @lang Rust\n"),
+            macro_file(
+                dir.path(),
+                "b.js",
+                "// @name 名稱很長很長很長很長的巨集\n// @lang Rust\n",
+            ),
             macro_file(dir.path(), "c.js", "// @name C\n// @shortcut Ctrl+Alt+K\n"),
         ];
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(900.0, 700.0),
+        ));
         let mut shapes = Vec::new();
         for _ in 0..3 {
             let mut output = ctx.run_ui(raw.clone(), |ui| {
@@ -8248,7 +9960,10 @@ mod tests {
         fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
             match shape {
                 egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
-                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.galley.rect.translate(t.pos.to_vec2()))),
+                egui::Shape::Text(t) => out.push((
+                    t.galley.job.text.clone(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
                 _ => {}
             }
         }
@@ -8256,16 +9971,31 @@ mod tests {
         for s in &shapes {
             texts(&s.shape, &mut found);
         }
-        let rects = |text: &str| found.iter().filter(|(t, _)| t == text).map(|(_, r)| *r).collect::<Vec<_>>();
+        let rects = |text: &str| {
+            found
+                .iter()
+                .filter(|(t, _)| t == text)
+                .map(|(_, r)| *r)
+                .collect::<Vec<_>>()
+        };
         // 適用的檔案類型下拉清單：不管名稱多長、有沒有快捷鍵，文字都從同一個 x 開始
-        let mut lefts: Vec<f32> = rects("所有檔案").iter().chain(rects("Rust").iter()).map(|r| r.left()).collect();
+        let mut lefts: Vec<f32> = rects("所有檔案")
+            .iter()
+            .chain(rects("Rust").iter())
+            .map(|r| r.left())
+            .collect();
         assert_eq!(lefts.len(), 3, "三列各有一個下拉清單：{found:?}");
         lefts.sort_by(f32::total_cmp);
         assert!(lefts[2] - lefts[0] < 0.5, "下拉清單沒有對齊：{lefts:?}");
         // 快捷鍵文字靠右對齊在同一欄
         let (alt_m, ctrl_k) = (rects("Alt+M"), rects("Ctrl+Alt+K"));
         assert!(alt_m.len() == 1 && ctrl_k.len() == 1, "{found:?}");
-        assert!((alt_m[0].right() - ctrl_k[0].right()).abs() < 0.5, "快捷鍵沒有靠右對齊：{:?} {:?}", alt_m[0], ctrl_k[0]);
+        assert!(
+            (alt_m[0].right() - ctrl_k[0].right()).abs() < 0.5,
+            "快捷鍵沒有靠右對齊：{:?} {:?}",
+            alt_m[0],
+            ctrl_k[0]
+        );
     }
 
     #[test]
@@ -8278,13 +10008,18 @@ mod tests {
         ];
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 700.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1400.0, 700.0),
+        ));
         let mut width = 0.0;
         for _ in 0..3 {
             let mut output = ctx.run_ui(raw.clone(), |ui| {
-                let shown = egui::Area::new(egui::Id::unique("macro_area_test")).fixed_pos(egui::pos2(100.0, 50.0)).show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| app.macro_panel(ui))
-                });
+                let shown = egui::Area::new(egui::Id::unique("macro_area_test"))
+                    .fixed_pos(egui::pos2(100.0, 50.0))
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| app.macro_panel(ui))
+                    });
                 width = shown.response.rect.width();
             });
             output.textures_delta.clear();
@@ -8301,8 +10036,15 @@ mod tests {
         app.pending_editor_focus = false;
         app.handle(Action::Wrap("\"".into(), "\"".into()), &ctx);
         assert_eq!(app.doc.buffer.text(), "say \"hello\" now");
-        assert_eq!(app.editor.sel.range(), 5..10, "選取還在，按完可以直接接著打字或再包一層");
-        assert!(app.pending_editor_focus, "鍵盤焦點回到編輯區，不用點編輯區（點了會清掉選取）");
+        assert_eq!(
+            app.editor.sel.range(),
+            5..10,
+            "選取還在，按完可以直接接著打字或再包一層"
+        );
+        assert!(
+            app.pending_editor_focus,
+            "鍵盤焦點回到編輯區，不用點編輯區（點了會清掉選取）"
+        );
         assert!(app.doc.dirty, "文件標成有修改");
         app.handle(Action::Wrap("(".into(), ")".into()), &ctx);
         assert_eq!(app.doc.buffer.text(), "say \"(hello)\" now");
@@ -8311,11 +10053,25 @@ mod tests {
     #[test]
     fn wrap_presets_are_well_formed_and_custom_text_understands_backslash_escapes() {
         let presets = wrap_presets();
-        assert!(presets.len() >= 8 && presets.iter().all(|p| !p.prefix.is_empty() && !p.suffix.is_empty() && p.shown.contains('…') && !p.name.is_empty()));
+        assert!(
+            presets.len() >= 8
+                && presets.iter().all(|p| !p.prefix.is_empty()
+                    && !p.suffix.is_empty()
+                    && p.shown.contains('…')
+                    && !p.name.is_empty())
+        );
         let fence = presets.iter().find(|p| p.shown == "```…```").unwrap();
-        assert_eq!((fence.prefix, fence.suffix), ("```\n", "\n```"), "程式碼區塊前後各一行");
+        assert_eq!(
+            (fence.prefix, fence.suffix),
+            ("```\n", "\n```"),
+            "程式碼區塊前後各一行"
+        );
         assert_eq!(unescape_wrap_text(r"a\nb\tc\\d"), "a\nb\tc\\d");
-        assert_eq!(unescape_wrap_text(r"\x 與結尾的\"), r"\x 與結尾的\", "不認得的跳脫照原樣");
+        assert_eq!(
+            unescape_wrap_text(r"\x 與結尾的\"),
+            r"\x 與結尾的\",
+            "不認得的跳脫照原樣"
+        );
         assert_eq!(unescape_wrap_text("<b>"), "<b>");
     }
 
@@ -8334,8 +10090,17 @@ mod tests {
         app.open_path_recent(&a);
         app.open_path_recent(&b);
         app.open_dropped(vec![c.clone()]);
-        let abs = |p: &std::path::Path| std::path::absolute(p).unwrap().to_string_lossy().into_owned();
-        assert_eq!(app.settings.recent_files, [abs(&c), abs(&b), abs(&a)], "最近的在最前面");
+        let abs = |p: &std::path::Path| {
+            std::path::absolute(p)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(
+            app.settings.recent_files,
+            [abs(&c), abs(&b), abs(&a)],
+            "最近的在最前面"
+        );
         assert!(app.settings_dirty_since.is_some(), "要寫進設定檔");
         app.open_path_recent(&a); // 已經開著、切過去：也算，移到最前面
         assert_eq!(app.settings.recent_files[0], abs(&a));
@@ -8355,11 +10120,15 @@ mod tests {
             app.open_path_recent(&p);
         }
         assert_eq!(app.settings.recent_files.len(), recent::MAX_RECENT);
-        assert!(app.settings.recent_files[0].ends_with("f12.txt") && app.settings.recent_files[9].ends_with("f3.txt"));
+        assert!(
+            app.settings.recent_files[0].ends_with("f12.txt")
+                && app.settings.recent_files[9].ends_with("f3.txt")
+        );
     }
 
     #[test]
-    fn opening_from_the_recent_list_moves_the_file_up_and_a_missing_file_is_dropped_with_a_warning() {
+    fn opening_from_the_recent_list_moves_the_file_up_and_a_missing_file_is_dropped_with_a_warning()
+    {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
         std::fs::write(&a, "a").unwrap();
@@ -8371,7 +10140,14 @@ mod tests {
         let first = app.settings.recent_files[1].clone(); // a
         app.handle(Action::OpenRecent(first.clone()), &ctx);
         assert_eq!(app.settings.recent_files[0], first, "點了的移到最前面");
-        assert_eq!(app.doc.path.as_deref().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).as_deref(), Some("a.txt"));
+        assert_eq!(
+            app.doc
+                .path
+                .as_deref()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .as_deref(),
+            Some("a.txt")
+        );
         // 清單裡的檔案在清單外被刪了（沒有開在分頁裡）：開不了，從清單拿掉並說明
         let c = dir.path().join("c.txt");
         std::fs::write(&c, "c").unwrap();
@@ -8379,7 +10155,11 @@ mod tests {
         std::fs::remove_file(&c).unwrap();
         app.handle(Action::OpenRecent(gone.clone()), &ctx);
         assert!(!app.settings.recent_files.contains(&gone));
-        assert!(app.log.iter().any(|(k, t)| matches!(k, LogKind::Warn) && t.contains("已從最近開啟的清單移除")));
+        assert!(
+            app.log
+                .iter()
+                .any(|(k, t)| matches!(k, LogKind::Warn) && t.contains("已從最近開啟的清單移除"))
+        );
     }
 
     #[test]
@@ -8403,11 +10183,16 @@ mod tests {
         app.settings_tab_request.set(Some(tab));
         for _ in 0..4 {
             let mut raw = egui::RawInput::default();
-            raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 1000.0)));
+            raw.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 1000.0),
+            ));
             let mut output = ctx.run_ui(raw, |ui| {
                 let shown = egui::Area::new(egui::Id::unique("settings_area"))
                     .fixed_pos(egui::pos2(100.0, 50.0))
-                    .show(ui.ctx(), |ui| egui::Frame::popup(ui.style()).show(ui, |ui| app.settings_panel(ui)));
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| app.settings_panel(ui))
+                    });
                 height = shown.response.rect.height();
             });
             output.textures_delta.clear();
@@ -8420,22 +10205,39 @@ mod tests {
         let app = App::new(None, Settings::default());
         let tabs = SETTINGS_TABS.len();
         // 每一頁單獨量一次（全新的畫面環境）
-        let alone: Vec<f32> = (0..tabs).map(|tab| settings_panel_height(&app, &egui::Context::default(), tab)).collect();
-        assert!(alone.iter().all(|h| *h < 520.0), "每一頁都不該高到超出一般的畫面（快捷鍵頁靠捲軸）：{alone:?}");
+        let alone: Vec<f32> = (0..tabs)
+            .map(|tab| settings_panel_height(&app, &egui::Context::default(), tab))
+            .collect();
+        assert!(
+            alone.iter().all(|h| *h < 520.0),
+            "每一頁都不該高到超出一般的畫面（快捷鍵頁靠捲軸）：{alone:?}"
+        );
         // 同一個環境依序看過每一頁，先看最高的，再回頭看矮的
         let ctx = egui::Context::default();
-        let tallest = (0..tabs).max_by(|&a, &b| alone[a].total_cmp(&alone[b])).unwrap();
+        let tallest = (0..tabs)
+            .max_by(|&a, &b| alone[a].total_cmp(&alone[b]))
+            .unwrap();
         settings_panel_height(&app, &ctx, tallest);
         for tab in 0..tabs {
             let after = settings_panel_height(&app, &ctx, tab);
-            assert!((after - alone[tab]).abs() < 0.5, "第 {tab} 頁單獨看是 {}，看過最高的一頁之後變成 {after}", alone[tab]);
+            assert!(
+                (after - alone[tab]).abs() < 0.5,
+                "第 {tab} 頁單獨看是 {}，看過最高的一頁之後變成 {after}",
+                alone[tab]
+            );
         }
     }
 
     #[test]
     fn the_macro_docs_button_opens_the_page_in_the_interface_language() {
-        assert_eq!(macro_docs_url(false), "https://github.com/codemee/feditor/blob/main/docs/macros.md");
-        assert_eq!(macro_docs_url(true), "https://github.com/codemee/feditor/blob/main/docs/macros.en.md");
+        assert_eq!(
+            macro_docs_url(false),
+            "https://github.com/codemee/feditor/blob/main/docs/macros.md"
+        );
+        assert_eq!(
+            macro_docs_url(true),
+            "https://github.com/codemee/feditor/blob/main/docs/macros.en.md"
+        );
         let mut app = App::new(None, Settings::default());
         let ctx = egui::Context::default();
         app.handle(Action::OpenMacroDocs, &ctx);
@@ -8458,13 +10260,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(None, Settings::default());
         app.macros = vec![
-            macro_file(dir.path(), "a.js", "// @name 通用巨集\n// @shortcut Ctrl+Alt+U\n"),
-            macro_file(dir.path(), "b.js", "// @name 只給 Python\n// @lang Python\n// @shortcut Alt+P\n"),
+            macro_file(
+                dir.path(),
+                "a.js",
+                "// @name 通用巨集\n// @shortcut Ctrl+Alt+U\n",
+            ),
+            macro_file(
+                dir.path(),
+                "b.js",
+                "// @name 只給 Python\n// @lang Python\n// @shortcut Alt+P\n",
+            ),
             macro_file(dir.path(), "c.js", "// @name 沒設快捷鍵\n"),
         ];
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 1400.0)));
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(900.0, 1400.0),
+        ));
         let mut shapes = Vec::new();
         for _ in 0..2 {
             let mut output = ctx.run_ui(raw.clone(), |ui| {
@@ -8488,13 +10301,28 @@ mod tests {
         }
         // 清單超過一定高度就用捲軸：畫面上看得到的是最上面一段（內建的），巨集在最下面，要捲過去才會畫出來
         for expected in ["Ctrl+S", "Ctrl+Shift+S", "Ctrl+N"] {
-            assert!(found.iter().any(|t| t == expected), "快捷鍵頁沒有「{expected}」：{found:?}");
+            assert!(
+                found.iter().any(|t| t == expected),
+                "快捷鍵頁沒有「{expected}」：{found:?}"
+            );
         }
         let rows = shortcuts::macro_rows(&app.macros, app.doc_lang());
-        let listed: Vec<(&str, &str)> = rows.iter().map(|(name, _, keys, _)| (name.as_str(), keys.as_str())).collect();
+        let listed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(name, _, keys, _)| (name.as_str(), keys.as_str()))
+            .collect();
         assert!(listed.contains(&("通用巨集", "Ctrl+Alt+U")), "{listed:?}");
-        assert!(rows.iter().any(|(name, langs, keys, _)| name == "只給 Python" && langs == &["Python"] && keys == "Alt+P"), "{listed:?}");
-        assert!(!rows.iter().any(|(name, ..)| name.contains("沒設快捷鍵")), "沒有快捷鍵的巨集不列");
+        assert!(
+            rows.iter()
+                .any(|(name, langs, keys, _)| name == "只給 Python"
+                    && langs == &["Python"]
+                    && keys == "Alt+P"),
+            "{listed:?}"
+        );
+        assert!(
+            !rows.iter().any(|(name, ..)| name.contains("沒設快捷鍵")),
+            "沒有快捷鍵的巨集不列"
+        );
     }
 
     #[test]
@@ -8506,7 +10334,16 @@ mod tests {
         app.macros.clear();
         // 沒有語言的文件（新的空白文件）：沒有選項，只能是所有檔案
         app.ask_recording_name("x;".into(), None, None);
-        assert!(app.modal.as_ref().unwrap().input.as_ref().unwrap().choices.is_empty());
+        assert!(
+            app.modal
+                .as_ref()
+                .unwrap()
+                .input
+                .as_ref()
+                .unwrap()
+                .choices
+                .is_empty()
+        );
         app.modal = None;
         app.open_path(&rs);
         app.ask_recording_name("x;".into(), None, None);
@@ -8517,23 +10354,47 @@ mod tests {
         app.modal = None;
         app.modal_choice = 1;
         app.ask_recording_name("x;".into(), Some(String::new()), Some("錯".into()));
-        assert_eq!(app.modal.as_ref().unwrap().input.as_ref().unwrap().choice, 1);
+        assert_eq!(
+            app.modal.as_ref().unwrap().input.as_ref().unwrap().choice,
+            1
+        );
     }
 
     #[test]
     fn the_file_types_dropdown_lists_every_language_and_toggling_one_gives_the_new_list() {
         let names = macro_type_names(&[]);
-        assert!(["Rust", "Python", "Go"].iter().all(|n| names.iter().any(|x| x == n)), "目前支援的語言都在清單裡：{names:?}");
+        assert!(
+            ["Rust", "Python", "Go"]
+                .iter()
+                .all(|n| names.iter().any(|x| x == n)),
+            "目前支援的語言都在清單裡：{names:?}"
+        );
         // 檔頭寫了清單裡沒有的名稱：列在最前面，才能取消
         let with_extra = macro_type_names(&["Klingon".to_owned(), "rust".to_owned()]);
         assert_eq!(with_extra[0], "Klingon");
-        assert_eq!(with_extra.iter().filter(|n| n.eq_ignore_ascii_case("rust")).count(), 1, "已經有的不重複列");
+        assert_eq!(
+            with_extra
+                .iter()
+                .filter(|n| n.eq_ignore_ascii_case("rust"))
+                .count(),
+            1,
+            "已經有的不重複列"
+        );
         // 勾選加在後面，取消拿掉（不分大小寫），其餘順序不變
         let langs = |l: &[&str]| l.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         assert_eq!(toggled_langs(&[], "Rust", true), ["Rust"]);
-        assert_eq!(toggled_langs(&langs(&["Rust"]), "Python", true), ["Rust", "Python"]);
-        assert_eq!(toggled_langs(&langs(&["Rust", "Python"]), "rust", false), ["Python"]);
-        assert!(toggled_langs(&langs(&["Python"]), "Python", false).is_empty(), "全部取消就回到所有檔案");
+        assert_eq!(
+            toggled_langs(&langs(&["Rust"]), "Python", true),
+            ["Rust", "Python"]
+        );
+        assert_eq!(
+            toggled_langs(&langs(&["Rust", "Python"]), "rust", false),
+            ["Python"]
+        );
+        assert!(
+            toggled_langs(&langs(&["Python"]), "Python", false).is_empty(),
+            "全部取消就回到所有檔案"
+        );
     }
 
     #[test]
@@ -8545,7 +10406,10 @@ mod tests {
         let read = || std::fs::read_to_string(dir.path().join("m.js")).unwrap();
         // 改完會重新掃描「真正的」巨集資料夾，所以每次都先把測試用的清單放回去，免得改到使用者自己的巨集
         let reload = |app: &mut App| app.macros = macro_lib::scan(dir.path());
-        app.handle(Action::SetMacroLangs(0, vec!["Rust".into(), "Python".into()]), &ctx);
+        app.handle(
+            Action::SetMacroLangs(0, vec!["Rust".into(), "Python".into()]),
+            &ctx,
+        );
         assert_eq!(read(), "// @lang Rust, Python\n// @name M\nrun();\n");
         reload(&mut app);
         assert_eq!(app.macros[0].langs, ["Rust", "Python"]);
@@ -8562,9 +10426,16 @@ mod tests {
     fn macros_for_different_file_types_may_share_a_shortcut_but_overlapping_scopes_may_not() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(None, Settings::default());
-        let key = egui::KeyboardShortcut::new(egui::Modifiers::ALT | egui::Modifiers::COMMAND, egui::Key::K);
+        let key = egui::KeyboardShortcut::new(
+            egui::Modifiers::ALT | egui::Modifiers::COMMAND,
+            egui::Key::K,
+        );
         app.macros = vec![
-            macro_file(dir.path(), "rust.js", "// @name R\n// @lang Rust\n// @shortcut Ctrl+Alt+K\n"),
+            macro_file(
+                dir.path(),
+                "rust.js",
+                "// @name R\n// @lang Rust\n// @shortcut Ctrl+Alt+K\n",
+            ),
             macro_file(dir.path(), "py.js", "// @name P\n// @lang Python\n"),
             macro_file(dir.path(), "all.js", "// @name A\n"),
         ];
@@ -8572,20 +10443,38 @@ mod tests {
         // Python 專用的可以用 Rust 專用的那個快捷鍵
         let p = by_name(&app, "P");
         app.set_macro_shortcut(p, Some(key));
-        assert!(std::fs::read_to_string(dir.path().join("py.js")).unwrap().contains("@shortcut Ctrl+Alt+K"));
+        assert!(
+            std::fs::read_to_string(dir.path().join("py.js"))
+                .unwrap()
+                .contains("@shortcut Ctrl+Alt+K")
+        );
         // 通用的和任何範圍都重疊：拒絕
         app.macros = macro_lib::scan(dir.path());
         let a = by_name(&app, "A");
         app.set_macro_shortcut(a, Some(key));
-        assert!(!std::fs::read_to_string(dir.path().join("all.js")).unwrap().contains("@shortcut"), "通用的不能搶");
+        assert!(
+            !std::fs::read_to_string(dir.path().join("all.js"))
+                .unwrap()
+                .contains("@shortcut"),
+            "通用的不能搶"
+        );
         assert!(app.log.iter().any(|(_, t)| t.contains("已經是巨集")));
         // 把 Python 專用的改成也適用 Rust：範圍重疊，快捷鍵衝突，不改並說明原因
         let ctx = egui::Context::default();
         app.macros = macro_lib::scan(dir.path());
         let p = by_name(&app, "P");
-        app.handle(Action::SetMacroLangs(p, vec!["Python".into(), "Rust".into()]), &ctx);
-        assert!(app.log.iter().any(|(_, t)| t.contains("重疊")), "要說明原因");
-        assert_eq!(macro_lib::parse_langs(&std::fs::read_to_string(dir.path().join("py.js")).unwrap()), ["Python"]);
+        app.handle(
+            Action::SetMacroLangs(p, vec!["Python".into(), "Rust".into()]),
+            &ctx,
+        );
+        assert!(
+            app.log.iter().any(|(_, t)| t.contains("重疊")),
+            "要說明原因"
+        );
+        assert_eq!(
+            macro_lib::parse_langs(&std::fs::read_to_string(dir.path().join("py.js")).unwrap()),
+            ["Python"]
+        );
     }
 
     #[test]
@@ -8597,7 +10486,10 @@ mod tests {
         std::fs::write(&txt, "plain\n").unwrap();
         let macros = tempfile::tempdir().unwrap();
         let mut app = App::new(None, Settings::default());
-        app.macros = vec![macro_file(macros.path(), "py.js", "// @name P\n// @lang Python\n"), macro_file(macros.path(), "all.js", "// @name A\n")];
+        app.macros = vec![
+            macro_file(macros.path(), "py.js", "// @name P\n// @lang Python\n"),
+            macro_file(macros.path(), "all.js", "// @name A\n"),
+        ];
         app.open_path(&rs);
         assert_eq!(app.doc_lang(), Some("Rust"));
         let (py, all) = (app.macros[0].clone(), app.macros[1].clone());
@@ -8605,11 +10497,17 @@ mod tests {
         // 面板、快捷鍵、F5 都走這個檢查：不適用就不執行，也不記成「上一個巨集」
         app.run_macro_entry(0);
         assert!(app.last_macro.is_none());
-        assert!(app.log.iter().any(|(_, t)| t.contains("只適用於 Python")), "要說明原因");
+        assert!(
+            app.log.iter().any(|(_, t)| t.contains("只適用於 Python")),
+            "要說明原因"
+        );
         app.last_macro = Some(py.path.clone());
         let before = app.log.len();
         app.handle(Action::RerunMacro, &egui::Context::default());
-        assert!(app.log.len() > before && app.log.last().unwrap().1.contains("只適用於"), "F5 也一樣");
+        assert!(
+            app.log.len() > before && app.log.last().unwrap().1.contains("只適用於"),
+            "F5 也一樣"
+        );
         // 通用的照常執行
         app.run_macro_entry(1);
         assert_eq!(app.last_macro.as_deref(), Some(all.path.as_path()));
@@ -8643,20 +10541,47 @@ mod tests {
         let path = dir.path().join("m.js");
         std::fs::write(&path, "// @shortcut F6\nrun();\n").unwrap();
         let mut app = App::new(None, Settings::default());
-        app.macros = vec![macro_lib::MacroEntry { path: path.clone(), name: "m".into(), shortcut: None, langs: Vec::new() }];
+        app.macros = vec![macro_lib::MacroEntry {
+            path: path.clone(),
+            name: "m".into(),
+            shortcut: None,
+            langs: Vec::new(),
+        }];
         let ctx = egui::Context::default();
-        app.resolve_modal(Then::RenameMacro(0), modal::Answer::Yes, Some("  ".into()), &ctx);
-        assert!(app.modal.as_ref().unwrap().spec.error.is_some(), "空名稱要重新詢問");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "// @shortcut F6\nrun();\n", "沒有動檔案");
+        app.resolve_modal(
+            Then::RenameMacro(0),
+            modal::Answer::Yes,
+            Some("  ".into()),
+            &ctx,
+        );
+        assert!(
+            app.modal.as_ref().unwrap().spec.error.is_some(),
+            "空名稱要重新詢問"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "// @shortcut F6\nrun();\n",
+            "沒有動檔案"
+        );
         app.modal = None;
-        app.resolve_modal(Then::RenameMacro(0), modal::Answer::Yes, Some(" 新名稱 ".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameMacro(0),
+            modal::Answer::Yes,
+            Some(" 新名稱 ".into()),
+            &ctx,
+        );
         assert!(app.modal.is_none());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "// @name 新名稱\n// @shortcut F6\nrun();\n"
         );
         // 取消：什麼都不做
-        app.resolve_modal(Then::RenameMacro(0), modal::Answer::Cancel, Some("別的".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameMacro(0),
+            modal::Answer::Cancel,
+            Some("別的".into()),
+            &ctx,
+        );
         assert!(std::fs::read_to_string(&path).unwrap().contains("新名稱"));
     }
 
@@ -8677,18 +10602,33 @@ mod tests {
         assert_eq!(p.input.as_ref().unwrap().text, "b.txt");
         app.modal = None;
         // 別的分頁已經開著 a.txt：拒絕並重新詢問，帶著使用者打的字
-        app.resolve_modal(Then::RenameFile, modal::Answer::Yes, Some("a.txt".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameFile,
+            modal::Answer::Yes,
+            Some("a.txt".into()),
+            &ctx,
+        );
         let p = app.modal.as_ref().expect("重新詢問");
         assert!(p.spec.error.as_deref().unwrap().contains("a.txt"));
         assert_eq!(p.input.as_ref().unwrap().text, "a.txt");
         assert!(b.exists());
         app.modal = None;
         // 不合法的檔名
-        app.resolve_modal(Then::RenameFile, modal::Answer::Yes, Some("x/y.txt".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameFile,
+            modal::Answer::Yes,
+            Some("x/y.txt".into()),
+            &ctx,
+        );
         assert!(app.modal.as_ref().unwrap().spec.error.is_some());
         app.modal = None;
         // 成功
-        app.resolve_modal(Then::RenameFile, modal::Answer::Yes, Some("c.md".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameFile,
+            modal::Answer::Yes,
+            Some("c.md".into()),
+            &ctx,
+        );
         assert!(app.modal.is_none());
         let c = dir.path().join("c.md");
         assert!(c.exists() && !b.exists());
@@ -8696,7 +10636,12 @@ mod tests {
         assert_eq!(app.doc.text(), "bbb");
         assert_eq!(app.tabs.len(), 2);
         // 取消：不動
-        app.resolve_modal(Then::RenameFile, modal::Answer::Cancel, Some("zzz.txt".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameFile,
+            modal::Answer::Cancel,
+            Some("zzz.txt".into()),
+            &ctx,
+        );
         assert!(c.exists());
     }
 
@@ -8715,20 +10660,40 @@ mod tests {
         app.settings.set_scheme_name(true, "Nord");
         app.settings.set_scheme_name(false, "GitHub Light");
         app.apply_schemes(&ctx);
-        let by_name = |n: &str| scheme::builtins().into_iter().find(|s| s.name == n).unwrap();
-        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, by_name("Nord").get(Role::EditorBg));
-        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, by_name("GitHub Light").get(Role::PanelBg));
+        let by_name = |n: &str| {
+            scheme::builtins()
+                .into_iter()
+                .find(|s| s.name == n)
+                .unwrap()
+        };
+        assert_eq!(
+            ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color,
+            by_name("Nord").get(Role::EditorBg)
+        );
+        assert_eq!(
+            ctx.style_of(egui::Theme::Light).visuals.panel_fill,
+            by_name("GitHub Light").get(Role::PanelBg)
+        );
         // 只改深色：淺色不動
         let light_before = ctx.style_of(egui::Theme::Light).visuals.panel_fill;
         app.handle(Action::SetScheme(true, "Dracula".into()), &ctx);
         assert_eq!(app.settings.scheme_name(true), "Dracula");
-        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, by_name("Dracula").get(Role::EditorBg));
-        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, light_before);
+        assert_eq!(
+            ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color,
+            by_name("Dracula").get(Role::EditorBg)
+        );
+        assert_eq!(
+            ctx.style_of(egui::Theme::Light).visuals.panel_fill,
+            light_before
+        );
         assert!(app.settings_dirty_since.is_some(), "選擇要寫進設定");
         // 設定檔裡的名稱不存在（例如自訂配色檔被刪了）：退回預設，不會壞掉
         app.settings.set_scheme_name(false, "已經被刪掉的配色");
         app.apply_schemes(&ctx);
-        assert_eq!(ctx.style_of(egui::Theme::Light).visuals.panel_fill, by_name(scheme::DEFAULT_LIGHT).get(Role::PanelBg));
+        assert_eq!(
+            ctx.style_of(egui::Theme::Light).visuals.panel_fill,
+            by_name(scheme::DEFAULT_LIGHT).get(Role::PanelBg)
+        );
     }
 
     #[test]
@@ -8741,12 +10706,22 @@ mod tests {
         edit.set(Role::EditorBg, egui::Color32::from_rgb(9, 8, 7));
         app.scheme_edit = Some(edit);
         app.apply_schemes(&ctx);
-        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, egui::Color32::from_rgb(9, 8, 7), "編輯中的顏色立刻預覽");
+        assert_eq!(
+            ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color,
+            egui::Color32::from_rgb(9, 8, 7),
+            "編輯中的顏色立刻預覽"
+        );
         // 沒按儲存就放掉：回到清單裡選的那一套
         app.scheme_edit = None;
         app.apply_schemes(&ctx);
-        let dracula = scheme::builtins().into_iter().find(|s| s.name == "Dracula").unwrap();
-        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color, dracula.get(Role::EditorBg));
+        let dracula = scheme::builtins()
+            .into_iter()
+            .find(|s| s.name == "Dracula")
+            .unwrap();
+        assert_eq!(
+            ctx.style_of(egui::Theme::Dark).visuals.extreme_bg_color,
+            dracula.get(Role::EditorBg)
+        );
         // 編輯中的是深色配色，淺色那一邊不受影響
         let light = ctx.style_of(egui::Theme::Light).visuals.panel_fill;
         let mut edit = dracula.clone();
@@ -8766,10 +10741,22 @@ mod tests {
         edit.set(scheme::Role::SynKeyword, egui::Color32::from_rgb(1, 2, 3));
         app.scheme_edit = Some(edit);
         // 空的、與內建同名：拒絕，編輯中的還在
-        assert!(app.save_scheme_as(dir.path(), "  ").unwrap_err().contains("空"));
-        assert!(app.save_scheme_as(dir.path(), "Nord").unwrap_err().contains("內建"));
+        assert!(
+            app.save_scheme_as(dir.path(), "  ")
+                .unwrap_err()
+                .contains("空")
+        );
+        assert!(
+            app.save_scheme_as(dir.path(), "Nord")
+                .unwrap_err()
+                .contains("內建")
+        );
         assert!(app.scheme_edit.is_some());
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "拒絕時不寫檔");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "拒絕時不寫檔"
+        );
         // 成功：寫出檔案、設為深色主題的配色、結束編輯
         app.save_scheme_as(dir.path(), "我的 Dracula").unwrap();
         assert!(app.scheme_edit.is_none());
@@ -8794,12 +10781,20 @@ mod tests {
         app.schemes = scheme::combined(&[mine.clone()]);
         // 正在編輯別的配色，想另存成「甲」：已經有了，拒絕
         app.scheme_edit = Some(scheme::pick(&app.schemes, true, "Dracula").clone());
-        assert!(app.save_scheme_as(dir.path(), "甲").unwrap_err().contains("已經有"));
+        assert!(
+            app.save_scheme_as(dir.path(), "甲")
+                .unwrap_err()
+                .contains("已經有")
+        );
         // 正在編輯「甲」本身再存成「甲」：寫回原檔
         app.scheme_edit = Some(mine.clone());
         let before = std::fs::read_dir(dir.path()).unwrap().count();
         app.save_scheme_as(dir.path(), "甲").unwrap();
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), before, "沒有多出新檔案");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            before,
+            "沒有多出新檔案"
+        );
     }
 
     #[test]
@@ -8836,7 +10831,12 @@ mod tests {
 
     fn later(path: &std::path::Path) {
         let t = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        std::fs::File::options().write(true).open(path).unwrap().set_modified(t).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
     }
 
     #[test]
@@ -8924,17 +10924,36 @@ mod tests {
         let bump = |p: &std::path::Path, text: &str, secs: u64| {
             std::fs::write(p, text).unwrap();
             let t = std::time::SystemTime::now() + std::time::Duration::from_secs(secs);
-            std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
         };
         // 乾淨的背景分頁：自動重新載入（兩個窗格都要）
         bump(&a, "a.txt v2", 5);
         bump(&b, "b.txt v2", 5);
         app.check_background_docs();
-        assert_eq!(text_of(&mut app, "a.txt").unwrap().0, "a.txt v2", "其他窗格的背景分頁");
-        assert_eq!(text_of(&mut app, "b.txt").unwrap().0, "b.txt v2", "同窗格的背景分頁");
+        assert_eq!(
+            text_of(&mut app, "a.txt").unwrap().0,
+            "a.txt v2",
+            "其他窗格的背景分頁"
+        );
+        assert_eq!(
+            text_of(&mut app, "b.txt").unwrap().0,
+            "b.txt v2",
+            "同窗格的背景分頁"
+        );
         // 有未儲存修改的背景分頁：不動內容，只標記，而且只提醒一次
         {
-            let tab = app.layout.others.values_mut().flat_map(|s| s.background_mut(false)).find(|t| t.doc.name() == "a.txt").unwrap();
+            let tab = app
+                .layout
+                .others
+                .values_mut()
+                .flat_map(|s| s.background_mut(false))
+                .find(|t| t.doc.name() == "a.txt")
+                .unwrap();
             tab.doc.buffer.insert(0, "mine ");
             tab.doc.sync();
         }
@@ -8949,7 +10968,10 @@ mod tests {
         // 被刪除：標記，內容還在
         std::fs::remove_file(&b).unwrap();
         app.check_background_docs();
-        assert_eq!(text_of(&mut app, "b.txt").unwrap(), ("b.txt v2".to_owned(), DiskState::Missing));
+        assert_eq!(
+            text_of(&mut app, "b.txt").unwrap(),
+            ("b.txt v2".to_owned(), DiskState::Missing)
+        );
         // 作用中的分頁被刪除也要標記
         std::fs::remove_file(&c).unwrap();
         app.check_external_changes();
@@ -9013,28 +11035,72 @@ mod tests {
         app.new_terminal(); // 終端機 2，在另一個窗格
         let focused_before = (app.layout.focus, app.tabs.active());
         let pending = |app: &mut App, name: &str| -> String {
-            app.all_terminals_mut().into_iter().find(|t| t.name() == name).unwrap().pending_text()
+            app.all_terminals_mut()
+                .into_iter()
+                .find(|t| t.name() == name)
+                .unwrap()
+                .pending_text()
         };
         // 名稱（不分大小寫）、預設名稱的編號：各送到自己那一個，焦點不動
-        assert_eq!(app.send_to_terminal(Some("伺服器"), &[Text("cargo run".into()), Key("Enter".into())], false), Ok(()));
-        assert_eq!(app.send_to_terminal(Some("終端機 2"), &[Key("Ctrl+C".into())], false), Ok(()));
-        assert_eq!(app.send_to_terminal(Some("2"), &[Text("x".into())], false), Ok(()));
+        assert_eq!(
+            app.send_to_terminal(
+                Some("伺服器"),
+                &[Text("cargo run".into()), Key("Enter".into())],
+                false
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            app.send_to_terminal(Some("終端機 2"), &[Key("Ctrl+C".into())], false),
+            Ok(())
+        );
+        assert_eq!(
+            app.send_to_terminal(Some("2"), &[Text("x".into())], false),
+            Ok(())
+        );
         assert_eq!(pending(&mut app, "伺服器"), "cargo run\r");
         assert_eq!(pending(&mut app, "終端機 2"), "\u{3}x");
-        assert_eq!((app.layout.focus, app.tabs.active()), focused_before, "不改變焦點與顯示的分頁");
+        assert_eq!(
+            (app.layout.focus, app.tabs.active()),
+            focused_before,
+            "不改變焦點與顯示的分頁"
+        );
         // 編號只對預設名稱有效：「伺服器」的編號 1 不能用
-        assert!(app.send_to_terminal(Some("1"), &[Text("x".into())], false).unwrap_err().contains("找不到"));
+        assert!(
+            app.send_to_terminal(Some("1"), &[Text("x".into())], false)
+                .unwrap_err()
+                .contains("找不到")
+        );
         // 找不到：訊息列出現有的名稱
-        let err = app.send_to_terminal(Some("不存在"), &[Text("x".into())], false).unwrap_err();
-        assert!(err.contains("不存在") && err.contains("伺服器") && err.contains("終端機 2"), "{err}");
+        let err = app
+            .send_to_terminal(Some("不存在"), &[Text("x".into())], false)
+            .unwrap_err();
+        assert!(
+            err.contains("不存在") && err.contains("伺服器") && err.contains("終端機 2"),
+            "{err}"
+        );
         // 沒指定名稱：作用中的分頁是終端機就用它；焦點在編輯區、又有好幾個終端機就要求指定
-        assert_eq!(app.send_to_terminal(None, &[Text("y".into())], false), Ok(()));
+        assert_eq!(
+            app.send_to_terminal(None, &[Text("y".into())], false),
+            Ok(())
+        );
         assert_eq!(pending(&mut app, "終端機 2"), "\u{3}xy");
         app.focus_pane(editor_pane);
         assert!(app.doc.terminal.is_none());
-        assert!(app.send_to_terminal(None, &[Text("z".into())], false).unwrap_err().contains("-t"));
+        assert!(
+            app.send_to_terminal(None, &[Text("z".into())], false)
+                .unwrap_err()
+                .contains("-t")
+        );
         // 壞的按鍵不會送出任何東西
-        assert!(app.send_to_terminal(Some("伺服器"), &[Text("w".into()), Key("Nonsense".into())], false).is_err());
+        assert!(
+            app.send_to_terminal(
+                Some("伺服器"),
+                &[Text("w".into()), Key("Nonsense".into())],
+                false
+            )
+            .is_err()
+        );
         assert_eq!(pending(&mut app, "伺服器"), "cargo run\r");
     }
 
@@ -9045,17 +11111,46 @@ mod tests {
         app.new_terminal();
         assert_eq!(app.doc.name(), "終端機 1");
         app.start_rename_tab(app.tabs.active());
-        assert!(matches!(app.modal.as_ref().map(|m| &m.then), Some(&Then::RenameTerminal)), "要問新名字，不是另存新檔");
+        assert!(
+            matches!(
+                app.modal.as_ref().map(|m| &m.then),
+                Some(&Then::RenameTerminal)
+            ),
+            "要問新名字，不是另存新檔"
+        );
         app.modal = None;
-        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("  伺服器  ".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameTerminal,
+            modal::Answer::Yes,
+            Some("  伺服器  ".into()),
+            &ctx,
+        );
         assert_eq!(app.doc.name(), "伺服器", "前後空白去掉");
-        assert_eq!(app.pane_tab_text(app.layout.focus, app.tabs.active()), "伺服器");
-        app.resolve_modal(Then::RenameTerminal, modal::Answer::Cancel, Some("別的".into()), &ctx);
+        assert_eq!(
+            app.pane_tab_text(app.layout.focus, app.tabs.active()),
+            "伺服器"
+        );
+        app.resolve_modal(
+            Then::RenameTerminal,
+            modal::Answer::Cancel,
+            Some("別的".into()),
+            &ctx,
+        );
         assert_eq!(app.doc.name(), "伺服器", "取消不改");
-        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("   ".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameTerminal,
+            modal::Answer::Yes,
+            Some("   ".into()),
+            &ctx,
+        );
         assert_eq!(app.doc.name(), "終端機 1", "留空改回預設");
         // 取了名字之後，新的終端機仍然拿到最小的空號（編號和名字無關）
-        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("終端機 1".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameTerminal,
+            modal::Answer::Yes,
+            Some("終端機 1".into()),
+            &ctx,
+        );
         app.new_terminal();
         assert_eq!(app.doc.name(), "終端機 2");
     }
@@ -9074,12 +11169,23 @@ mod tests {
         app.new_terminal();
         app.new_terminal();
         let ctx = egui::Context::default();
-        app.resolve_modal(Then::RenameTerminal, modal::Answer::Yes, Some("伺服器".into()), &ctx);
+        app.resolve_modal(
+            Then::RenameTerminal,
+            modal::Answer::Yes,
+            Some("伺服器".into()),
+            &ctx,
+        );
         let second = app.layout.focus;
         app.move_tab(second, 0, Target::Into(editor_pane));
-        let first = app.terminal_tabs().into_iter().find(|(p, _)| *p != editor_pane).expect("還有另一個終端機");
+        let first = app
+            .terminal_tabs()
+            .into_iter()
+            .find(|(p, _)| *p != editor_pane)
+            .expect("還有另一個終端機");
         app.move_tab(first.0, first.1, Target::Into(editor_pane));
-        let names: Vec<String> = (0..app.tabs.len()).map(|i| app.pane_label(editor_pane, i).0).collect();
+        let names: Vec<String> = (0..app.tabs.len())
+            .map(|i| app.pane_label(editor_pane, i).0)
+            .collect();
         assert_eq!(app.tabs.len(), 4, "{names:?}");
 
         let saved = session::Session::parse(&app.session_all().to_text());
@@ -9087,7 +11193,14 @@ mod tests {
         assert_eq!(saved.panes[0].files.len(), 2);
         assert_eq!(saved.panes[0].terminals.len(), 2);
         // 每個終端機記下它的資料夾（這裡是開它時的檔案所在資料夾），重開後從那裡開始
-        assert!(saved.panes[0].terminals.iter().all(|t| t.dir.as_deref() == Some(dir.path())), "{:?}", saved.panes[0].terminals);
+        assert!(
+            saved.panes[0]
+                .terminals
+                .iter()
+                .all(|t| t.dir.as_deref() == Some(dir.path())),
+            "{:?}",
+            saved.panes[0].terminals
+        );
 
         // 重新執行：同樣的檔案與終端機分頁、同樣的名字與順序，每個終端機是新開的 shell
         let mut fresh = App::new(None, Settings::default());
@@ -9095,13 +11208,18 @@ mod tests {
         assert_eq!(fresh.tabs.len(), 4);
         let order = |app: &App| -> Vec<String> {
             let pane = app.layout.focus;
-            (0..app.tabs.len()).map(|i| app.pane_label(pane, i).0).collect()
+            (0..app.tabs.len())
+                .map(|i| app.pane_label(pane, i).0)
+                .collect()
         };
         assert_eq!(order(&fresh), order(&app));
         assert_eq!(fresh.terminal_tabs().len(), 2);
         assert_eq!(fresh.tabs.active(), app.tabs.active(), "作用中的分頁也一樣");
         // 存檔再讀回來是同一份（還原沒有改變記錄的內容）
-        assert_eq!(session::Session::parse(&fresh.session_all().to_text()), saved);
+        assert_eq!(
+            session::Session::parse(&fresh.session_all().to_text()),
+            saved
+        );
     }
 
     #[test]
@@ -9164,14 +11282,22 @@ fn cli_print(to_stderr: bool, text: &str) {
     use std::io::Write;
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+        use windows_sys::Win32::System::Console::{
+            ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        };
         // SAFETY: 單純的系統呼叫，沒有指標參數
         let redirected = unsafe {
             AttachConsole(ATTACH_PARENT_PROCESS);
-            let handle = GetStdHandle(if to_stderr { STD_ERROR_HANDLE } else { STD_OUTPUT_HANDLE });
+            let handle = GetStdHandle(if to_stderr {
+                STD_ERROR_HANDLE
+            } else {
+                STD_OUTPUT_HANDLE
+            });
             !handle.is_null() && handle as isize != -1
         };
-        if !redirected && let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+        if !redirected
+            && let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$")
+        {
             let _ = console.write_all(text.as_bytes());
             return;
         }
@@ -9212,10 +11338,15 @@ fn main() -> eframe::Result {
             .resolve_inputs(
                 || {
                     let mut text = Vec::new();
-                    std::io::Read::read_to_end(&mut std::io::stdin(), &mut text).map_err(|e| format!("讀不到標準輸入：{e}"))?;
+                    std::io::Read::read_to_end(&mut std::io::stdin(), &mut text)
+                        .map_err(|e| format!("讀不到標準輸入：{e}"))?;
                     Ok(String::from_utf8_lossy(&text).into_owned())
                 },
-                |path| std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).map_err(|e| format!("讀不到檔案 {path}：{e}")),
+                |path| {
+                    std::fs::read(path)
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                        .map_err(|e| format!("讀不到檔案 {path}：{e}"))
+                },
             )
             .and_then(|()| single_instance::send(&send));
         if let Err(e) = result {
@@ -9231,7 +11362,12 @@ fn main() -> eframe::Result {
 
     // 用命令列的路徑啟動：已經有 FEditor 在執行就交給它開，這個行程直接結束（見 single_instance）
     let paths: Vec<PathBuf> = args.targets.iter().map(|t| t.path.clone()).collect();
-    let goto: Vec<cli::Target> = args.targets.iter().filter(|t| t.line.is_some()).cloned().collect();
+    let goto: Vec<cli::Target> = args
+        .targets
+        .iter()
+        .filter(|t| t.line.is_some())
+        .cloned()
+        .collect();
     let listener = match single_instance::claim(&args.targets, args.wait, args.new_window) {
         single_instance::Claim::Forwarded => return Ok(()),
         single_instance::Claim::Primary(listener) => Some(listener),
@@ -9275,7 +11411,9 @@ fn main() -> eframe::Result {
             app.startup_goto = goto;
             if let Some(listener) = listener {
                 let ctx = cc.egui_ctx.clone();
-                app.incoming = Some(single_instance::serve(listener, move || ctx.request_repaint()));
+                app.incoming = Some(single_instance::serve(listener, move || {
+                    ctx.request_repaint()
+                }));
             }
             #[cfg(target_os = "macos")]
             {

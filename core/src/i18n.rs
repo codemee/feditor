@@ -98,7 +98,11 @@ pub fn set(lang: Lang) {
 }
 
 pub fn current() -> Lang {
-    if CURRENT.load(Ordering::Relaxed) == 1 { Lang::English } else { Lang::Chinese }
+    if CURRENT.load(Ordering::Relaxed) == 1 {
+        Lang::English
+    } else {
+        Lang::Chinese
+    }
 }
 
 pub fn is_english() -> bool {
@@ -117,7 +121,11 @@ pub fn t(zh: &'static str) -> &'static str {
 
 /// 指定語言的字串（不看全域設定，測試用）。
 pub fn translate(lang: Lang, zh: &'static str) -> &'static str {
-    if lang == Lang::English { table().get(zh).copied().unwrap_or(zh) } else { zh }
+    if lang == Lang::English {
+        table().get(zh).copied().unwrap_or(zh)
+    } else {
+        zh
+    }
 }
 
 /// 把範本裡的 `{名稱}` 換成對應的值。沒有對應的名稱就原樣保留。
@@ -189,11 +197,18 @@ mod tests {
         assert_eq!(resolve(LangChoice::Chinese, Some("en-US")), Lang::Chinese);
         assert_eq!(resolve(LangChoice::English, Some("zh-TW")), Lang::English);
         assert_eq!(resolve(LangChoice::System, Some("zh-TW")), Lang::Chinese);
-        assert_eq!(resolve(LangChoice::System, Some("zh-Hant-TW")), Lang::Chinese);
+        assert_eq!(
+            resolve(LangChoice::System, Some("zh-Hant-TW")),
+            Lang::Chinese
+        );
         assert_eq!(resolve(LangChoice::System, Some("ZH-CN")), Lang::Chinese);
         assert_eq!(resolve(LangChoice::System, Some("ja-JP")), Lang::English);
         assert_eq!(resolve(LangChoice::System, Some("en-US")), Lang::English);
-        assert_eq!(resolve(LangChoice::System, None), Lang::English, "取不到就用英文");
+        assert_eq!(
+            resolve(LangChoice::System, None),
+            Lang::English,
+            "取不到就用英文"
+        );
     }
 
     #[test]
@@ -206,7 +221,12 @@ mod tests {
         }
         assert_eq!(
             seen,
-            [LangChoice::System, LangChoice::Chinese, LangChoice::English, LangChoice::System]
+            [
+                LangChoice::System,
+                LangChoice::Chinese,
+                LangChoice::English,
+                LangChoice::System
+            ]
         );
     }
 
@@ -224,7 +244,11 @@ mod tests {
         let args = [("n", "3".to_owned()), ("name", "a.txt".to_owned())];
         assert_eq!(fill("已取代 {n} 筆", &args), "已取代 3 筆");
         assert_eq!(fill("{name}：{n}", &args), "a.txt：3");
-        assert_eq!(fill("{missing} 與 {n}", &args), "{missing} 與 3", "沒有對應的名稱原樣保留");
+        assert_eq!(
+            fill("{missing} 與 {n}", &args),
+            "{missing} 與 3",
+            "沒有對應的名稱原樣保留"
+        );
         assert_eq!(fill("沒有大括號", &args), "沒有大括號");
         assert_eq!(fill("未結束的 {n", &args), "未結束的 {n");
     }
@@ -280,7 +304,11 @@ mod tests {
     #[test]
     fn every_translatable_string_in_the_source_has_an_english_entry() {
         let keys = used_keys();
-        assert!(keys.len() > 200, "掃描到的字串太少（{}），掃描路徑可能不對", keys.len());
+        assert!(
+            keys.len() > 200,
+            "掃描到的字串太少（{}），掃描路徑可能不對",
+            keys.len()
+        );
         let missing: Vec<String> = keys
             .iter()
             .filter(|(k, _)| !table().contains_key(k.as_str()))
@@ -297,14 +325,22 @@ mod tests {
             .map(|(k, _)| *k)
             .filter(|k| !keys.contains_key(*k))
             .collect();
-        assert!(unused.is_empty(), "對照表有沒用到的字串：\n{}", unused.join("\n"));
+        assert!(
+            unused.is_empty(),
+            "對照表有沒用到的字串：\n{}",
+            unused.join("\n")
+        );
     }
 
     #[test]
     fn english_mode_translates_and_chinese_mode_does_not() {
         assert_eq!(translate(Lang::English, "取消"), "Cancel");
         assert_eq!(translate(Lang::Chinese, "取消"), "取消");
-        assert_eq!(translate(Lang::English, "沒有這個字串"), "沒有這個字串", "沒有翻譯就退回中文");
+        assert_eq!(
+            translate(Lang::English, "沒有這個字串"),
+            "沒有這個字串",
+            "沒有翻譯就退回中文"
+        );
     }
 
     #[test]

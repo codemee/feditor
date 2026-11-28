@@ -15,7 +15,10 @@ pub struct Selection {
 
 impl Selection {
     pub fn collapsed(at: usize) -> Self {
-        Self { anchor: at, head: at }
+        Self {
+            anchor: at,
+            head: at,
+        }
     }
 
     pub fn is_empty(self) -> bool {
@@ -74,7 +77,11 @@ fn changed_end(old: &str, new: &str) -> usize {
 ///   （游標到 4），再按左鍵才變成 3..5（游標到 3）；按右鍵回來時 4..5（游標 4），再按右鍵又是
 ///   一個相同的事件（游標回到 5）。
 /// - 輸入法回報的是空範圍（一般的游標位置）：就用它回報的位置。
-pub(crate) fn infer_cursor(prev: Option<&Preedit>, text: &str, active: &Option<Range<usize>>) -> usize {
+pub(crate) fn infer_cursor(
+    prev: Option<&Preedit>,
+    text: &str,
+    active: &Option<Range<usize>>,
+) -> usize {
     let len = text.chars().count();
     if let Some(a) = active.as_ref().filter(|a| a.is_empty()) {
         return a.start.min(len);
@@ -89,7 +96,9 @@ pub(crate) fn infer_cursor(prev: Option<&Preedit>, text: &str, active: &Option<R
                     None => p.cursor.min(len),
                 }
             } else {
-                active.as_ref().map_or(p.cursor.min(len), |a| a.start.min(len))
+                active
+                    .as_ref()
+                    .map_or(p.cursor.min(len), |a| a.start.min(len))
             }
         }
         Some(p) => changed_end(&p.text, text),
@@ -308,7 +317,10 @@ impl EditorState {
         let rows = self.rows_for(buf, line);
         let sub = self.row_index(buf, &rows, line, col);
         let goal = self.goal_col.unwrap_or_else(|| {
-            motion::display_col(&Self::row_text(buf, line, &rows[sub]), col - rows[sub].start)
+            motion::display_col(
+                &Self::row_text(buf, line, &rows[sub]),
+                col - rows[sub].start,
+            )
         });
         let (mut l, mut s, mut cur) = (line, sub, rows);
         let mut edge = None;
@@ -459,7 +471,10 @@ impl EditorState {
         // 在只有空白的行首輸入閉括號：先減一層縮排（取代游標前的那一層空白）
         if self.sel.is_empty()
             && self.language.is_some()
-            && let Some(c) = text.chars().next().filter(|c| text.chars().count() == 1 && "})]".contains(*c))
+            && let Some(c) = text
+                .chars()
+                .next()
+                .filter(|c| text.chars().count() == 1 && "})]".contains(*c))
         {
             let at = self.sel.head;
             let (line, col) = Self::line_and_col(buf, at);
@@ -495,9 +510,18 @@ impl EditorState {
 
     /// 把選取範圍 `range` 的文字拖到 `to`：`copy` 為真是複製，否則是搬動（一步復原）。
     /// 放在範圍自己裡面的搬動什麼都不做，回傳 `false`。完成後選取剛放下的文字。
-    pub fn drop_text(&mut self, buf: &mut Buffer, range: Range<usize>, to: usize, copy: bool) -> bool {
+    pub fn drop_text(
+        &mut self,
+        buf: &mut Buffer,
+        range: Range<usize>,
+        to: usize,
+        copy: bool,
+    ) -> bool {
         let to = to.min(buf.len_chars());
-        if range.is_empty() || range.end > buf.len_chars() || (!copy && (range.start..=range.end).contains(&to)) {
+        if range.is_empty()
+            || range.end > buf.len_chars()
+            || (!copy && (range.start..=range.end).contains(&to))
+        {
             return false;
         }
         self.interrupt_composition();
@@ -519,7 +543,10 @@ impl EditorState {
         };
         buf.break_group();
         self.extra.clear();
-        self.sel = Selection { anchor: start, head: start + len };
+        self.sel = Selection {
+            anchor: start,
+            head: start + len,
+        };
         self.goal_col = None;
         self.scroll_to_caret = true;
         true
@@ -564,7 +591,11 @@ impl EditorState {
         let (line, col) = Self::line_and_col(buf, range.start);
         let before: String = buf.line_text(line).chars().take(col).collect();
         let end_line = buf.line_of_char(range.end);
-        let after: String = buf.line_text(end_line).chars().skip(range.end - buf.line_start(end_line)).collect();
+        let after: String = buf
+            .line_text(end_line)
+            .chars()
+            .skip(range.end - buf.line_start(end_line))
+            .collect();
         let state = self.line_state(buf, line);
         let plan = super::indent::enter_plan(self.language, state, &before, &after);
         if !self.insert_text(buf, &plan.text) {
@@ -782,10 +813,7 @@ mod tests {
     /// 在文字裡用 `|` 標示游標位置，建立（緩衝區, 狀態）。`|` 本身不會出現在文字裡。
     /// 沒有 `|` 時游標在開頭（測試自己會另外設定選取範圍）。
     fn setup(text_with_caret: &str) -> (Buffer, EditorState) {
-        let caret = text_with_caret
-            .chars()
-            .position(|c| c == '|')
-            .unwrap_or(0);
+        let caret = text_with_caret.chars().position(|c| c == '|').unwrap_or(0);
         let text: String = text_with_caret.chars().filter(|c| *c != '|').collect();
         let mut state = EditorState::default();
         state.sel = Selection::collapsed(caret);
@@ -863,7 +891,12 @@ mod tests {
 
     #[test]
     fn backspace_deletes_a_whole_grapheme() {
-        for (text, name) in [("x👍🏽|y", "膚色"), ("xe\u{301}|y", "組合重音"), ("x👨‍👩‍👧|y", "家庭"), ("x你|y", "中文")] {
+        for (text, name) in [
+            ("x👍🏽|y", "膚色"),
+            ("xe\u{301}|y", "組合重音"),
+            ("x👨‍👩‍👧|y", "家庭"),
+            ("x你|y", "中文"),
+        ] {
             let (mut b, mut s) = setup(text);
             assert!(s.backspace(&mut b, false), "{name}");
             assert_eq!(show(&b, &s), "x|y", "{name}：一次刪掉一整個字");
@@ -949,9 +982,17 @@ mod tests {
         let (mut b, mut s) = setup("abcdef\nxy\nabcdef");
         s.sel = Selection::collapsed(5); // 第 0 行第 5 欄
         s.move_vertical(&mut b, 1, false);
-        assert_eq!(show(&b, &s), "abcdef\nxy|\nabcdef", "短的一行：被迫靠到行尾");
+        assert_eq!(
+            show(&b, &s),
+            "abcdef\nxy|\nabcdef",
+            "短的一行：被迫靠到行尾"
+        );
         s.move_vertical(&mut b, 1, false);
-        assert_eq!(show(&b, &s), "abcdef\nxy\nabcde|f", "回到長的一行：回到原本的第 5 欄");
+        assert_eq!(
+            show(&b, &s),
+            "abcdef\nxy\nabcde|f",
+            "回到長的一行：回到原本的第 5 欄"
+        );
         s.move_vertical(&mut b, -2, false);
         assert_eq!(show(&b, &s), "abcde|f\nxy\nabcdef");
     }
@@ -1040,7 +1081,11 @@ mod tests {
         s.move_right(&mut b, true, true);
         assert_eq!(show(&b, &s), "foo [bar ]baz");
         s.move_left(&mut b, false, true);
-        assert_eq!(show(&b, &s), "foo |bar baz", "Ctrl+← 以游標（head）為準，不是收選取");
+        assert_eq!(
+            show(&b, &s),
+            "foo |bar baz",
+            "Ctrl+← 以游標（head）為準，不是收選取"
+        );
     }
 
     #[test]
@@ -1080,7 +1125,11 @@ mod tests {
     struct Cfg(usize, bool, bool);
     impl Cfg {
         fn set(width: usize, spaces: bool) -> Self {
-            Cfg(motion::set_tab_width(width), motion::set_tab_uses_spaces(spaces), motion::auto_indent())
+            Cfg(
+                motion::set_tab_width(width),
+                motion::set_tab_uses_spaces(spaces),
+                motion::auto_indent(),
+            )
         }
     }
     impl Drop for Cfg {
@@ -1154,7 +1203,11 @@ mod tests {
         s.extra = vec![Selection::collapsed(8)];
         s.multi_rev = b.revision();
         assert!(s.enter(&mut b));
-        assert_eq!(b.text(), "a {\n  \n b {\n   }\n", "每個游標各自多縮排一層，不做三行展開");
+        assert_eq!(
+            b.text(),
+            "a {\n  \n b {\n   }\n",
+            "每個游標各自多縮排一層，不做三行展開"
+        );
     }
 
     #[test]
@@ -1246,7 +1299,10 @@ mod tests {
 
         let mut b = Buffer::from_text("abcdef");
         assert!(!s.drop_text(&mut b, 1..4, 2, false), "放在自己裡面不動作");
-        assert!(!s.drop_text(&mut b, 1..4, 4, false), "放在自己的邊界也不動作");
+        assert!(
+            !s.drop_text(&mut b, 1..4, 4, false),
+            "放在自己的邊界也不動作"
+        );
         assert_eq!(b.text(), "abcdef");
     }
 
@@ -1266,7 +1322,11 @@ mod tests {
         s.backspace(&mut b, false);
         assert_eq!(show(&b, &s), "| world");
         s.undo(&mut b);
-        assert_eq!(show(&b, &s), "hello| world", "復原刪除：游標在還原文字的後面");
+        assert_eq!(
+            show(&b, &s),
+            "hello| world",
+            "復原刪除：游標在還原文字的後面"
+        );
         s.redo(&mut b);
         assert_eq!(show(&b, &s), "| world");
         assert!(!s.redo(&mut b));
@@ -1428,7 +1488,6 @@ mod tests {
         s.ime_preedit(&mut b, "ㄱ", None);
         s.ime_preedit(&mut b, "가", None);
         assert_eq!(s.preedit.as_ref().unwrap().active, None);
-
     }
 
     /// 把 Windows 內建注音在 `FEDITOR_IME_LOG` 記錄到的事件依序餵進去，檢查推算的游標位置。

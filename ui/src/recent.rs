@@ -11,7 +11,8 @@ pub const MAX_RECENT: usize = 10;
 /// 兩個路徑字串是不是同一個檔案（Windows 的路徑不分大小寫，也不分 `/`、`\`）。
 fn same(a: &str, b: &str) -> bool {
     if cfg!(windows) {
-        a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\"))
+        a.replace('/', "\\")
+            .eq_ignore_ascii_case(&b.replace('/', "\\"))
     } else {
         a == b
     }
@@ -59,8 +60,13 @@ pub fn clean(list: Vec<String>) -> Vec<String> {
 /// 檔名與所在的資料夾（顯示用）。
 pub fn name_and_folder(path: &str) -> (String, String) {
     let p = Path::new(path);
-    let name = p.file_name().map_or_else(|| path.to_owned(), |n| n.to_string_lossy().into_owned());
-    let folder = p.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = p
+        .file_name()
+        .map_or_else(|| path.to_owned(), |n| n.to_string_lossy().into_owned());
+    let folder = p
+        .parent()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
     (name, folder)
 }
 
@@ -79,8 +85,16 @@ pub fn jump_titles(list: &[String]) -> Vec<String> {
     list.iter()
         .map(|path| {
             let (name, folder) = name_and_folder(path);
-            let duplicated = list.iter().filter(|other| name_and_folder(other).0.eq_ignore_ascii_case(&name)).count() > 1;
-            if duplicated && !folder.is_empty() { format!("{name} ({folder})") } else { name }
+            let duplicated = list
+                .iter()
+                .filter(|other| name_and_folder(other).0.eq_ignore_ascii_case(&name))
+                .count()
+                > 1;
+            if duplicated && !folder.is_empty() {
+                format!("{name} ({folder})")
+            } else {
+                name
+            }
         })
         .collect()
 }
@@ -90,7 +104,10 @@ mod tests {
     use super::*;
 
     fn abs(name: &str) -> String {
-        std::path::absolute(name).unwrap().to_string_lossy().into_owned()
+        std::path::absolute(name)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[test]
@@ -101,7 +118,11 @@ mod tests {
         push(&mut list, Path::new("c.txt"));
         assert_eq!(list, [abs("c.txt"), abs("b.txt"), abs("a.txt")]);
         push(&mut list, Path::new("a.txt"));
-        assert_eq!(list, [abs("a.txt"), abs("c.txt"), abs("b.txt")], "已經在清單裡：移到最前面，不重複");
+        assert_eq!(
+            list,
+            [abs("a.txt"), abs("c.txt"), abs("b.txt")],
+            "已經在清單裡：移到最前面，不重複"
+        );
     }
 
     #[test]
@@ -120,7 +141,17 @@ mod tests {
         let mut list = Vec::new();
         assert_eq!(push(&mut list, Path::new("bad\nname.txt")), None);
         assert!(list.is_empty());
-        assert_eq!(clean(vec!["a".into(), "".into(), "x\ny".into(), "a".into(), "b".into()]), ["a", "b"], "空的、含換行的、重複的都去掉");
+        assert_eq!(
+            clean(vec![
+                "a".into(),
+                "".into(),
+                "x\ny".into(),
+                "a".into(),
+                "b".into()
+            ]),
+            ["a", "b"],
+            "空的、含換行的、重複的都去掉"
+        );
     }
 
     #[test]
@@ -154,7 +185,10 @@ mod tests {
         let long = "C:\\非常長的資料夾\\再一層\\再一層\\最後一層";
         let shown = shorten_folder(long, 12);
         assert_eq!(shown.chars().count(), 12);
-        assert!(shown.starts_with('…') && shown.ends_with("最後一層"), "{shown}");
+        assert!(
+            shown.starts_with('…') && shown.ends_with("最後一層"),
+            "{shown}"
+        );
         assert_eq!(shorten_folder("abc", 1), "abc", "上限太小就不縮");
     }
 
@@ -162,7 +196,10 @@ mod tests {
     fn jump_list_titles_add_the_folder_only_when_names_repeat() {
         let list = vec![abs("x/a.txt"), abs("y/a.txt"), abs("z/b.txt")];
         let titles = jump_titles(&list);
-        assert!(titles[0].starts_with("a.txt (") && titles[0].contains('x'), "{titles:?}");
+        assert!(
+            titles[0].starts_with("a.txt (") && titles[0].contains('x'),
+            "{titles:?}"
+        );
         assert!(titles[1].starts_with("a.txt (") && titles[1].contains('y'));
         assert_eq!(titles[2], "b.txt", "檔名沒重複的只寫檔名");
     }

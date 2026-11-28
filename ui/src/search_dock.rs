@@ -35,9 +35,14 @@ impl DockEdge {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        [DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom]
-            .into_iter()
-            .find(|e| e.name().eq_ignore_ascii_case(s.trim()))
+        [
+            DockEdge::Left,
+            DockEdge::Right,
+            DockEdge::Top,
+            DockEdge::Bottom,
+        ]
+        .into_iter()
+        .find(|e| e.name().eq_ignore_ascii_case(s.trim()))
     }
 }
 
@@ -52,14 +57,24 @@ pub struct SearchDock {
 
 impl Default for SearchDock {
     fn default() -> Self {
-        Self { edge: DockEdge::Right, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, dragging: false }
+        Self {
+            edge: DockEdge::Right,
+            width: DEFAULT_WIDTH,
+            height: DEFAULT_HEIGHT,
+            dragging: false,
+        }
     }
 }
 
 impl SearchDock {
     /// 用設定檔記住的位置與大小。
     pub fn from_settings(s: &crate::settings::Settings) -> Self {
-        Self { edge: s.search_dock_edge, width: s.search_dock_width, height: s.search_dock_height, dragging: false }
+        Self {
+            edge: s.search_dock_edge,
+            width: s.search_dock_width,
+            height: s.search_dock_height,
+            dragging: false,
+        }
     }
 }
 
@@ -73,28 +88,62 @@ pub struct DockGeom {
 impl SearchDock {
     /// 面板停在 `edge` 時，在 `area` 裡佔的範圍、分隔條，以及剩給其他窗格的範圍。
     pub fn place(&self, edge: DockEdge, area: Rect) -> (DockGeom, Rect) {
-        let width = self.width.clamp(MIN_WIDTH, (area.width() - MIN_PANE.x - DIVIDER).max(MIN_WIDTH));
-        let height = self.height.clamp(MIN_HEIGHT, (area.height() - MIN_PANE.y - DIVIDER).max(MIN_HEIGHT));
+        let width = self.width.clamp(
+            MIN_WIDTH,
+            (area.width() - MIN_PANE.x - DIVIDER).max(MIN_WIDTH),
+        );
+        let height = self.height.clamp(
+            MIN_HEIGHT,
+            (area.height() - MIN_PANE.y - DIVIDER).max(MIN_HEIGHT),
+        );
         let (rect, divider, rest) = match edge {
             DockEdge::Right => {
                 let rect = Rect::from_min_max(pos2(area.right() - width, area.top()), area.max);
-                let divider = Rect::from_min_max(pos2(rect.left() - DIVIDER, area.top()), pos2(rect.left(), area.bottom()));
-                (rect, divider, Rect::from_min_max(area.min, pos2(divider.left(), area.bottom())))
+                let divider = Rect::from_min_max(
+                    pos2(rect.left() - DIVIDER, area.top()),
+                    pos2(rect.left(), area.bottom()),
+                );
+                (
+                    rect,
+                    divider,
+                    Rect::from_min_max(area.min, pos2(divider.left(), area.bottom())),
+                )
             }
             DockEdge::Left => {
                 let rect = Rect::from_min_max(area.min, pos2(area.left() + width, area.bottom()));
-                let divider = Rect::from_min_max(pos2(rect.right(), area.top()), pos2(rect.right() + DIVIDER, area.bottom()));
-                (rect, divider, Rect::from_min_max(pos2(divider.right(), area.top()), area.max))
+                let divider = Rect::from_min_max(
+                    pos2(rect.right(), area.top()),
+                    pos2(rect.right() + DIVIDER, area.bottom()),
+                );
+                (
+                    rect,
+                    divider,
+                    Rect::from_min_max(pos2(divider.right(), area.top()), area.max),
+                )
             }
             DockEdge::Bottom => {
                 let rect = Rect::from_min_max(pos2(area.left(), area.bottom() - height), area.max);
-                let divider = Rect::from_min_max(pos2(area.left(), rect.top() - DIVIDER), pos2(area.right(), rect.top()));
-                (rect, divider, Rect::from_min_max(area.min, pos2(area.right(), divider.top())))
+                let divider = Rect::from_min_max(
+                    pos2(area.left(), rect.top() - DIVIDER),
+                    pos2(area.right(), rect.top()),
+                );
+                (
+                    rect,
+                    divider,
+                    Rect::from_min_max(area.min, pos2(area.right(), divider.top())),
+                )
             }
             DockEdge::Top => {
                 let rect = Rect::from_min_max(area.min, pos2(area.right(), area.top() + height));
-                let divider = Rect::from_min_max(pos2(area.left(), rect.bottom()), pos2(area.right(), rect.bottom() + DIVIDER));
-                (rect, divider, Rect::from_min_max(pos2(area.left(), divider.bottom()), area.max))
+                let divider = Rect::from_min_max(
+                    pos2(area.left(), rect.bottom()),
+                    pos2(area.right(), rect.bottom() + DIVIDER),
+                );
+                (
+                    rect,
+                    divider,
+                    Rect::from_min_max(pos2(area.left(), divider.bottom()), area.max),
+                )
             }
         };
         (DockGeom { rect, divider }, rest)
@@ -110,7 +159,10 @@ impl SearchDock {
             (DockEdge::Top, (p.y - area.top()) / h),
             (DockEdge::Bottom, (area.bottom() - p.y) / h),
         ];
-        candidates.into_iter().min_by(|a, b| a.1.total_cmp(&b.1)).map_or(DockEdge::Right, |c| c.0)
+        candidates
+            .into_iter()
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(DockEdge::Right, |c| c.0)
     }
 
     /// 分隔條被拖到 `p`：換算成面板的新寬度（或高度）。
@@ -137,17 +189,26 @@ impl App {
 
     /// 畫尋找面板（卡片、內容、與其他窗格之間的分隔條），以及拖標題換邊時的放置預覽。
     /// `full` 是分出面板之前的整個窗格區域。回傳面板裡產生的動作。
-    pub(crate) fn show_search_dock(&mut self, ui: &mut egui::Ui, geom: Option<DockGeom>, full: Rect) -> Option<Action> {
+    pub(crate) fn show_search_dock(
+        &mut self,
+        ui: &mut egui::Ui,
+        geom: Option<DockGeom>,
+        full: Rect,
+    ) -> Option<Action> {
         let ctx = ui.ctx().clone();
         let mut action = None;
         if let Some(g) = geom {
             let (fill, stroke) = {
                 let v = ui.visuals();
-                (v.panel_fill, egui::Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color))
+                (
+                    v.panel_fill,
+                    egui::Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color),
+                )
             };
             let radius = egui::CornerRadius::same(8);
             ui.painter().rect_filled(g.rect, radius, fill);
-            ui.painter().rect_stroke(g.rect, radius, stroke, egui::StrokeKind::Inside);
+            ui.painter()
+                .rect_stroke(g.rect, radius, stroke, egui::StrokeKind::Inside);
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
                     .id_salt("search_dock")
@@ -160,7 +221,11 @@ impl App {
             }
 
             // 與其他窗格之間的分隔條：拖曳調整面板的大小
-            let resp = ui.interact(g.divider, egui::Id::unique("search_dock_divider"), egui::Sense::drag());
+            let resp = ui.interact(
+                g.divider,
+                egui::Id::unique("search_dock_divider"),
+                egui::Sense::drag(),
+            );
             let vertical_bar = matches!(self.dock.edge, DockEdge::Left | DockEdge::Right);
             if resp.hovered() || resp.dragged() {
                 ctx.set_cursor_icon(if vertical_bar {
@@ -194,11 +259,23 @@ impl App {
                 .map_or(self.dock.edge, |p| SearchDock::nearest_edge(full, p));
             let (target, _) = self.dock.place(edge, full);
             let accent = ui.visuals().selection.bg_fill;
-            let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("search_dock_drag"));
+            let layer = egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::unique("search_dock_drag"),
+            );
             let painter = ctx.layer_painter(layer);
             let preview = target.rect.shrink(CARD_INSET / 2.0);
-            painter.rect_filled(preview, egui::CornerRadius::same(6), accent.gamma_multiply(0.35));
-            painter.rect_stroke(preview, egui::CornerRadius::same(6), egui::Stroke::new(2.0, accent), egui::StrokeKind::Inside);
+            painter.rect_filled(
+                preview,
+                egui::CornerRadius::same(6),
+                accent.gamma_multiply(0.35),
+            );
+            painter.rect_stroke(
+                preview,
+                egui::CornerRadius::same(6),
+                egui::Stroke::new(2.0, accent),
+                egui::StrokeKind::Inside,
+            );
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.dock.dragging = false;
             } else if !ctx.input(|i| i.pointer.any_down()) {
@@ -222,16 +299,26 @@ mod tests {
     #[test]
     fn the_dock_takes_a_whole_edge_and_the_rest_is_left_for_the_panes() {
         let dock = SearchDock::default();
-        for edge in [DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom] {
+        for edge in [
+            DockEdge::Left,
+            DockEdge::Right,
+            DockEdge::Top,
+            DockEdge::Bottom,
+        ] {
             let (geom, rest) = dock.place(edge, area());
             // 面板與剩下的空間加上分隔條剛好鋪滿整個區域，沒有重疊
             let total = geom.rect.area() + geom.divider.area() + rest.area();
             assert!((total - area().area()).abs() < 1.0, "{edge:?}");
             // 三塊緊鄰（只共用邊界），沒有互相重疊
             let overlap = geom.rect.intersect(rest);
-            assert!(overlap.width() <= 0.0 || overlap.height() <= 0.0, "{edge:?}");
+            assert!(
+                overlap.width() <= 0.0 || overlap.height() <= 0.0,
+                "{edge:?}"
+            );
             match edge {
-                DockEdge::Left | DockEdge::Right => assert_eq!(geom.rect.height(), 600.0, "{edge:?} 佔滿整個高度"),
+                DockEdge::Left | DockEdge::Right => {
+                    assert_eq!(geom.rect.height(), 600.0, "{edge:?} 佔滿整個高度")
+                }
                 _ => assert_eq!(geom.rect.width(), 1000.0, "{edge:?} 佔滿整個寬度"),
             }
         }
@@ -243,10 +330,17 @@ mod tests {
     fn the_dock_keeps_a_minimum_size_and_leaves_the_panes_theirs() {
         let mut dock = SearchDock::default();
         dock.width = 10.0;
-        assert_eq!(dock.place(DockEdge::Right, area()).0.rect.width(), MIN_WIDTH);
+        assert_eq!(
+            dock.place(DockEdge::Right, area()).0.rect.width(),
+            MIN_WIDTH
+        );
         dock.width = 5000.0;
         let (geom, rest) = dock.place(DockEdge::Right, area());
-        assert!(rest.width() >= MIN_PANE.x - 0.5, "其他窗格至少留得下最小寬度：{}", rest.width());
+        assert!(
+            rest.width() >= MIN_PANE.x - 0.5,
+            "其他窗格至少留得下最小寬度：{}",
+            rest.width()
+        );
         assert!(geom.rect.width() >= MIN_WIDTH);
     }
 
@@ -269,7 +363,12 @@ mod tests {
 
     #[test]
     fn edge_names_round_trip() {
-        for e in [DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom] {
+        for e in [
+            DockEdge::Left,
+            DockEdge::Right,
+            DockEdge::Top,
+            DockEdge::Bottom,
+        ] {
             assert_eq!(DockEdge::parse(e.name()), Some(e));
         }
         assert_eq!(DockEdge::parse(" TOP "), Some(DockEdge::Top));
@@ -279,9 +378,21 @@ mod tests {
     #[test]
     fn the_pointer_picks_the_nearest_window_edge() {
         let a = area();
-        assert_eq!(SearchDock::nearest_edge(a, pos2(20.0, 300.0)), DockEdge::Left);
-        assert_eq!(SearchDock::nearest_edge(a, pos2(980.0, 300.0)), DockEdge::Right);
-        assert_eq!(SearchDock::nearest_edge(a, pos2(500.0, 10.0)), DockEdge::Top);
-        assert_eq!(SearchDock::nearest_edge(a, pos2(500.0, 590.0)), DockEdge::Bottom);
+        assert_eq!(
+            SearchDock::nearest_edge(a, pos2(20.0, 300.0)),
+            DockEdge::Left
+        );
+        assert_eq!(
+            SearchDock::nearest_edge(a, pos2(980.0, 300.0)),
+            DockEdge::Right
+        );
+        assert_eq!(
+            SearchDock::nearest_edge(a, pos2(500.0, 10.0)),
+            DockEdge::Top
+        );
+        assert_eq!(
+            SearchDock::nearest_edge(a, pos2(500.0, 590.0)),
+            DockEdge::Bottom
+        );
     }
 }

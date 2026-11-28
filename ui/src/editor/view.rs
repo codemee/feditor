@@ -232,7 +232,9 @@ fn layout_rows(
             Some(chars) => chars[r.clone()].iter().collect(),
             None => text.clone(),
         };
-        let row_kinds = kinds.as_ref().map(|k| &k[r.start.min(k.len())..r.end.min(k.len())]);
+        let row_kinds = kinds
+            .as_ref()
+            .map(|k| &k[r.start.min(k.len())..r.end.min(k.len())]);
         let segments = layout_segments(ui, spec, &row_text, row_kinds);
         out.push(LineLayout {
             row,
@@ -270,10 +272,18 @@ fn layout_segments(ui: &Ui, spec: &TextSpec, text: &str, kinds: Option<&[Kind]>)
         if run.is_empty() {
             return;
         }
-        let galley = painter.layout_no_wrap(std::mem::take(run), spec.font_id.clone(), spec.color_of(kind));
+        let galley = painter.layout_no_wrap(
+            std::mem::take(run),
+            spec.font_id.clone(),
+            spec.color_of(kind),
+        );
         let cell_w = cells as f32 * spec.char_w;
         // 水平：全形字在自己的格子裡置中；半形字串從格子的左緣開始排（它們本來就等寬，不能位移）
-        let pad = if ascii { 0.0 } else { ((cell_w - galley.size().x) / 2.0).max(0.0) };
+        let pad = if ascii {
+            0.0
+        } else {
+            ((cell_w - galley.size().x) / 2.0).max(0.0)
+        };
         let x = run_col as f32 * spec.char_w + pad;
         // 垂直：在行高裡置中。不同字型的行高不同，各自置中才會落在同一條水平線上
         let y = (spec.row_h - galley.size().y) / 2.0;
@@ -281,9 +291,19 @@ fn layout_segments(ui: &Ui, spec: &TextSpec, text: &str, kinds: Option<&[Kind]>)
     };
 
     for (idx, c) in text.chars().enumerate() {
-        let kind = kinds.and_then(|k| k.get(idx)).copied().unwrap_or(Kind::Plain);
+        let kind = kinds
+            .and_then(|k| k.get(idx))
+            .copied()
+            .unwrap_or(Kind::Plain);
         if c == '\t' {
-            flush(&mut out, &mut run, run_col, run_cells, run_is_ascii, run_kind);
+            flush(
+                &mut out,
+                &mut run,
+                run_col,
+                run_cells,
+                run_is_ascii,
+                run_kind,
+            );
             col = (col / motion::tab_width() + 1) * motion::tab_width();
             continue;
         }
@@ -302,7 +322,14 @@ fn layout_segments(ui: &Ui, spec: &TextSpec, text: &str, kinds: Option<&[Kind]>)
             col += 1;
             continue;
         }
-        flush(&mut out, &mut run, run_col, run_cells, run_is_ascii, run_kind);
+        flush(
+            &mut out,
+            &mut run,
+            run_col,
+            run_cells,
+            run_is_ascii,
+            run_kind,
+        );
         run.push(c);
         run_col = col;
         run_cells = width;
@@ -310,7 +337,14 @@ fn layout_segments(ui: &Ui, spec: &TextSpec, text: &str, kinds: Option<&[Kind]>)
         run_kind = kind;
         col += width;
     }
-    flush(&mut out, &mut run, run_col, run_cells, run_is_ascii, run_kind);
+    flush(
+        &mut out,
+        &mut run,
+        run_col,
+        run_cells,
+        run_is_ascii,
+        run_kind,
+    );
     out
 }
 
@@ -355,8 +389,14 @@ fn row_of_caret(state: &EditorState, buffer: &Buffer, line: usize, col: usize, k
         return 0;
     }
     if state.preedit.is_some() {
-        let ranges = motion::wrap_rows(&composed_text(buffer, state, line), state.wrap_cols.unwrap());
-        return ranges.iter().position(|r| k < r.end).unwrap_or(ranges.len() - 1);
+        let ranges = motion::wrap_rows(
+            &composed_text(buffer, state, line),
+            state.wrap_cols.unwrap(),
+        );
+        return ranges
+            .iter()
+            .position(|r| k < r.end)
+            .unwrap_or(ranges.len() - 1);
     }
     let rows = state.rows_for(buffer, line);
     state.row_index(buffer, &rows, line, col)
@@ -509,7 +549,8 @@ impl EditorView<'_> {
         let adjusted = match (wrap_cols, &state.preedit) {
             (Some(cols), Some(_)) => {
                 let (caret_line, _) = caret_line_col(buffer, state);
-                let composed = motion::wrap_rows(&composed_text(buffer, state, caret_line), cols).len();
+                let composed =
+                    motion::wrap_rows(&composed_text(buffer, state, caret_line), cols).len();
                 let plain = base_map.first_row(caret_line + 1) - base_map.first_row(caret_line);
                 (composed > plain).then(|| base_map.with_extra_rows(caret_line, composed - plain))
             }
@@ -558,7 +599,11 @@ impl EditorView<'_> {
             .id_salt(id.with("scroll"))
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, viewport| {
-                let content_w = if wrap_cols.is_some() { viewport.width() } else { content_w };
+                let content_w = if wrap_cols.is_some() {
+                    viewport.width()
+                } else {
+                    content_w
+                };
                 let (content_rect, _) =
                     ui.allocate_exact_size(vec2(content_w, content_h), Sense::hover());
                 let origin = content_rect.min;
@@ -572,9 +617,17 @@ impl EditorView<'_> {
                 state.at_bottom = viewport.max.y >= content_h - 2.0;
                 // 最上面看到第幾行（帶小數），給預覽同步捲動用
                 let top_row = (viewport.min.y / row_h).max(0.0);
-                let top_line = rows.locate((top_row.floor() as usize).min(rows_total.saturating_sub(1))).0;
-                let (first_row_of_line, end_row_of_line) = (rows.first_row(top_line) as f32, rows.end_row(top_line) as f32);
-                state.top_line = top_line as f32 + ((top_row - first_row_of_line) / (end_row_of_line - first_row_of_line).max(1.0)).clamp(0.0, 1.0);
+                let top_line = rows
+                    .locate((top_row.floor() as usize).min(rows_total.saturating_sub(1)))
+                    .0;
+                let (first_row_of_line, end_row_of_line) = (
+                    rows.first_row(top_line) as f32,
+                    rows.end_row(top_line) as f32,
+                );
+                state.top_line = top_line as f32
+                    + ((top_row - first_row_of_line)
+                        / (end_row_of_line - first_row_of_line).max(1.0))
+                    .clamp(0.0, 1.0);
 
                 let mut layouts: Vec<LineLayout> = Vec::new();
                 let mut row = first;
@@ -624,7 +677,8 @@ impl EditorView<'_> {
                     let end = layout.is_wrap_end(col);
                     (buffer.line_start(layout.line) + col.min(line_len), end)
                 };
-                let (shift, ctrl, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.command, i.modifiers.alt));
+                let (shift, ctrl, alt) =
+                    ui.input(|i| (i.modifiers.shift, i.modifiers.command, i.modifiers.alt));
                 // 螢幕位置 → （行, 顯示欄）：矩形選取用
                 let line_dcol_at = |pos: Pos2| -> (usize, usize) {
                     let row = (((pos.y - origin.y) / row_h).floor().max(0.0) as usize)
@@ -646,7 +700,13 @@ impl EditorView<'_> {
                 }
                 // 在已選取的文字上按住拖曳：搬動（按住 Ctrl 放開是複製）選取的文字，不是重新選取
                 let mut drop_idx: Option<usize> = None;
-                if response.drag_started() && !alt && !shift && state.extra.is_empty() && !state.sel.is_empty() && state.preedit.is_none() {
+                if response.drag_started()
+                    && !alt
+                    && !shift
+                    && state.extra.is_empty()
+                    && !state.sel.is_empty()
+                    && state.preedit.is_none()
+                {
                     if let Some(origin_pos) = ui.input(|i| i.pointer.press_origin()) {
                         let (idx, _) = char_at(&mut layouts, ui, state, buffer, origin_pos);
                         let range = state.sel.range();
@@ -656,7 +716,10 @@ impl EditorView<'_> {
                     }
                 }
                 // 別的程式正拖著文字經過這個編輯區：標出放開後的插入處
-                if let Some(pos) = ui.ctx().data(|d| d.get_temp::<Pos2>(Id::unique("external_text_drop_hover"))) {
+                if let Some(pos) = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<Pos2>(Id::unique("external_text_drop_hover")))
+                {
                     if visible.contains(pos) {
                         drop_idx = Some(char_at(&mut layouts, ui, state, buffer, pos).0);
                     }
@@ -667,7 +730,10 @@ impl EditorView<'_> {
                 if let Some(range) = state.text_drag.clone() {
                     if response.drag_stopped() {
                         state.text_drag = None;
-                        if let Some(pos) = response.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.latest_pos())) {
+                        if let Some(pos) = response
+                            .interact_pointer_pos()
+                            .or_else(|| ui.input(|i| i.pointer.latest_pos()))
+                        {
                             if visible.contains(pos) {
                                 let (idx, _) = char_at(&mut layouts, ui, state, buffer, pos);
                                 touched |= state.drop_text(buffer, range, idx, ctrl);
@@ -683,13 +749,28 @@ impl EditorView<'_> {
                             .map(|l| l.chars().take(50).collect::<String>())
                             .collect::<Vec<_>>()
                             .join("\n");
-                        let layer = eframe::egui::LayerId::new(eframe::egui::Order::Tooltip, Id::unique("text_drag_ghost"));
+                        let layer = eframe::egui::LayerId::new(
+                            eframe::egui::Order::Tooltip,
+                            Id::unique("text_drag_ghost"),
+                        );
                         let gp = ui.ctx().layer_painter(layer);
-                        let galley = gp.layout_no_wrap(ghost, font_id.clone(), text_color.gamma_multiply(0.75));
+                        let galley = gp.layout_no_wrap(
+                            ghost,
+                            font_id.clone(),
+                            text_color.gamma_multiply(0.75),
+                        );
                         let top_left = pos + vec2(14.0, 18.0);
                         let bg = Rect::from_min_size(top_left, galley.size()).expand(3.0);
                         gp.rect_filled(bg, 3.0, ui.visuals().extreme_bg_color.gamma_multiply(0.8));
-                        gp.rect_stroke(bg, 3.0, Stroke::new(1.0, ui.visuals().selection.stroke.color.gamma_multiply(0.6)), eframe::egui::StrokeKind::Inside);
+                        gp.rect_stroke(
+                            bg,
+                            3.0,
+                            Stroke::new(
+                                1.0,
+                                ui.visuals().selection.stroke.color.gamma_multiply(0.6),
+                            ),
+                            eframe::egui::StrokeKind::Inside,
+                        );
                         gp.galley(top_left, galley, text_color);
                         if ctrl {
                             let c = pos + vec2(20.0, 12.0);
@@ -775,7 +856,10 @@ impl EditorView<'_> {
                 // 別的程式拖過來的文字：插在放開的位置（太舊的、不在這個編輯區裡的丟掉）
                 if let Some((text, pos, pass)) = state.incoming_drop.take() {
                     let now = ui.ctx().cumulative_pass_nr();
-                    if visible.contains(pos) && now.saturating_sub(pass) <= 3 && state.preedit.is_none() {
+                    if visible.contains(pos)
+                        && now.saturating_sub(pass) <= 3
+                        && state.preedit.is_none()
+                    {
                         let (idx, _) = char_at(&mut layouts, ui, state, buffer, pos);
                         state.set_caret(buffer, idx, false);
                         touched |= state.paste(buffer, &text);
@@ -809,13 +893,14 @@ impl EditorView<'_> {
                 // ── 繪製 ──
                 let painter = ui.painter().with_clip_rect(visible);
                 // 小圓角：窗格是圓角卡片，編輯區放在裡面，角落不能是方的
-                painter.rect_filled(visible, eframe::egui::CornerRadius::same(4), ui.visuals().extreme_bg_color);
+                painter.rect_filled(
+                    visible,
+                    eframe::egui::CornerRadius::same(4),
+                    ui.visuals().extreme_bg_color,
+                );
 
                 let (caret_line, caret_col) = caret_line_col(buffer, state);
-                let preedit_len = state
-                    .preedit
-                    .as_ref()
-                    .map_or(0, |p| p.text.chars().count());
+                let preedit_len = state.preedit.as_ref().map_or(0, |p| p.text.chars().count());
                 let all_sels = if state.has_multi() {
                     state.all_selections().0
                 } else {
@@ -829,11 +914,18 @@ impl EditorView<'_> {
                 // 安全界線：第 N 欄右緣的右邊整塊換一個淡淡的顏色（畫在文字底下，不擋字），
                 // 一行寫過界線，那一段字就落在換色的區域裡。
                 // 只畫在文字區裡：界線被捲到左邊看不到、或被行號區蓋住時，換色的範圍從文字區的左緣算起
-                if let Some(x) = options.ruler.then(|| ruler_x(options.ruler_column, text_left, char_w)).flatten() {
+                if let Some(x) = options
+                    .ruler
+                    .then(|| ruler_x(options.ruler_column, text_left, char_w))
+                    .flatten()
+                {
                     let left = x.max(visible.left() + metrics.gutter_w);
                     if left < visible.right() {
                         painter.rect_filled(
-                            Rect::from_min_max(pos2(left, visible.top()), pos2(visible.right(), visible.bottom())),
+                            Rect::from_min_max(
+                                pos2(left, visible.top()),
+                                pos2(visible.right(), visible.bottom()),
+                            ),
                             0.0,
                             ui.visuals().weak_text_color().gamma_multiply(0.12),
                         );
@@ -883,7 +975,11 @@ impl EditorView<'_> {
                     }
 
                     for seg in &layout.segments {
-                        painter.galley(pos2(text_left + seg.x, y + seg.y), seg.galley.clone(), text_color);
+                        painter.galley(
+                            pos2(text_left + seg.x, y + seg.y),
+                            seg.galley.clone(),
+                            text_color,
+                        );
                     }
 
                     if options.show_whitespace {
@@ -909,7 +1005,11 @@ impl EditorView<'_> {
                                     );
                                 }
                             };
-                            underline(caret_col, caret_col + preedit_len, Stroke::new(1.0, text_color));
+                            underline(
+                                caret_col,
+                                caret_col + preedit_len,
+                                Stroke::new(1.0, text_color),
+                            );
                             if let Some(active) = &pre.active {
                                 underline(
                                     caret_col + active.start,
@@ -938,8 +1038,13 @@ impl EditorView<'_> {
                     // 輸入法的候選窗貼著「組字開始處到結束處」，沒組字時就是游標
                     let x_start = text_left + layout.x_at(caret_col);
                     let x_end = text_left
-                        + layout.x_at(caret_col + preedit_len).max(layout.x_at(caret_col));
-                    ime_rect = Rect::from_min_max(pos2(x_start, y), pos2(x_end.max(x_start + 2.0), y + row_h));
+                        + layout
+                            .x_at(caret_col + preedit_len)
+                            .max(layout.x_at(caret_col));
+                    ime_rect = Rect::from_min_max(
+                        pos2(x_start, y),
+                        pos2(x_end.max(x_start + 2.0), y + row_h),
+                    );
 
                     // 拖著文字時，放開會落在哪裡：畫一條指示線
                     if let Some(idx) = drop_idx {
@@ -950,7 +1055,10 @@ impl EditorView<'_> {
                         let i = ensure_row(&mut layouts, &rows, ui, &spec, buffer, state, row);
                         let x = text_left + layouts[i].x_at(col);
                         let y = origin.y + row as f32 * row_h;
-                        painter.line_segment([pos2(x, y), pos2(x, y + row_h)], Stroke::new(2.0, ui.visuals().selection.stroke.color));
+                        painter.line_segment(
+                            [pos2(x, y), pos2(x, y + row_h)],
+                            Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                        );
                     }
 
                     let blink = (ui.input(|i| i.time) * 2.0) as u64 % 2 == 0;
@@ -964,7 +1072,8 @@ impl EditorView<'_> {
                             let line = buffer.line_of_char(s.head.min(buffer.len_chars()));
                             let col = s.head - buffer.line_start(line);
                             let rs = state.rows_for(buffer, line);
-                            let row = rows.first_row(line) + state.row_index(buffer, &rs, line, col);
+                            let row =
+                                rows.first_row(line) + state.row_index(buffer, &rs, line, col);
                             if row < first || row >= last {
                                 continue;
                             }
@@ -1020,16 +1129,23 @@ impl EditorView<'_> {
                             caret_rect.left() - metrics.gutter_w - char_w,
                             caret_rect.top() - row_h * 0.5,
                         ),
-                        pos2(caret_rect.right() + char_w * 3.0, caret_rect.bottom() + row_h * 0.5),
+                        pos2(
+                            caret_rect.right() + char_w * 3.0,
+                            caret_rect.bottom() + row_h * 0.5,
+                        ),
                     );
                     ui.scroll_to_rect(target, None);
                 }
                 if reveal {
                     if let Some(h) = &highlight {
                         let line = buffer.line_of_char(h.start);
-                        let col = (h.start - buffer.line_start(line)).min(buffer.line_len_chars(line));
+                        let col =
+                            (h.start - buffer.line_start(line)).min(buffer.line_len_chars(line));
                         let ranges = state.rows_for(buffer, line);
-                        let sub = ranges.iter().position(|r| col < r.end).unwrap_or(ranges.len() - 1);
+                        let sub = ranges
+                            .iter()
+                            .position(|r| col < r.end)
+                            .unwrap_or(ranges.len() - 1);
                         let row = rows.first_row(line) + sub;
                         let i = ensure_row(&mut layouts, &rows, ui, &spec, buffer, state, row);
                         let x = text_left + layouts[i].x_at(col);
@@ -1099,7 +1215,10 @@ fn span_rect(
     } else {
         text_left + layout.x_at(b - line_start)
     };
-    Some(Rect::from_min_max(pos2(x0, y), pos2(x1.max(x0 + 1.0), y + row_h)))
+    Some(Rect::from_min_max(
+        pos2(x0, y),
+        pos2(x1.max(x0 + 1.0), y + row_h),
+    ))
 }
 
 /// 診斷用：環境變數 FEDITOR_IME_LOG 設成檔案路徑時，把輸入法相關的事件（以及組字中收到的
@@ -1114,7 +1233,11 @@ fn ime_log(event: &Event, buffer: &Buffer, state: &EditorState) {
     if !relevant {
         return;
     }
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let (line, col) = caret_line_col(buffer, state);
         let _ = writeln!(
             file,
@@ -1197,7 +1320,11 @@ fn process_events(ui: &Ui, buffer: &mut Buffer, state: &mut EditorState) -> bool
 /// 按鍵對應的編輯指令名稱（見 `commands.rs`）；沒有對應的回傳 `None`。
 fn key_command(key: Key, m: Modifiers, multi: bool) -> Option<&'static str> {
     // 詞為單位的移動與刪除：Windows／Linux 用 Ctrl，macOS 用 Option
-    let word = if cfg!(target_os = "macos") { m.alt } else { m.ctrl };
+    let word = if cfg!(target_os = "macos") {
+        m.alt
+    } else {
+        m.ctrl
+    };
     let shift = m.shift;
     let pick = |plain: &'static str, selecting: &'static str| if shift { selecting } else { plain };
     Some(match key {
@@ -1298,7 +1425,8 @@ mod tests {
                 size: vec2(800.0, 400.0),
             };
             let id = h.id;
-            h.ctx.all_styles_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+            h.ctx
+                .all_styles_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
             h.ctx.memory_mut(|m| m.request_focus(id));
             h.frame(vec![]);
             h.frame(vec![]);
@@ -1498,7 +1626,10 @@ mod tests {
         let text_left = origin.x + metrics.text_left_offset();
         // 候選窗貼在組字文字的起點（第 2 欄），且不在視窗外
         assert!((ime.cursor_rect.left() - (text_left + 2.0 * metrics.char_w)).abs() < 1.0);
-        assert!(ime.rect.contains_rect(Rect::from_min_size(ime.cursor_rect.min, vec2(1.0, 1.0))));
+        assert!(
+            ime.rect
+                .contains_rect(Rect::from_min_size(ime.cursor_rect.min, vec2(1.0, 1.0)))
+        );
         h.frame(vec![Event::Ime(ImeEvent::Commit("中".into()))]);
         assert_eq!(h.text(), "ab中");
         assert!(h.state.preedit.is_none());
@@ -1549,13 +1680,13 @@ mod tests {
         let m = h.last.as_ref().unwrap().metrics;
         // 「中」佔第 0–1 欄、「文」第 2–3 欄、Tab 到第 8 欄、「x」第 8 欄
         for (col_f, expect) in [
-            (0.2, 0),  // 「中」前半
+            (0.2, 0), // 「中」前半
             (0.9, 0),
-            (1.1, 1),  // 「中」後半 → 在「中」後面
+            (1.1, 1), // 「中」後半 → 在「中」後面
             (2.9, 1),
-            (3.1, 2),  // 「文」後半 → 在「文」後面
-            (5.0, 2),  // Tab 的範圍內
-            (6.1, 3),  // Tab 後半 → 在 Tab 後面
+            (3.1, 2), // 「文」後半 → 在「文」後面
+            (5.0, 2), // Tab 的範圍內
+            (6.1, 3), // Tab 後半 → 在 Tab 後面
             (8.2, 3),
             (8.8, 4),
             (30.0, 4), // 超過行尾
@@ -1586,8 +1717,14 @@ mod tests {
             let xs: Vec<f32> = segs.iter().map(|s| s.x).collect();
             assert_eq!(segs.len(), 5, "ab / 中 / 文 / cd / e：{xs:?}");
             assert_eq!(xs[0], 0.0);
-            assert!(xs[1] >= 2.0 * 8.0 && xs[1] < 4.0 * 8.0, "中在自己的格子裡：{xs:?}");
-            assert!(xs[2] >= 4.0 * 8.0 && xs[2] < 6.0 * 8.0, "文在自己的格子裡：{xs:?}");
+            assert!(
+                xs[1] >= 2.0 * 8.0 && xs[1] < 4.0 * 8.0,
+                "中在自己的格子裡：{xs:?}"
+            );
+            assert!(
+                xs[2] >= 4.0 * 8.0 && xs[2] < 6.0 * 8.0,
+                "文在自己的格子裡：{xs:?}"
+            );
             assert_eq!(xs[3], 6.0 * 8.0, "cd 從第 6 欄開始：{xs:?}");
             assert_eq!(xs[4], 12.0 * 8.0, "Tab 之後的 e 在第 12 欄：{xs:?}");
             // 組合字元跟著前一個字，不另外成為一個格子
@@ -1633,7 +1770,10 @@ mod tests {
 
     #[test]
     fn caret_scrolls_into_view_when_moving_far() {
-        let text = (0..500).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text = (0..500)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut h = Harness::new(&text);
         let top = h.last.as_ref().unwrap().content_origin.y;
         h.key(Key::End, Modifiers::COMMAND);
@@ -1642,12 +1782,18 @@ mod tests {
         let out = h.last.as_ref().unwrap();
         assert!(out.content_origin.y < top - 1000.0, "已經捲到檔案尾端");
         let caret_y = out.content_origin.y + 499.0 * out.metrics.row_h;
-        assert!(caret_y > 0.0 && caret_y < 400.0, "游標在可見範圍內: {caret_y}");
+        assert!(
+            caret_y > 0.0 && caret_y < 400.0,
+            "游標在可見範圍內: {caret_y}"
+        );
     }
 
     #[test]
     fn page_down_moves_by_visible_rows() {
-        let text = (0..200).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        let text = (0..200)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut h = Harness::new(&text);
         let rows = h.state.view_rows;
         assert!(rows > 5);
@@ -1658,7 +1804,10 @@ mod tests {
 
     #[test]
     fn reveal_scrolls_highlight_into_view() {
-        let text = (0..500).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text = (0..500)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut h = Harness::new(&text);
         let target = h.buffer.line_start(300);
         h.frame_with(vec![], vec2(800.0, 400.0), Some(target..target + 4));
@@ -1674,7 +1823,10 @@ mod tests {
     fn gutter_widens_with_line_count() {
         let small = Harness::new("a");
         let big = Harness::new(&"x\n".repeat(100_000));
-        assert!(big.last.as_ref().unwrap().metrics.gutter_w > small.last.as_ref().unwrap().metrics.gutter_w);
+        assert!(
+            big.last.as_ref().unwrap().metrics.gutter_w
+                > small.last.as_ref().unwrap().metrics.gutter_w
+        );
     }
 
     #[test]
@@ -1689,7 +1841,10 @@ mod tests {
         }
         let per_frame = start.elapsed() / 10;
         eprintln!("百萬行文件，每幀 {per_frame:?}");
-        assert!(per_frame < Duration::from_millis(250), "太慢：{per_frame:?}");
+        assert!(
+            per_frame < Duration::from_millis(250),
+            "太慢：{per_frame:?}"
+        );
     }
 
     #[test]
@@ -1725,7 +1880,10 @@ mod tests {
     fn gutter_is_only_as_wide_as_the_largest_line_number() {
         let one = Harness::new("a");
         let m1 = one.last.as_ref().unwrap().metrics;
-        assert!((m1.gutter_w - 2.5 * m1.char_w).abs() < 0.01, "1 位數：{m1:?}");
+        assert!(
+            (m1.gutter_w - 2.5 * m1.char_w).abs() < 0.01,
+            "1 位數：{m1:?}"
+        );
         let nine = Harness::new(&"x\n".repeat(8));
         assert!((nine.last.as_ref().unwrap().metrics.gutter_w - 2.5 * m1.char_w).abs() < 0.01);
         let ten = Harness::new(&"x\n".repeat(9));
@@ -1849,7 +2007,10 @@ mod tests {
         );
         h.key(Key::ArrowRight, NONE);
         let rows_of = h.state.rows_for(&h.buffer, 0);
-        assert_eq!(h.state.row_index(&h.buffer, &rows_of, 0, h.state.sel.head), 1);
+        assert_eq!(
+            h.state.row_index(&h.buffer, &rows_of, 0, h.state.sel.head),
+            1
+        );
     }
 
     #[test]
@@ -1898,7 +2059,10 @@ mod tests {
         assert!(without.text_left_offset() < with);
         // 點在第 2 個字元：位置要跟著文字區一起位移
         let p = pos2(
-            h.last.as_ref().unwrap().content_origin.x + without.text_left_offset() + 2.0 * without.char_w + 1.0,
+            h.last.as_ref().unwrap().content_origin.x
+                + without.text_left_offset()
+                + 2.0 * without.char_w
+                + 1.0,
             h.last.as_ref().unwrap().content_origin.y + 0.5 * without.row_h,
         );
         h.click_at(p, NONE, 1);
@@ -1930,7 +2094,11 @@ mod tests {
         h.key(Key::Escape, NONE);
         assert!(!h.state.has_multi(), "Esc 回到單一游標");
         h.type_text("+");
-        assert_eq!(h.text(), "-one\ntwo\n-+three", "單一游標只輸入一處（主要游標在後加的那一處）");
+        assert_eq!(
+            h.text(),
+            "-one\ntwo\n-+three",
+            "單一游標只輸入一處（主要游標在後加的那一處）"
+        );
     }
 
     #[test]
@@ -1972,7 +2140,10 @@ mod tests {
             pressed: true,
             modifiers: alt,
         }]);
-        h.frame(vec![Event::PointerMoved(pos2(start.x + 10.0, start.y + 10.0))]);
+        h.frame(vec![Event::PointerMoved(pos2(
+            start.x + 10.0,
+            start.y + 10.0,
+        ))]);
         h.frame(vec![Event::PointerMoved(end)]);
         h.frame(vec![Event::PointerMoved(end)]);
         h.frame(vec![Event::PointerButton {

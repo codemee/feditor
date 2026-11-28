@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 pub const COMMAND_NAME: &str = "feditor";
 
 /// 腳本裡的標記行：靠它認出這個檔案是 FEditor 建立的。
-const MARKER: &str = "# feditor-managed-command: created by FEditor, remove it from FEditor's settings";
+const MARKER: &str =
+    "# feditor-managed-command: created by FEditor, remove it from FEditor's settings";
 
 /// 這個系統支援嗎（macOS、Linux：在 `~/.local/bin` 放腳本；Windows：把程式所在資料夾加進使用者的 `PATH`）。
 pub fn supported() -> bool {
@@ -23,7 +24,10 @@ pub fn supported() -> bool {
 pub fn bin_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        std::env::current_exe().ok()?.parent().map(Path::to_path_buf)
+        std::env::current_exe()
+            .ok()?
+            .parent()
+            .map(Path::to_path_buf)
     }
     #[cfg(not(windows))]
     {
@@ -65,7 +69,12 @@ fn expand_vars(text: &str) -> String {
 /// 比較用的正規化：展開變數、去掉引號與結尾的斜線、`/` 當成 `\`、不分大小寫。
 fn normalize_entry(entry: &str) -> String {
     let expanded = expand_vars(entry.trim());
-    expanded.trim_matches('"').trim().replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    expanded
+        .trim_matches('"')
+        .trim()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
 }
 
 fn entries(path: &str) -> impl Iterator<Item = &str> {
@@ -84,7 +93,11 @@ pub fn path_with(path: &str, dir: &str) -> Option<String> {
         return None;
     }
     let base = path.trim_end_matches(';');
-    Some(if base.trim().is_empty() { dir.to_owned() } else { format!("{base};{dir}") })
+    Some(if base.trim().is_empty() {
+        dir.to_owned()
+    } else {
+        format!("{base};{dir}")
+    })
 }
 
 /// 把 `path` 裡的 `dir` 全部拿掉（其他項目原樣保留）；本來就沒有就回傳 `None`。
@@ -93,7 +106,12 @@ pub fn path_without(path: &str, dir: &str) -> Option<String> {
         return None;
     }
     let wanted = normalize_entry(dir);
-    Some(entries(path).filter(|e| normalize_entry(e) != wanted).collect::<Vec<_>>().join(";"))
+    Some(
+        entries(path)
+            .filter(|e| normalize_entry(e) != wanted)
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
 }
 
 #[cfg(windows)]
@@ -102,10 +120,13 @@ mod win {
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ,
-        RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegGetValueW, RegSetValueExW,
+        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, RRF_NOEXPAND,
+        RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegGetValueW,
+        RegSetValueExW,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+    };
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -118,7 +139,17 @@ mod win {
         let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
         let mut bytes = 0u32;
         // SAFETY: 第一次只問大小（資料緩衝區給空指標）
-        let code = unsafe { RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), flags, null_mut(), null_mut(), &mut bytes) };
+        let code = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                flags,
+                null_mut(),
+                null_mut(),
+                &mut bytes,
+            )
+        };
         if code != ERROR_SUCCESS {
             return Ok(None); // 沒有使用者的 Path 值
         }
@@ -126,7 +157,17 @@ mod win {
         let mut bytes = (buf.len() * 2) as u32;
         let mut kind = 0u32;
         // SAFETY: buf 夠大，bytes 是它的位元組數；函式會回報實際長度與型別
-        let code = unsafe { RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), flags, &mut kind, buf.as_mut_ptr().cast(), &mut bytes) };
+        let code = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                flags,
+                &mut kind,
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
         if code != ERROR_SUCCESS {
             return Err(format!("無法讀取使用者的 PATH（錯誤碼 {code}）"));
         }
@@ -138,14 +179,35 @@ mod win {
         let key = wide("Environment");
         let mut hkey: HKEY = null_mut();
         // SAFETY: 參數都是以 0 結尾的 UTF-16 字串或有效的輸出指標
-        let code = unsafe { RegCreateKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, null(), &mut hkey, null_mut()) };
+        let code = unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                0,
+                null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_WRITE,
+                null(),
+                &mut hkey,
+                null_mut(),
+            )
+        };
         if code != ERROR_SUCCESS {
             return Err(format!("無法開啟使用者的環境變數（錯誤碼 {code}）"));
         }
         let name = wide("Path");
         let data = wide(value);
         // SAFETY: hkey 剛開啟成功；資料長度以位元組計，含結尾的 0
-        let code = unsafe { RegSetValueExW(hkey, name.as_ptr(), 0, kind, data.as_ptr().cast(), (data.len() * 2) as u32) };
+        let code = unsafe {
+            RegSetValueExW(
+                hkey,
+                name.as_ptr(),
+                0,
+                kind,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
         // SAFETY: 關閉剛開啟的 key
         unsafe { RegCloseKey(hkey) };
         if code != ERROR_SUCCESS {
@@ -154,7 +216,17 @@ mod win {
         // 通知檔案總管等程式重新讀環境變數，之後新開的終端機才拿得到
         let env = wide("Environment");
         // SAFETY: lParam 指向以 0 結尾的 UTF-16 字串，呼叫期間一直有效
-        unsafe { SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, env.as_ptr() as isize, SMTO_ABORTIFHUNG, 5000, null_mut()) };
+        unsafe {
+            SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                env.as_ptr() as isize,
+                SMTO_ABORTIFHUNG,
+                5000,
+                null_mut(),
+            )
+        };
         Ok(())
     }
 
@@ -170,7 +242,9 @@ mod win {
                 return Ok(());
             }
             match path_with(user_path, &dir) {
-                Some(new) => write_user_path(&new, current.as_ref().map_or(REG_EXPAND_SZ, |(_, k)| *k)),
+                Some(new) => {
+                    write_user_path(&new, current.as_ref().map_or(REG_EXPAND_SZ, |(_, k)| *k))
+                }
                 None => Ok(()),
             }
         } else {
@@ -212,14 +286,18 @@ fn is_ours(path: &Path) -> bool {
 pub fn install(dir: &Path, exe: &Path) -> Result<PathBuf, String> {
     let target = dir.join(COMMAND_NAME);
     if (target.exists() || target.symlink_metadata().is_ok()) && !is_ours(&target) {
-        return Err(tf!("{} 已經存在，而且不是 FEditor 建立的，所以沒有動它", target.display()));
+        return Err(tf!(
+            "{} 已經存在，而且不是 FEditor 建立的，所以沒有動它",
+            target.display()
+        ));
     }
     std::fs::create_dir_all(dir).map_err(|e| format!("{}：{e}", dir.display()))?;
     std::fs::write(&target, script(exe)).map_err(|e| format!("{}：{e}", target.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("{}：{e}", target.display()))?;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("{}：{e}", target.display()))?;
     }
     Ok(target)
 }
@@ -259,14 +337,36 @@ mod tests {
     #[test]
     fn path_is_only_added_when_missing_and_comparison_ignores_case_slashes_and_variables() {
         let dir = r"C:\Tools\FEditor";
-        assert_eq!(path_with(r"C:\Windows;C:\Bin", dir).as_deref(), Some(r"C:\Windows;C:\Bin;C:\Tools\FEditor"));
+        assert_eq!(
+            path_with(r"C:\Windows;C:\Bin", dir).as_deref(),
+            Some(r"C:\Windows;C:\Bin;C:\Tools\FEditor")
+        );
         assert_eq!(path_with("", dir).as_deref(), Some(dir));
-        assert_eq!(path_with(r"C:\Bin;", dir).as_deref(), Some(r"C:\Bin;C:\Tools\FEditor"), "結尾的分號不重複");
-        for existing in [r"c:\tools\feditor", r"C:\Tools\FEditor\", r"C:/Tools/FEditor", r#""C:\Tools\FEditor""#] {
-            assert!(path_has(&format!(r"C:\Bin;{existing};C:\X"), dir), "{existing}");
-            assert_eq!(path_with(&format!(r"C:\Bin;{existing}"), dir), None, "{existing}");
+        assert_eq!(
+            path_with(r"C:\Bin;", dir).as_deref(),
+            Some(r"C:\Bin;C:\Tools\FEditor"),
+            "結尾的分號不重複"
+        );
+        for existing in [
+            r"c:\tools\feditor",
+            r"C:\Tools\FEditor\",
+            r"C:/Tools/FEditor",
+            r#""C:\Tools\FEditor""#,
+        ] {
+            assert!(
+                path_has(&format!(r"C:\Bin;{existing};C:\X"), dir),
+                "{existing}"
+            );
+            assert_eq!(
+                path_with(&format!(r"C:\Bin;{existing}"), dir),
+                None,
+                "{existing}"
+            );
         }
-        assert!(!path_has(r"C:\Tools\FEditor2;C:\Tools", dir), "只差一部分的不算");
+        assert!(
+            !path_has(r"C:\Tools\FEditor2;C:\Tools", dir),
+            "只差一部分的不算"
+        );
         // %變數% 展開後相同也算已經有
         unsafe { std::env::set_var("FEDITOR_TEST_ROOT", r"C:\Tools") };
         assert!(path_has(r"%FEDITOR_TEST_ROOT%\FEditor", dir));
@@ -276,17 +376,27 @@ mod tests {
     #[test]
     fn path_without_removes_only_the_given_folder() {
         let dir = r"C:\Tools\FEditor";
-        assert_eq!(path_without(r"C:\A;c:\tools\feditor\;C:\B", dir).as_deref(), Some(r"C:\A;C:\B"));
+        assert_eq!(
+            path_without(r"C:\A;c:\tools\feditor\;C:\B", dir).as_deref(),
+            Some(r"C:\A;C:\B")
+        );
         assert_eq!(path_without(r"C:\A;C:\B", dir), None, "本來就沒有");
         assert_eq!(path_without(dir, dir).as_deref(), Some(""));
     }
 
     #[test]
     fn the_script_launches_the_exe_in_the_background_and_quotes_odd_paths() {
-        let s = script(Path::new("/Applications/FEditor.app/Contents/MacOS/feditor"));
+        let s = script(Path::new(
+            "/Applications/FEditor.app/Contents/MacOS/feditor",
+        ));
         assert_eq!(s.lines().next(), Some("#!/bin/sh"));
         assert_eq!(s.lines().nth(1), Some(MARKER));
-        assert!(s.contains("nohup '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\" >/dev/null 2>&1 &"), "{s}");
+        assert!(
+            s.contains(
+                "nohup '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\" >/dev/null 2>&1 &"
+            ),
+            "{s}"
+        );
         assert!(s.contains("-w|--wait|-h|--help|-v|--version) exec '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\""), "{s}");
         // --send 要看得到錯誤訊息、拿得到結束碼、讀得到標準輸入：前景執行
         assert!(s.contains("[ \"$1\" = --send ] && exec '/Applications/FEditor.app/Contents/MacOS/feditor' \"$@\""), "{s}");
@@ -300,11 +410,19 @@ mod tests {
         let bin = dir.path().join("nested").join("bin"); // 資料夾還不存在
         let path = install(&bin, Path::new("/old/feditor")).unwrap();
         assert_eq!(path, bin.join("feditor"));
-        assert!(std::fs::read_to_string(&path).unwrap().contains("/old/feditor"));
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("/old/feditor")
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o111, 0o111, "要能執行");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o111,
+                0o111,
+                "要能執行"
+            );
         }
         // 程式搬了位置：再裝一次就更新成新路徑
         install(&bin, Path::new("/new/feditor")).unwrap();
@@ -323,6 +441,10 @@ mod tests {
         let err = install(dir.path(), Path::new("/x/feditor")).unwrap_err();
         assert!(err.contains("不是 FEditor 建立的"), "{err}");
         assert_eq!(remove(dir.path()), Ok(false));
-        assert!(std::fs::read_to_string(&mine).unwrap().contains("使用者自己的腳本"));
+        assert!(
+            std::fs::read_to_string(&mine)
+                .unwrap()
+                .contains("使用者自己的腳本")
+        );
     }
 }

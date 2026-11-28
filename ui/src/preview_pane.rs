@@ -85,7 +85,12 @@ impl App {
 
     /// 一般窗格（有分頁的窗格）的數量，預覽窗格不算。
     pub(crate) fn tab_pane_count(&self) -> usize {
-        self.layout.root.leaves().into_iter().filter(|id| !self.is_preview(*id)).count()
+        self.layout
+            .root
+            .leaves()
+            .into_iter()
+            .filter(|id| !self.is_preview(*id))
+            .count()
     }
 
     /// 預覽窗格的編號（整個程式只有一個）。
@@ -97,7 +102,10 @@ impl App {
         if source == self.layout.focus {
             Some(&self.doc)
         } else {
-            self.layout.others.get(&source).map(|s| s.active_doc_stashed())
+            self.layout
+                .others
+                .get(&source)
+                .map(|s| s.active_doc_stashed())
         }
     }
 
@@ -106,7 +114,12 @@ impl App {
         if !self.is_preview(near) {
             return near;
         }
-        self.layout.root.leaves().into_iter().find(|id| !self.is_preview(*id)).unwrap_or(near)
+        self.layout
+            .root
+            .leaves()
+            .into_iter()
+            .find(|id| !self.is_preview(*id))
+            .unwrap_or(near)
     }
 
     /// 開始拖曳預覽窗格（拖它的標題）。
@@ -115,13 +128,21 @@ impl App {
             return;
         }
         let name = self.doc.name();
-        self.tab_drag = Some(crate::pane_ops::TabDrag { pane: id, index: 0, label: name, preview: true });
+        self.tab_drag = Some(crate::pane_ops::TabDrag {
+            pane: id,
+            index: 0,
+            label: name,
+            preview: true,
+        });
     }
 
     /// 把預覽窗格 `id` 搬到一般窗格 `target` 的 `side` 側（預覽還是跟著有焦點的文件）。
     /// 目的地不是一般窗格、或來源不是預覽窗格時什麼都不做。
     pub(crate) fn move_preview(&mut self, id: PaneId, target: PaneId, side: Side) {
-        if !self.is_preview(id) || self.is_preview(target) || !self.layout.others.contains_key(&target) && target != self.layout.focus {
+        if !self.is_preview(id)
+            || self.is_preview(target)
+            || !self.layout.others.contains_key(&target) && target != self.layout.focus
+        {
             return;
         }
         self.layout.root.remove(id);
@@ -156,7 +177,11 @@ impl App {
             self.save_session();
             return;
         }
-        let rect = self.pane_rects.iter().find(|(id, _)| *id == focus).map(|(_, r)| *r);
+        let rect = self
+            .pane_rects
+            .iter()
+            .find(|(id, _)| *id == focus)
+            .map(|(_, r)| *r);
         if rect.is_some_and(|r| !panes::can_split(r, Side::Right)) {
             self.push(LogKind::Warn, t("窗格太窄，放不下預覽"));
             return;
@@ -176,20 +201,31 @@ impl App {
             Some(p) => p.source = source,
             None => return Status::NoRenderer,
         }
-        let Some((path, revision, load_id, len)) = self
-            .source_doc(source)
-            .map(|d| (d.path.clone(), d.buffer.revision(), d.load_id, d.buffer.len_bytes()))
-        else {
+        let Some((path, revision, load_id, len)) = self.source_doc(source).map(|d| {
+            (
+                d.path.clone(),
+                d.buffer.revision(),
+                d.load_id,
+                d.buffer.len_bytes(),
+            )
+        }) else {
             return Status::NoRenderer;
         };
         let Some(renderer) = preview::resolve(path.as_deref(), &self.preview_plugins) else {
             return Status::NoRenderer;
         };
-        let key = Key { path: path.clone(), revision, load_id, signature: renderer.signature() };
+        let key = Key {
+            path: path.clone(),
+            revision,
+            load_id,
+            signature: renderer.signature(),
+        };
 
         // 1. 背景轉換有結果了嗎
         let (start, wait) = {
-            let Some(state) = self.previews.get_mut(&id) else { return Status::NoRenderer };
+            let Some(state) = self.previews.get_mut(&id) else {
+                return Status::NoRenderer;
+            };
             if let Some(p) = &state.pending {
                 let done = p.slot.lock().ok().and_then(|mut s| s.take());
                 if let Some(rendered) = done {
@@ -209,10 +245,11 @@ impl App {
                 (false, None)
             } else {
                 // 換了檔案或渲染器：馬上轉；只是文字改了：等使用者停下來
-                let switched = state
-                    .shown
-                    .as_ref()
-                    .is_none_or(|s| s.key.path != key.path || s.key.signature != key.signature || s.key.load_id != key.load_id);
+                let switched = state.shown.as_ref().is_none_or(|s| {
+                    s.key.path != key.path
+                        || s.key.signature != key.signature
+                        || s.key.load_id != key.load_id
+                });
                 let since = *state.dirty_since.get_or_insert_with(Instant::now);
                 if switched || since.elapsed() >= DEBOUNCE {
                     (true, None)
@@ -224,17 +261,27 @@ impl App {
 
         // 3. 開始轉換
         if start {
-            let text = if len > preview::MAX_BYTES { None } else { self.source_doc(source).map(|d| d.buffer.text()) };
+            let text = if len > preview::MAX_BYTES {
+                None
+            } else {
+                self.source_doc(source).map(|d| d.buffer.text())
+            };
             if let Some(state) = self.previews.get_mut(&id) {
                 state.dirty_since = None;
                 match text {
                     None => {
-                        state.shown = Some(Shown { key: key.clone(), rendered: preview::too_big() });
+                        state.shown = Some(Shown {
+                            key: key.clone(),
+                            rendered: preview::too_big(),
+                        });
                         state.pending = None;
                     }
                     Some(text) => {
                         let slot = Arc::new(Mutex::new(None));
-                        state.pending = Some(Pending { key: key.clone(), slot: slot.clone() });
+                        state.pending = Some(Pending {
+                            key: key.clone(),
+                            slot: slot.clone(),
+                        });
                         spawn_render(renderer.clone(), text, path, slot, ctx.clone());
                     }
                 }
@@ -254,13 +301,25 @@ impl App {
     }
 
     /// 預覽窗格的內容（標題列加預覽畫面）。
-    pub(crate) fn show_preview_pane(&mut self, ui: &mut egui::Ui, id: PaneId, rect: egui::Rect) -> Option<crate::Action> {
+    pub(crate) fn show_preview_pane(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: PaneId,
+        rect: egui::Rect,
+    ) -> Option<crate::Action> {
         let ctx = ui.ctx().clone();
         let status = self.update_preview(id, &ctx);
         let source = self.previews.get(&id).map(|p| p.source)?;
         let (file_name, base_dir) = self
             .source_doc(source)
-            .map(|d| (d.name(), d.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()))))
+            .map(|d| {
+                (
+                    d.name(),
+                    d.path
+                        .as_ref()
+                        .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+                )
+            })
             .unwrap_or_default();
         let mut action = None;
 
@@ -269,13 +328,25 @@ impl App {
             _ => file_name,
         };
         let framed = egui::Frame::new()
-            .inner_margin(egui::Margin { left: 12, right: 8, top: 5, bottom: 0 })
+            .inner_margin(egui::Margin {
+                left: 12,
+                right: 8,
+                top: 5,
+                bottom: 0,
+            })
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.set_min_height(crate::pane_ops::TAB_HEIGHT);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::icons::small_button(ui, crate::Icon::ClosePane, t("關閉預覽"), true).clicked() {
+                        if crate::icons::small_button(
+                            ui,
+                            crate::Icon::ClosePane,
+                            t("關閉預覽"),
+                            true,
+                        )
+                        .clicked()
+                        {
                             action = Some(crate::Action::ClosePreview(id));
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -303,7 +374,8 @@ impl App {
             egui::pos2(rect.max.x - inset, rect.max.y - inset),
         );
         let fill = ui.visuals().extreme_bg_color;
-        ui.painter().rect_filled(body, egui::CornerRadius::same(4), fill);
+        ui.painter()
+            .rect_filled(body, egui::CornerRadius::same(4), fill);
         let content = body.shrink(8.0);
         let font_size = self.settings.preview_font_size;
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {

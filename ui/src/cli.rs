@@ -14,7 +14,11 @@ pub struct Target {
 
 impl Target {
     pub fn plain(path: impl Into<PathBuf>) -> Self {
-        Target { path: path.into(), line: None, col: None }
+        Target {
+            path: path.into(),
+            line: None,
+            col: None,
+        }
     }
 }
 
@@ -49,7 +53,12 @@ impl SendArgs {
         stdin: impl FnOnce() -> Result<String, String>,
         file: impl Fn(&str) -> Result<String, String>,
     ) -> Result<(), String> {
-        let trim = |text: String| text.strip_suffix("\r\n").or_else(|| text.strip_suffix('\n')).unwrap_or(&text).to_owned();
+        let trim = |text: String| {
+            text.strip_suffix("\r\n")
+                .or_else(|| text.strip_suffix('\n'))
+                .unwrap_or(&text)
+                .to_owned()
+        };
         let mut stdin = Some(stdin);
         let mut stdin_text: Option<String> = None;
         for item in &mut self.items {
@@ -58,7 +67,10 @@ impl SendArgs {
                     if stdin_text.is_none() {
                         stdin_text = Some(trim((stdin.take().ok_or("標準輸入只能讀一次")?)()?));
                     }
-                    (stdin_text.clone().unwrap_or_default(), "標準輸入".to_owned())
+                    (
+                        stdin_text.clone().unwrap_or_default(),
+                        "標準輸入".to_owned(),
+                    )
                 }
                 SendItem::File(path) => (trim(file(path)?), format!("檔案 {path}")),
                 _ => continue,
@@ -150,7 +162,8 @@ fn parse_with(
             }
             continue;
         }
-        out.targets.push(split_position(&PathBuf::from(&arg), &exists));
+        out.targets
+            .push(split_position(&PathBuf::from(&arg), &exists));
     }
     Ok(out)
 }
@@ -166,7 +179,11 @@ fn parse_send(args: impl Iterator<Item = std::ffi::OsString>) -> Result<SendArgs
             out.items.push(SendItem::Text(text));
             continue;
         }
-        let mut value = |name: &str| args.next().map(|v| v.to_string_lossy().into_owned()).ok_or_else(|| format!("{name} 後面要接值"));
+        let mut value = |name: &str| {
+            args.next()
+                .map(|v| v.to_string_lossy().into_owned())
+                .ok_or_else(|| format!("{name} 後面要接值"))
+        };
         match text.as_str() {
             "--" => literal = true,
             "-t" | "--terminal" => out.terminal = Some(value(&text)?),
@@ -180,7 +197,11 @@ fn parse_send(args: impl Iterator<Item = std::ffi::OsString>) -> Result<SendArgs
             "--paste" => out.paste = true,
             "--stdin" => out.items.push(SendItem::Stdin),
             "-f" | "--file" => out.items.push(SendItem::File(value(&text)?)),
-            t => return Err(format!("--send 不認得的選項：{t}（文字以 - 開頭時請用 --text）")),
+            t => {
+                return Err(format!(
+                    "--send 不認得的選項：{t}（文字以 - 開頭時請用 --text）"
+                ));
+            }
         }
     }
     if out.items.is_empty() {
@@ -199,14 +220,18 @@ pub fn parse_target(path: &Path) -> Target {
 /// 拆掉之後的檔案不存在也照拆（FEditor 不允許檔名有冒號，當成要建立的新檔案）。
 fn split_position(path: &Path, exists: &impl Fn(&Path) -> bool) -> Target {
     let whole = Target::plain(path);
-    let Some(text) = path.to_str() else { return whole };
+    let Some(text) = path.to_str() else {
+        return whole;
+    };
     if exists(path) {
         return whole;
     }
     let mut rest = text;
     let mut numbers: Vec<usize> = Vec::new();
     while numbers.len() < 2 {
-        let Some((head, tail)) = rest.rsplit_once(':') else { break };
+        let Some((head, tail)) = rest.rsplit_once(':') else {
+            break;
+        };
         match tail.parse::<usize>() {
             Ok(n) if !head.is_empty() => {
                 numbers.push(n);
@@ -232,21 +257,40 @@ mod tests {
     use super::*;
 
     fn run(args: &[&str], existing: &[&str]) -> Result<Args, String> {
-        parse_with(args.iter().map(std::ffi::OsString::from), |p| existing.iter().any(|e| Path::new(e) == p))
+        parse_with(args.iter().map(std::ffi::OsString::from), |p| {
+            existing.iter().any(|e| Path::new(e) == p)
+        })
     }
 
     #[test]
     fn plain_paths_and_flags() {
         let a = run(&["-n", "--wait", "a.txt", "b.txt"], &[]).unwrap();
         assert!(a.new_window && a.wait && !a.help && !a.version);
-        assert_eq!(a.targets, vec![Target::plain("a.txt"), Target::plain("b.txt")]);
+        assert_eq!(
+            a.targets,
+            vec![Target::plain("a.txt"), Target::plain("b.txt")]
+        );
         assert!(run(&["-h"], &[]).unwrap().help);
         assert!(run(&["--version"], &[]).unwrap().version);
     }
 
     #[test]
     fn send_parses_terminal_text_and_keys_in_order() {
-        let a = run(&["--send", "-t", "伺服器", "cargo run", "-e", "--text", "-x", "-k", "Ctrl+C"], &[]).unwrap();
+        let a = run(
+            &[
+                "--send",
+                "-t",
+                "伺服器",
+                "cargo run",
+                "-e",
+                "--text",
+                "-x",
+                "-k",
+                "Ctrl+C",
+            ],
+            &[],
+        )
+        .unwrap();
         let send = a.send.unwrap();
         assert_eq!(send.terminal.as_deref(), Some("伺服器"));
         assert_eq!(
@@ -267,7 +311,10 @@ mod tests {
     #[test]
     fn send_rejects_bad_input_and_only_the_first_argument_makes_it_a_send() {
         assert!(run(&["--send"], &[]).is_err(), "沒有內容");
-        assert!(run(&["--send", "-k", "Nonsense"], &[]).is_err(), "不認得的按鍵");
+        assert!(
+            run(&["--send", "-k", "Nonsense"], &[]).is_err(),
+            "不認得的按鍵"
+        );
         assert!(run(&["--send", "-t"], &[]).is_err(), "缺值");
         assert!(run(&["--send", "--bogus", "x"], &[]).is_err());
         // 單獨的 send 現在只是檔名
@@ -279,34 +326,98 @@ mod tests {
 
     #[test]
     fn paste_stdin_and_file_options_are_resolved_before_sending() {
-        let send = run(&["--send", "--paste", "--stdin", "-e", "--file", "提示.txt"], &[]).unwrap().send.unwrap();
+        let send = run(
+            &["--send", "--paste", "--stdin", "-e", "--file", "提示.txt"],
+            &[],
+        )
+        .unwrap()
+        .send
+        .unwrap();
         assert!(send.paste);
-        assert_eq!(send.items, vec![SendItem::Stdin, SendItem::Key("Enter".into()), SendItem::File("提示.txt".into())]);
+        assert_eq!(
+            send.items,
+            vec![
+                SendItem::Stdin,
+                SendItem::Key("Enter".into()),
+                SendItem::File("提示.txt".into())
+            ]
+        );
         // 只有 --stdin 或 --file 也算有內容
-        assert!(run(&["--send", "--stdin"], &[]).is_ok() && run(&["--send", "-f", "x"], &[]).is_ok());
+        assert!(
+            run(&["--send", "--stdin"], &[]).is_ok() && run(&["--send", "-f", "x"], &[]).is_ok()
+        );
         assert!(run(&["--send", "--file"], &[]).is_err(), "缺檔名");
         let no_file = |_: &str| -> Result<String, String> { panic!("不該讀檔") };
         let mut send = send;
-        send.resolve_inputs(|| Ok("a\nb\n".to_owned()), |p| Ok(format!("內容來自{p}\r\n"))).unwrap();
-        assert_eq!(send.items[0], SendItem::Text("a\nb".into()), "最後一個換行去掉");
-        assert_eq!(send.items[2], SendItem::Text("內容來自提示.txt".into()), "檔案內容也去掉最後一個換行");
-        let mut crlf = SendArgs { items: vec![SendItem::Stdin], ..Default::default() };
-        crlf.resolve_inputs(|| Ok("x\r\n\r\n".to_owned()), no_file).unwrap();
-        assert_eq!(crlf.items[0], SendItem::Text("x\r\n".into()), "只去掉最後一個");
-        let mut none = SendArgs { items: vec![SendItem::Text("t".into())], ..Default::default() };
-        none.resolve_inputs(|| panic!("沒有 --stdin 不該去讀"), no_file).unwrap();
+        send.resolve_inputs(
+            || Ok("a\nb\n".to_owned()),
+            |p| Ok(format!("內容來自{p}\r\n")),
+        )
+        .unwrap();
+        assert_eq!(
+            send.items[0],
+            SendItem::Text("a\nb".into()),
+            "最後一個換行去掉"
+        );
+        assert_eq!(
+            send.items[2],
+            SendItem::Text("內容來自提示.txt".into()),
+            "檔案內容也去掉最後一個換行"
+        );
+        let mut crlf = SendArgs {
+            items: vec![SendItem::Stdin],
+            ..Default::default()
+        };
+        crlf.resolve_inputs(|| Ok("x\r\n\r\n".to_owned()), no_file)
+            .unwrap();
+        assert_eq!(
+            crlf.items[0],
+            SendItem::Text("x\r\n".into()),
+            "只去掉最後一個"
+        );
+        let mut none = SendArgs {
+            items: vec![SendItem::Text("t".into())],
+            ..Default::default()
+        };
+        none.resolve_inputs(|| panic!("沒有 --stdin 不該去讀"), no_file)
+            .unwrap();
         // 讀不到、或內容是空的：回報錯誤，不會悄悄送出空字串（PowerShell 的管線不會傳給視窗程式，讀到的就是空的）
-        let mut bad = SendArgs { items: vec![SendItem::Stdin], ..Default::default() };
-        assert!(bad.resolve_inputs(|| Err("讀不到".into()), no_file).is_err());
-        let mut empty = SendArgs { items: vec![SendItem::Stdin], ..Default::default() };
-        assert!(empty.resolve_inputs(|| Ok(String::new()), no_file).unwrap_err().contains("標準輸入是空的"));
-        let mut empty_file = SendArgs { items: vec![SendItem::File("a".into())], ..Default::default() };
-        assert!(empty_file.resolve_inputs(|| Ok("x".into()), |_| Ok("\n".into())).unwrap_err().contains("檔案 a是空的"));
+        let mut bad = SendArgs {
+            items: vec![SendItem::Stdin],
+            ..Default::default()
+        };
+        assert!(
+            bad.resolve_inputs(|| Err("讀不到".into()), no_file)
+                .is_err()
+        );
+        let mut empty = SendArgs {
+            items: vec![SendItem::Stdin],
+            ..Default::default()
+        };
+        assert!(
+            empty
+                .resolve_inputs(|| Ok(String::new()), no_file)
+                .unwrap_err()
+                .contains("標準輸入是空的")
+        );
+        let mut empty_file = SendArgs {
+            items: vec![SendItem::File("a".into())],
+            ..Default::default()
+        };
+        assert!(
+            empty_file
+                .resolve_inputs(|| Ok("x".into()), |_| Ok("\n".into()))
+                .unwrap_err()
+                .contains("檔案 a是空的")
+        );
     }
     #[test]
     fn unknown_options_are_errors_but_double_dash_allows_dashed_names() {
         assert!(run(&["--nope"], &[]).is_err());
-        assert_eq!(run(&["--", "-n"], &[]).unwrap().targets, vec![Target::plain("-n")]);
+        assert_eq!(
+            run(&["--", "-n"], &[]).unwrap().targets,
+            vec![Target::plain("-n")]
+        );
         assert_eq!(run(&["-"], &[]).unwrap().targets, vec![Target::plain("-")]);
         assert!(run(&["-psn_0_12345", "a"], &[]).unwrap().targets.len() == 1);
     }
@@ -315,7 +426,10 @@ mod tests {
     fn line_and_column_suffixes_are_split_unless_the_whole_name_exists() {
         let ex = ["src/main.rs"];
         let t = &run(&["src/main.rs:120:5"], &ex).unwrap().targets[0];
-        assert_eq!((t.path.as_path(), t.line, t.col), (Path::new("src/main.rs"), Some(120), Some(5)));
+        assert_eq!(
+            (t.path.as_path(), t.line, t.col),
+            (Path::new("src/main.rs"), Some(120), Some(5))
+        );
         let t = &run(&["src/main.rs:7"], &ex).unwrap().targets[0];
         assert_eq!((t.line, t.col), (Some(7), None));
         // 拆掉之後的檔案不存在：照拆，當成要建立的新檔案
@@ -324,9 +438,15 @@ mod tests {
         // 磁碟機代號不是檔名
         assert_eq!(run(&["C:5"], &ex).unwrap().targets[0], Target::plain("C:5"));
         // 檔名本身就有冒號而且存在：不拆
-        assert_eq!(run(&["a:1"], &["a:1", "a"]).unwrap().targets[0], Target::plain("a:1"));
+        assert_eq!(
+            run(&["a:1"], &["a:1", "a"]).unwrap().targets[0],
+            Target::plain("a:1")
+        );
         // 行號 0 當作沒指定；非數字不拆
         assert_eq!(run(&["src/main.rs:0"], &ex).unwrap().targets[0].line, None);
-        assert_eq!(run(&["src/main.rs:x"], &ex).unwrap().targets[0], Target::plain("src/main.rs:x"));
+        assert_eq!(
+            run(&["src/main.rs:x"], &ex).unwrap().targets[0],
+            Target::plain("src/main.rs:x")
+        );
     }
 }

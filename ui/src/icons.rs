@@ -192,8 +192,11 @@ fn widget(
         let visuals = ui.style().interact_selectable(&response, selected);
         let highlighted = enabled && (response.hovered() || response.has_focus() || selected);
         if highlighted {
-            ui.painter()
-                .rect_filled(rect.shrink(1.0), CornerRadius::same(4), visuals.weak_bg_fill);
+            ui.painter().rect_filled(
+                rect.shrink(1.0),
+                CornerRadius::same(4),
+                visuals.weak_bg_fill,
+            );
         }
         // 圖示底下目前實際的底色：有些圖示（月亮、徽章）要用它「挖」出形狀
         let bg = if highlighted {
@@ -204,7 +207,12 @@ fn widget(
         let color = if enabled {
             visuals.fg_stroke.color
         } else {
-            ui.visuals().widgets.noninteractive.fg_stroke.color.gamma_multiply(0.4)
+            ui.visuals()
+                .widgets
+                .noninteractive
+                .fg_stroke
+                .color
+                .gamma_multiply(0.4)
         };
         let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icon_px));
         draw(ui, icon, icon_rect, color, bg);
@@ -249,7 +257,13 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
     match icon {
         Icon::New => {
             // 摺角的紙張 + 加號
-            closed(&[(3.0, 1.5), (10.0, 1.5), (13.0, 4.5), (13.0, 14.5), (3.0, 14.5)]);
+            closed(&[
+                (3.0, 1.5),
+                (10.0, 1.5),
+                (13.0, 4.5),
+                (13.0, 14.5),
+                (3.0, 14.5),
+            ]);
             line(&[(10.0, 1.5), (10.0, 4.5), (13.0, 4.5)]);
             line(&[(8.0, 7.0), (8.0, 12.0)]);
             line(&[(5.5, 9.5), (10.5, 9.5)]);
@@ -278,7 +292,16 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             closed(&[(4.0, 2.5), (13.0, 8.0), (4.0, 13.5)]);
         }
         Icon::Rerun => {
-            circular_arrow(painter, p(8.0, 8.0), 6.0 * s, -50.0, 270.0, stroke, color, s);
+            circular_arrow(
+                painter,
+                p(8.0, 8.0),
+                6.0 * s,
+                -50.0,
+                270.0,
+                stroke,
+                color,
+                s,
+            );
             // 中間的小三角形也是空心，與「執行」一致
             closed(&[(6.6, 5.8), (10.2, 8.0), (6.6, 10.2)]);
         }
@@ -286,7 +309,16 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             // 與「開啟」同樣的資料夾（縮在左下），右上角加一個半圓箭頭：重新讀取這個檔案
             line(&[(1.0, 14.5), (1.0, 6.5), (4.5, 6.5), (5.8, 8.0), (8.5, 8.0)]);
             closed(&[(1.0, 14.5), (3.4, 10.0), (12.5, 10.0), (10.1, 14.5)]);
-            circular_arrow(painter, p(11.6, 4.6), 3.4 * s, 165.0, 205.0, stroke, color, s * 0.85);
+            circular_arrow(
+                painter,
+                p(11.6, 4.6),
+                3.4 * s,
+                165.0,
+                205.0,
+                stroke,
+                color,
+                s * 0.85,
+            );
         }
         Icon::Clear => {
             // 垃圾桶
@@ -363,12 +395,22 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             // 終端機的提示字元（> 加底線，和「新增終端機」的圖示一樣），右下角加一個實心的播放三角形：在終端機執行
             line(&[(2.0, 3.2), (6.0, 6.7), (2.0, 10.2)]);
             line(&[(2.0, 13.2), (6.2, 13.2)]);
-            painter.add(Shape::convex_polygon(vec![p(8.6, 8.2), p(8.6, 14.6), p(14.6, 11.4)], color, Stroke::NONE));
+            painter.add(Shape::convex_polygon(
+                vec![p(8.6, 8.2), p(8.6, 14.6), p(14.6, 11.4)],
+                color,
+                Stroke::NONE,
+            ));
         }
         Icon::Preview => {
             // 眼睛：上下眼瞼的弧線加瞳孔
             line(&[(1.2, 8.0), (4.2, 4.8), (8.0, 3.4), (11.8, 4.8), (14.8, 8.0)]);
-            line(&[(1.2, 8.0), (4.2, 11.2), (8.0, 12.6), (11.8, 11.2), (14.8, 8.0)]);
+            line(&[
+                (1.2, 8.0),
+                (4.2, 11.2),
+                (8.0, 12.6),
+                (11.8, 11.2),
+                (14.8, 8.0),
+            ]);
             painter.circle_stroke(p(8.0, 8.0), 2.4 * s, stroke);
         }
         Icon::LangSystem => {
@@ -390,7 +432,12 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         Icon::LangEnglish => glyph(painter, rect, "En", 12.0 * s, color),
         Icon::ClosePane => {
             // 窗格的外框，裡面一個 ×
-            painter.rect_stroke(rect_of(1.8, 2.8, 14.2, 13.2), CornerRadius::same(1), stroke, StrokeKind::Inside);
+            painter.rect_stroke(
+                rect_of(1.8, 2.8, 14.2, 13.2),
+                CornerRadius::same(1),
+                stroke,
+                StrokeKind::Inside,
+            );
             line(&[(5.8, 6.0), (10.2, 10.0)]);
             line(&[(10.2, 6.0), (5.8, 10.0)]);
         }
@@ -447,33 +494,87 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
         }
         Icon::CurrentLine => {
             // 三行文字，中間那行畫成實心底色
-            painter.rect_filled(rect_of(1.0, 5.8, 15.0, 10.2), CornerRadius::same(1), color.gamma_multiply(0.35));
+            painter.rect_filled(
+                rect_of(1.0, 5.8, 15.0, 10.2),
+                CornerRadius::same(1),
+                color.gamma_multiply(0.35),
+            );
             line(&[(2.5, 3.0), (13.5, 3.0)]);
             line(&[(2.5, 8.0), (13.5, 8.0)]);
             line(&[(2.5, 13.0), (13.5, 13.0)]);
         }
         Icon::Folder => {
             // 有分頁耳朵的資料夾外框
-            closed(&[(1.5, 13.5), (1.5, 3.0), (6.0, 3.0), (7.5, 5.0), (14.5, 5.0), (14.5, 13.5)]);
+            closed(&[
+                (1.5, 13.5),
+                (1.5, 3.0),
+                (6.0, 3.0),
+                (7.5, 5.0),
+                (14.5, 5.0),
+                (14.5, 13.5),
+            ]);
         }
         Icon::Subfolders => {
             // 上層資料夾，底下接一個縮排的子資料夾
-            closed(&[(1.5, 7.0), (1.5, 1.5), (4.5, 1.5), (5.8, 3.2), (10.5, 3.2), (10.5, 7.0)]);
+            closed(&[
+                (1.5, 7.0),
+                (1.5, 1.5),
+                (4.5, 1.5),
+                (5.8, 3.2),
+                (10.5, 3.2),
+                (10.5, 7.0),
+            ]);
             line(&[(3.0, 7.0), (3.0, 12.5), (6.0, 12.5)]);
-            closed(&[(6.0, 14.5), (6.0, 9.5), (8.8, 9.5), (9.9, 11.0), (14.5, 11.0), (14.5, 14.5)]);
+            closed(&[
+                (6.0, 14.5),
+                (6.0, 9.5),
+                (8.8, 9.5),
+                (9.9, 11.0),
+                (14.5, 11.0),
+                (14.5, 14.5),
+            ]);
         }
         Icon::InSelection => {
             // 四條橫的粗線，像一段被選取的文字：第一條左邊短 1/3（從行中間開始選），
             // 最後一條右邊短 1/3（選到行中間為止）
             // 細線，四條的中心均分在 3 到 13 之間
-            for (y, x0, x1) in [(3.0, 6.0, 14.0), (6.33, 2.0, 14.0), (9.67, 2.0, 14.0), (13.0, 2.0, 10.0)] {
-                painter.rect_filled(rect_of(x0, y - 0.65, x1, y + 0.65), CornerRadius::ZERO, color);
+            for (y, x0, x1) in [
+                (3.0, 6.0, 14.0),
+                (6.33, 2.0, 14.0),
+                (9.67, 2.0, 14.0),
+                (13.0, 2.0, 10.0),
+            ] {
+                painter.rect_filled(
+                    rect_of(x0, y - 0.65, x1, y + 0.65),
+                    CornerRadius::ZERO,
+                    color,
+                );
             }
         }
         Icon::Syntax => {
             // { }：程式碼
-            line(&[(6.0, 2.5), (4.8, 2.5), (4.2, 3.2), (4.2, 6.6), (3.0, 8.0), (4.2, 9.4), (4.2, 12.8), (4.8, 13.5), (6.0, 13.5)]);
-            line(&[(10.0, 2.5), (11.2, 2.5), (11.8, 3.2), (11.8, 6.6), (13.0, 8.0), (11.8, 9.4), (11.8, 12.8), (11.2, 13.5), (10.0, 13.5)]);
+            line(&[
+                (6.0, 2.5),
+                (4.8, 2.5),
+                (4.2, 3.2),
+                (4.2, 6.6),
+                (3.0, 8.0),
+                (4.2, 9.4),
+                (4.2, 12.8),
+                (4.8, 13.5),
+                (6.0, 13.5),
+            ]);
+            line(&[
+                (10.0, 2.5),
+                (11.2, 2.5),
+                (11.8, 3.2),
+                (11.8, 6.6),
+                (13.0, 8.0),
+                (11.8, 9.4),
+                (11.8, 12.8),
+                (11.2, 13.5),
+                (10.0, 13.5),
+            ]);
         }
         Icon::Record => {
             painter.circle_stroke(p(8.0, 8.0), 6.0 * s, stroke);
@@ -483,13 +584,23 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             painter.rect_filled(rect_of(3.5, 3.5, 12.5, 12.5), CornerRadius::same(1), color);
         }
         Icon::Edit => {
-            closed(&[(2.5, 13.5), (3.3, 10.2), (10.6, 2.9), (13.1, 5.4), (5.8, 12.7)]);
+            closed(&[
+                (2.5, 13.5),
+                (3.3, 10.2),
+                (10.6, 2.9),
+                (13.1, 5.4),
+                (5.8, 12.7),
+            ]);
             line(&[(9.0, 4.5), (11.5, 7.0)]);
         }
         Icon::TabsToSpaces | Icon::SpacesToTabs => {
             // Tab 符號（箭頭＋豎線）與空白符號（開口向上的括號）上下排列，右邊的箭頭由換出的一邊指向換進的一邊
             // 空白→Tab 時上下對調：空白在上、Tab 在下，光看圖就能分辨換的方向
-            let (ty, sy) = if icon == Icon::TabsToSpaces { (4.5, 10.0) } else { (11.5, 3.0) };
+            let (ty, sy) = if icon == Icon::TabsToSpaces {
+                (4.5, 10.0)
+            } else {
+                (11.5, 3.0)
+            };
             line(&[(2.0, ty), (9.0, ty)]);
             line(&[(6.8, ty - 1.8), (9.0, ty), (6.8, ty + 1.8)]);
             line(&[(11.0, ty - 1.8), (11.0, ty + 1.8)]);
@@ -513,7 +624,12 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             line(&[(2.5, 13.5), (13.5, 13.5)]);
         }
         Icon::Keyboard => {
-            painter.rect_stroke(rect_of(1.5, 3.5, 14.5, 12.5), CornerRadius::same(2), stroke, StrokeKind::Inside);
+            painter.rect_stroke(
+                rect_of(1.5, 3.5, 14.5, 12.5),
+                CornerRadius::same(2),
+                stroke,
+                StrokeKind::Inside,
+            );
             for x in [4.0, 6.7, 9.4, 12.1] {
                 painter.circle_filled(p(x, 6.3), 0.7 * s, color);
             }
@@ -530,7 +646,14 @@ fn draw(ui: &Ui, icon: Icon, rect: Rect, color: Color32, bg: Color32) {
             // 一行文字走到右邊後折回下一行：折返箭頭
             line(&[(1.5, 3.5), (14.5, 3.5)]);
             line(&[(1.5, 12.5), (6.0, 12.5)]);
-            line(&[(1.5, 8.0), (12.0, 8.0), (14.0, 9.0), (14.0, 11.0), (12.0, 12.0), (9.5, 12.0)]);
+            line(&[
+                (1.5, 8.0),
+                (12.0, 8.0),
+                (14.0, 9.0),
+                (14.0, 11.0),
+                (12.0, 12.0),
+                (9.5, 12.0),
+            ]);
             line(&[(11.0, 10.2), (9.2, 12.0), (11.0, 13.8)]);
         }
         Icon::Bell => {
@@ -563,8 +686,10 @@ pub fn combo_chevron(ui: &Ui, rect: Rect, visuals: &WidgetVisuals, is_open: bool
         Pos2::new(c.x, c.y - dy),
         Pos2::new(c.x + half_w, c.y + dy),
     ];
-    ui.painter()
-        .add(Shape::line(points, Stroke::new(1.1, visuals.fg_stroke.color)));
+    ui.painter().add(Shape::line(
+        points,
+        Stroke::new(1.1, visuals.fg_stroke.color),
+    ));
 }
 
 /// 磁碟片：外框、上方的金屬片、下方的標籤。
@@ -589,21 +714,37 @@ fn floppy_xf(
     fill: Option<Color32>,
 ) {
     let t = |x: f32, y: f32| (ox + x * k, oy + y * k);
-    let outline: Vec<Pos2> = [(2.0, 2.0), (12.0, 2.0), (14.0, 4.0), (14.0, 14.0), (2.0, 14.0)]
-        .iter()
-        .map(|&(x, y)| {
-            let (x, y) = t(x, y);
-            p(x, y)
-        })
-        .collect();
+    let outline: Vec<Pos2> = [
+        (2.0, 2.0),
+        (12.0, 2.0),
+        (14.0, 4.0),
+        (14.0, 14.0),
+        (2.0, 14.0),
+    ]
+    .iter()
+    .map(|&(x, y)| {
+        let (x, y) = t(x, y);
+        p(x, y)
+    })
+    .collect();
     if let Some(bg) = fill {
         painter.add(Shape::convex_polygon(outline.clone(), bg, Stroke::NONE));
     }
     painter.add(Shape::closed_line(outline, stroke));
     let (a, b) = (t(5.0, 2.0), t(11.0, 6.0));
-    painter.rect_stroke(rect_of(a.0, a.1, b.0, b.1), CornerRadius::ZERO, stroke, StrokeKind::Middle);
+    painter.rect_stroke(
+        rect_of(a.0, a.1, b.0, b.1),
+        CornerRadius::ZERO,
+        stroke,
+        StrokeKind::Middle,
+    );
     let (a, b) = (t(4.5, 9.0), t(11.5, 14.0));
-    painter.rect_stroke(rect_of(a.0, a.1, b.0, b.1), CornerRadius::ZERO, stroke, StrokeKind::Middle);
+    painter.rect_stroke(
+        rect_of(a.0, a.1, b.0, b.1),
+        CornerRadius::ZERO,
+        stroke,
+        StrokeKind::Middle,
+    );
 }
 
 /// 圓弧加箭頭。角度單位為度，螢幕座標 y 向下，所以正的 `sweep_deg` 是順時針、負的是逆時針。
@@ -682,7 +823,12 @@ mod tests {
             if s.is_empty() {
                 "stroke=\"none\"".to_owned()
             } else {
-                format!("stroke=\"{}\" stroke-opacity=\"{:.2}\" stroke-width=\"{:.2}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"", hex(s.color), opacity(s.color), s.width)
+                format!(
+                    "stroke=\"{}\" stroke-opacity=\"{:.2}\" stroke-width=\"{:.2}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+                    hex(s.color),
+                    opacity(s.color),
+                    s.width
+                )
             }
         };
         let fill_attrs = |c: Color32| {
@@ -695,16 +841,32 @@ mod tests {
         match shape {
             Shape::Vec(shapes) => shapes.iter().for_each(|s| svg_of(s, out)),
             Shape::Path(path) => {
-                let points: Vec<String> = path.points.iter().map(|p| format!("{:.2},{:.2}", p.x, p.y)).collect();
+                let points: Vec<String> = path
+                    .points
+                    .iter()
+                    .map(|p| format!("{:.2},{:.2}", p.x, p.y))
+                    .collect();
                 let stroke = match &path.stroke.color {
                     egui::epaint::ColorMode::Solid(c) => Stroke::new(path.stroke.width, *c),
                     _ => Stroke::NONE,
                 };
                 let tag = if path.closed { "polygon" } else { "polyline" };
-                out.push_str(&format!("<{tag} points=\"{}\" {} {}/>\n", points.join(" "), fill_attrs(path.fill), stroke_attrs(&stroke)));
+                out.push_str(&format!(
+                    "<{tag} points=\"{}\" {} {}/>\n",
+                    points.join(" "),
+                    fill_attrs(path.fill),
+                    stroke_attrs(&stroke)
+                ));
             }
             Shape::Circle(c) => {
-                out.push_str(&format!("<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"{:.2}\" {} {}/>\n", c.center.x, c.center.y, c.radius, fill_attrs(c.fill), stroke_attrs(&c.stroke)));
+                out.push_str(&format!(
+                    "<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"{:.2}\" {} {}/>\n",
+                    c.center.x,
+                    c.center.y,
+                    c.radius,
+                    fill_attrs(c.fill),
+                    stroke_attrs(&c.stroke)
+                ));
             }
             Shape::Rect(r) => {
                 let rect = match r.stroke_kind {
@@ -718,7 +880,14 @@ mod tests {
                 ));
             }
             Shape::LineSegment { points, stroke } => {
-                out.push_str(&format!("<line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" {}/>\n", points[0].x, points[0].y, points[1].x, points[1].y, stroke_attrs(stroke)));
+                out.push_str(&format!(
+                    "<line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" {}/>\n",
+                    points[0].x,
+                    points[0].y,
+                    points[1].x,
+                    points[1].y,
+                    stroke_attrs(stroke)
+                ));
             }
             other => panic!("圖示用到了還不會轉成 SVG 的形狀：{other:?}"),
         }
@@ -728,23 +897,39 @@ mod tests {
     fn render(icon: Icon) -> String {
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
-        raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(SIZE * 2.0, SIZE * 2.0)));
+        raw.screen_rect = Some(Rect::from_min_size(
+            Pos2::ZERO,
+            vec2(SIZE * 2.0, SIZE * 2.0),
+        ));
         let mut output = ctx.run_ui(raw, |ui| {
-            paint(ui, icon, Rect::from_min_size(Pos2::ZERO, Vec2::splat(SIZE)), INK);
+            paint(
+                ui,
+                icon,
+                Rect::from_min_size(Pos2::ZERO, Vec2::splat(SIZE)),
+                INK,
+            );
         });
         output.textures_delta.clear();
         let mut body = String::new();
         for clipped in &output.shapes {
             svg_of(&clipped.shape, &mut body);
         }
-        format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{SIZE}\" height=\"{SIZE}\" viewBox=\"0 0 {SIZE} {SIZE}\">\n{body}</svg>\n")
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{SIZE}\" height=\"{SIZE}\" viewBox=\"0 0 {SIZE} {SIZE}\">\n{body}</svg>\n"
+        )
     }
 
     #[test]
     fn every_doc_icon_renders_to_a_non_empty_svg() {
         for (name, icon) in DOC_ICONS {
             let svg = render(*icon);
-            assert!(svg.contains("<polyline") || svg.contains("<polygon") || svg.contains("<circle") || svg.contains("<rect"), "{name} 沒有畫出任何東西");
+            assert!(
+                svg.contains("<polyline")
+                    || svg.contains("<polygon")
+                    || svg.contains("<circle")
+                    || svg.contains("<rect"),
+                "{name} 沒有畫出任何東西"
+            );
         }
     }
 

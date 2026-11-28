@@ -52,7 +52,8 @@ mod macos {
         // SAFETY: 標準的 Objective-C 呼叫；sharedDocumentController 在主執行緒之外也可以用，參數是有效的 NSURL。
         unsafe {
             let url = NSURL::fileURLWithPath(&text);
-            let controller: Retained<AnyObject> = msg_send![class!(NSDocumentController), sharedDocumentController];
+            let controller: Retained<AnyObject> =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
             let _: () = msg_send![&*controller, noteNewRecentDocumentURL: &*url];
         }
     }
@@ -61,8 +62,10 @@ mod macos {
     pub fn clear() {
         // SAFETY: 同上；參數是 nil（發送者）。
         unsafe {
-            let controller: Retained<AnyObject> = msg_send![class!(NSDocumentController), sharedDocumentController];
-            let _: () = msg_send![&*controller, clearRecentDocuments: std::ptr::null::<AnyObject>()];
+            let controller: Retained<AnyObject> =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
+            let _: () =
+                msg_send![&*controller, clearRecentDocuments: std::ptr::null::<AnyObject>()];
         }
     }
 }

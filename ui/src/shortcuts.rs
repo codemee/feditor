@@ -27,20 +27,36 @@ fn sc(shortcut: &KeyboardShortcut) -> String {
 }
 
 fn group(title: &str, rows: Vec<(&str, String)>) -> Group {
-    Group { title: title.to_owned(), rows: rows.into_iter().map(|(action, keys)| Row { action: action.to_owned(), keys }).collect() }
+    Group {
+        title: title.to_owned(),
+        rows: rows
+            .into_iter()
+            .map(|(action, keys)| Row {
+                action: action.to_owned(),
+                keys,
+            })
+            .collect(),
+    }
 }
 
 /// 「移到上下左右窗格」的按鍵文字；關掉時顯示破折號。
 fn pane_nav_keys(pane_nav: PaneNav) -> String {
     match pane_nav {
         PaneNav::Off => "—".to_owned(),
-        p => ["Up", "Down", "Left", "Right"].iter().map(|k| format!("{}+{k}", p.name())).collect::<Vec<_>>().join(" / "),
+        p => ["Up", "Down", "Left", "Right"]
+            .iter()
+            .map(|k| format!("{}+{k}", p.name()))
+            .collect::<Vec<_>>()
+            .join(" / "),
     }
 }
 
 /// 內建的快捷鍵，依用途分組（文字依目前的介面語言）。
 pub fn builtin_groups(pane_nav: PaneNav) -> Vec<Group> {
-    use crate::{CLOSE_TAB, FIND, FIND_IN_FILES, FIND_NEXT, FIND_PREV, NEW, NEXT_TAB, OPEN, PREV_TAB, REDO, REDO_Y, REPLACE, RERUN, SAVE, SAVE_AS, TOGGLE_PREVIEW, UNDO};
+    use crate::{
+        CLOSE_TAB, FIND, FIND_IN_FILES, FIND_NEXT, FIND_PREV, NEW, NEXT_TAB, OPEN, PREV_TAB, REDO,
+        REDO_Y, REPLACE, RERUN, SAVE, SAVE_AS, TOGGLE_PREVIEW, UNDO,
+    };
     let two = |a: &KeyboardShortcut, b: &KeyboardShortcut| format!("{} / {}", sc(a), sc(b));
     vec![
         group(
@@ -72,7 +88,10 @@ pub fn builtin_groups(pane_nav: PaneNav) -> Vec<Group> {
                 (t("剪下、複製、貼上"), "Ctrl+X / Ctrl+C / Ctrl+V".to_owned()),
                 (t("全選"), "Ctrl+A".to_owned()),
                 (t("選取下一個相同的字（多重游標）"), "Ctrl+D".to_owned()),
-                (t("在上方、下方加一個游標"), "Ctrl+Alt+Up / Ctrl+Alt+Down".to_owned()),
+                (
+                    t("在上方、下方加一個游標"),
+                    "Ctrl+Alt+Up / Ctrl+Alt+Down".to_owned(),
+                ),
                 (t("上移、下移這一行"), "Alt+Up / Alt+Down".to_owned()),
                 (t("複製這一行"), "Alt+Shift+Up / Alt+Shift+Down".to_owned()),
                 (t("刪除這一行"), "Ctrl+Shift+K".to_owned()),
@@ -106,10 +125,22 @@ pub fn builtin_groups(pane_nav: PaneNav) -> Vec<Group> {
 }
 
 /// 使用者替巨集設的快捷鍵：（巨集名稱, 適用的檔案類型, 快捷鍵, 適不適用於 `lang` 這種檔案）。
-pub fn macro_rows(macros: &[crate::macro_lib::MacroEntry], lang: Option<&str>) -> Vec<(String, Vec<String>, String, bool)> {
+pub fn macro_rows(
+    macros: &[crate::macro_lib::MacroEntry],
+    lang: Option<&str>,
+) -> Vec<(String, Vec<String>, String, bool)> {
     let mut rows: Vec<_> = macros
         .iter()
-        .filter_map(|m| m.shortcut.as_ref().map(|s| (m.name.clone(), m.langs.clone(), format_shortcut(s), m.applies_to(lang))))
+        .filter_map(|m| {
+            m.shortcut.as_ref().map(|s| {
+                (
+                    m.name.clone(),
+                    m.langs.clone(),
+                    format_shortcut(s),
+                    m.applies_to(lang),
+                )
+            })
+        })
         .collect();
     // 適用於目前檔案的在前面，其餘依快捷鍵排
     rows.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.2.cmp(&b.2)));
@@ -123,13 +154,26 @@ mod tests {
     use std::path::PathBuf;
 
     fn all_rows() -> Vec<Row> {
-        builtin_groups(PaneNav::Alt).into_iter().flat_map(|g| g.rows).collect()
+        builtin_groups(PaneNav::Alt)
+            .into_iter()
+            .flat_map(|g| g.rows)
+            .collect()
     }
 
     #[test]
     fn the_pane_navigation_row_follows_the_setting() {
-        let keys = |p| builtin_groups(p).into_iter().flat_map(|g| g.rows).find(|r| r.action == "切換到上、下、左、右的窗格").unwrap().keys;
-        assert_eq!(keys(PaneNav::Alt), "Alt+Up / Alt+Down / Alt+Left / Alt+Right");
+        let keys = |p| {
+            builtin_groups(p)
+                .into_iter()
+                .flat_map(|g| g.rows)
+                .find(|r| r.action == "切換到上、下、左、右的窗格")
+                .unwrap()
+                .keys
+        };
+        assert_eq!(
+            keys(PaneNav::Alt),
+            "Alt+Up / Alt+Down / Alt+Left / Alt+Right"
+        );
         assert!(keys(PaneNav::CtrlShift).starts_with("Ctrl+Shift+Up"));
         assert_eq!(keys(PaneNav::Off), "—");
     }
@@ -137,13 +181,20 @@ mod tests {
     #[test]
     fn built_in_rows_follow_the_shortcut_constants() {
         let rows = all_rows();
-        let keys_of = |action: &str| rows.iter().find(|r| r.action == action).map(|r| r.keys.clone());
+        let keys_of = |action: &str| {
+            rows.iter()
+                .find(|r| r.action == action)
+                .map(|r| r.keys.clone())
+        };
         assert_eq!(keys_of("儲存").as_deref(), Some("Ctrl+S"));
         assert_eq!(keys_of("另存新檔").as_deref(), Some("Ctrl+Shift+S"));
         assert_eq!(keys_of("重做").as_deref(), Some("Ctrl+Shift+Z / Ctrl+Y"));
         assert_eq!(keys_of("下一筆結果").as_deref(), Some("F3"));
         assert_eq!(keys_of("重新執行上一個巨集").as_deref(), Some("F5"));
-        assert_eq!(keys_of("在編輯區與各終端機之間切換焦點").as_deref(), Some("Ctrl+`"));
+        assert_eq!(
+            keys_of("在編輯區與各終端機之間切換焦點").as_deref(),
+            Some("Ctrl+`")
+        );
         // 切換分頁是實體的 Ctrl+Tab（只設 ctrl、不設 command），不能少了 Ctrl
         assert_eq!(keys_of("下一個分頁").as_deref(), Some("Ctrl+Tab"));
         assert_eq!(keys_of("上一個分頁").as_deref(), Some("Ctrl+Shift+Tab"));
@@ -152,7 +203,11 @@ mod tests {
     #[test]
     fn every_built_in_shortcut_that_macros_may_not_take_is_listed() {
         // 巨集不能用的內建快捷鍵（`builtin_shortcuts`）都要在一覽裡出現，免得漏列
-        let listed: String = all_rows().iter().map(|r| r.keys.clone()).collect::<Vec<_>>().join(" ; ");
+        let listed: String = all_rows()
+            .iter()
+            .map(|r| r.keys.clone())
+            .collect::<Vec<_>>()
+            .join(" ; ");
         for shortcut in crate::App::builtin_shortcuts() {
             let text = format_shortcut(&shortcut);
             assert!(listed.contains(&text), "一覽少了 {text}");
@@ -162,8 +217,17 @@ mod tests {
     #[test]
     fn no_row_is_empty_and_groups_are_not_empty() {
         for group in builtin_groups(PaneNav::Alt) {
-            assert!(!group.title.is_empty() && !group.rows.is_empty(), "{group:?}");
-            assert!(group.rows.iter().all(|r| !r.action.is_empty() && !r.keys.is_empty()), "{group:?}");
+            assert!(
+                !group.title.is_empty() && !group.rows.is_empty(),
+                "{group:?}"
+            );
+            assert!(
+                group
+                    .rows
+                    .iter()
+                    .all(|r| !r.action.is_empty() && !r.keys.is_empty()),
+                "{group:?}"
+            );
         }
     }
 
@@ -183,8 +247,18 @@ mod tests {
         ];
         let rows = macro_rows(&macros, Some("Rust"));
         let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-        assert_eq!(names, ["Rust 專用", "通用", "Python 專用"], "適用於目前檔案的在前面，其餘依快捷鍵排");
-        assert_eq!(rows.iter().map(|r| r.3).collect::<Vec<_>>(), [true, true, false]);
-        assert!(macro_rows(&macros, None).iter().filter(|r| r.3).count() == 1, "純文字檔：只有通用的適用");
+        assert_eq!(
+            names,
+            ["Rust 專用", "通用", "Python 專用"],
+            "適用於目前檔案的在前面，其餘依快捷鍵排"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.3).collect::<Vec<_>>(),
+            [true, true, false]
+        );
+        assert!(
+            macro_rows(&macros, None).iter().filter(|r| r.3).count() == 1,
+            "純文字檔：只有通用的適用"
+        );
     }
 }

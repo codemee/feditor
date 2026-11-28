@@ -9,13 +9,54 @@ use feditor_core::Buffer;
 /// 所有指令名稱（給測試用）。
 #[cfg(test)]
 pub const COMMANDS: &[&str] = &[
-    "left", "right", "up", "down", "wordLeft", "wordRight", "pageUp", "pageDown", "home", "end",
-    "docStart", "docEnd", "selectLeft", "selectRight", "selectUp", "selectDown", "selectWordLeft",
-    "selectWordRight", "selectPageUp", "selectPageDown", "selectHome", "selectEnd",
-    "selectDocStart", "selectDocEnd", "selectAll", "backspace", "delete", "deleteWordLeft",
-    "deleteWordRight", "enter", "tab", "shiftTab", "undo", "redo", "moveLineUp", "moveLineDown",
-    "duplicateLine", "deleteLine", "toggleComment", "indent", "unindent", "tabsToSpaces", "spacesToTabs", "reformat", "addCaretUp",
-    "addCaretDown", "selectNextOccurrence", "clearCarets",
+    "left",
+    "right",
+    "up",
+    "down",
+    "wordLeft",
+    "wordRight",
+    "pageUp",
+    "pageDown",
+    "home",
+    "end",
+    "docStart",
+    "docEnd",
+    "selectLeft",
+    "selectRight",
+    "selectUp",
+    "selectDown",
+    "selectWordLeft",
+    "selectWordRight",
+    "selectPageUp",
+    "selectPageDown",
+    "selectHome",
+    "selectEnd",
+    "selectDocStart",
+    "selectDocEnd",
+    "selectAll",
+    "backspace",
+    "delete",
+    "deleteWordLeft",
+    "deleteWordRight",
+    "enter",
+    "tab",
+    "shiftTab",
+    "undo",
+    "redo",
+    "moveLineUp",
+    "moveLineDown",
+    "duplicateLine",
+    "deleteLine",
+    "toggleComment",
+    "indent",
+    "unindent",
+    "tabsToSpaces",
+    "spacesToTabs",
+    "reformat",
+    "addCaretUp",
+    "addCaretDown",
+    "selectNextOccurrence",
+    "clearCarets",
 ];
 
 impl EditorState {
@@ -170,7 +211,11 @@ fn render_macro(rec: &[Recorded]) -> String {
                 i += 1;
             }
             Recorded::Wrap(prefix, suffix) => {
-                lines.push(format!("editor.wrap({}, {});", js_string(prefix), js_string(suffix)));
+                lines.push(format!(
+                    "editor.wrap({}, {});",
+                    js_string(prefix),
+                    js_string(suffix)
+                ));
                 i += 1;
             }
             Recorded::Command(name) => {
@@ -208,7 +253,10 @@ mod tests {
         s.command(&mut b, "selectWordRight");
         s.wrap_selections(&mut b, "\"", "\"");
         let source = s.stop_recording().unwrap();
-        assert_eq!(source, "// 由錄製產生\neditor.run(\"selectWordRight\");\neditor.wrap(\"\\\"\", \"\\\"\");\n");
+        assert_eq!(
+            source,
+            "// 由錄製產生\neditor.run(\"selectWordRight\");\neditor.wrap(\"\\\"\", \"\\\"\");\n"
+        );
         assert_eq!(b.text(), "\"a \"b");
     }
 
@@ -240,7 +288,11 @@ mod tests {
     #[test]
     fn edit_commands_report_whether_they_did_anything() {
         let (mut b, mut s) = state("a", 0);
-        assert_eq!(s.command(&mut b, "backspace"), Some(false), "在開頭沒東西可刪");
+        assert_eq!(
+            s.command(&mut b, "backspace"),
+            Some(false),
+            "在開頭沒東西可刪"
+        );
         assert_eq!(s.command(&mut b, "delete"), Some(true));
         assert_eq!(s.command(&mut b, "right"), Some(true), "移動永遠算有動作");
     }

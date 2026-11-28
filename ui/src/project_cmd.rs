@@ -31,7 +31,11 @@ pub struct ToolSpec {
 
 impl ToolSpec {
     pub fn hint(&self) -> &'static str {
-        if cfg!(windows) { self.hint_windows } else { self.hint_unix }
+        if cfg!(windows) {
+            self.hint_windows
+        } else {
+            self.hint_unix
+        }
     }
 }
 
@@ -78,8 +82,18 @@ pub struct CommandSpec {
 impl CommandSpec {
     fn new(id: impl Into<String>, program: &str, args: &[&str]) -> Self {
         let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
-        let label = std::iter::once(program.to_owned()).chain(args.iter().cloned()).collect::<Vec<_>>().join(" ");
-        CommandSpec { id: id.into(), label, program: None, args, takes_file: false, extra_sep: false }
+        let label = std::iter::once(program.to_owned())
+            .chain(args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        CommandSpec {
+            id: id.into(),
+            label,
+            program: None,
+            args,
+            takes_file: false,
+            extra_sep: false,
+        }
     }
     fn with_file(mut self, name: &str) -> Self {
         self.takes_file = true;
@@ -179,9 +193,16 @@ fn cargo_bins(root: &Path, doc: &toml::Table, package_name: &str) -> Vec<String>
             .filter_map(|e| {
                 let path = e.path();
                 if path.is_dir() {
-                    path.join("main.rs").is_file().then(|| e.file_name().to_string_lossy().into_owned())
+                    path.join("main.rs")
+                        .is_file()
+                        .then(|| e.file_name().to_string_lossy().into_owned())
                 } else {
-                    path.extension().is_some_and(|x| x == "rs").then(|| path.file_stem().unwrap_or_default().to_string_lossy().into_owned())
+                    path.extension().is_some_and(|x| x == "rs").then(|| {
+                        path.file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned()
+                    })
                 }
             })
             .collect();
@@ -189,7 +210,11 @@ fn cargo_bins(root: &Path, doc: &toml::Table, package_name: &str) -> Vec<String>
         found.into_iter().for_each(&mut add);
     }
     if let Some(list) = doc.get("bin").and_then(|b| b.as_array()) {
-        for name in list.iter().filter_map(|b| b.get("name")).filter_map(|n| n.as_str()) {
+        for name in list
+            .iter()
+            .filter_map(|b| b.get("name"))
+            .filter_map(|n| n.as_str())
+        {
             add(name.to_owned());
         }
     }
@@ -198,19 +223,34 @@ fn cargo_bins(root: &Path, doc: &toml::Table, package_name: &str) -> Vec<String>
 
 /// `.rs` 檔的 Cargo 專案命令。
 pub fn cargo_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
-    let Some(dir) = file.parent() else { return Vec::new() };
-    let Some(manifest) = find_up(dir, "Cargo.toml", home) else { return Vec::new() };
-    let Some(root) = manifest.parent().map(Path::to_path_buf) else { return Vec::new() };
-    let Some(doc) = read_toml(&manifest) else { return Vec::new() };
+    let Some(dir) = file.parent() else {
+        return Vec::new();
+    };
+    let Some(manifest) = find_up(dir, "Cargo.toml", home) else {
+        return Vec::new();
+    };
+    let Some(root) = manifest.parent().map(Path::to_path_buf) else {
+        return Vec::new();
+    };
+    let Some(doc) = read_toml(&manifest) else {
+        return Vec::new();
+    };
 
     let rel: Vec<String> = file
         .strip_prefix(&root)
-        .map(|p| p.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect())
+        .map(|p| {
+            p.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect()
+        })
         .unwrap_or_default();
     let mut commands: Vec<CommandSpec> = Vec::new();
 
     if let Some(package) = doc.get("package").and_then(|p| p.as_table()) {
-        let name = package.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+        let name = package
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or_default();
         let default_run = package.get("default-run").and_then(|n| n.as_str());
         let bins = cargo_bins(&root, &doc, name);
         // 只有一個執行檔（或指定了 default-run）時 `cargo run` 就夠；否則每個執行檔各一項
@@ -219,7 +259,8 @@ pub fn cargo_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
             if bins.len() == 1 && bins[0] == bin {
                 CommandSpec::new("cargo:run", "cargo", &["run"]).with_sep()
             } else {
-                CommandSpec::new(format!("cargo:bin:{bin}"), "cargo", &["run", "--bin", bin]).with_sep()
+                CommandSpec::new(format!("cargo:bin:{bin}"), "cargo", &["run", "--bin", bin])
+                    .with_sep()
             }
         };
         match cargo_target(&rel) {
@@ -227,26 +268,51 @@ pub fn cargo_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
             Some(CargoTarget::Bin(bin)) => push_unique(&mut commands, run_bin(&bin)),
             Some(CargoTarget::Example(example)) => push_unique(
                 &mut commands,
-                CommandSpec::new(format!("cargo:example:{example}"), "cargo", &["run", "--example", &example]).with_sep(),
+                CommandSpec::new(
+                    format!("cargo:example:{example}"),
+                    "cargo",
+                    &["run", "--example", &example],
+                )
+                .with_sep(),
             ),
             Some(CargoTarget::Test(test)) => push_unique(
                 &mut commands,
-                CommandSpec::new(format!("cargo:test:{test}"), "cargo", &["test", "--test", &test]).with_sep(),
+                CommandSpec::new(
+                    format!("cargo:test:{test}"),
+                    "cargo",
+                    &["test", "--test", &test],
+                )
+                .with_sep(),
             ),
             None => {}
         }
         if plain_run && !bins.is_empty() {
-            push_unique(&mut commands, CommandSpec::new("cargo:run", "cargo", &["run"]).with_sep());
+            push_unique(
+                &mut commands,
+                CommandSpec::new("cargo:run", "cargo", &["run"]).with_sep(),
+            );
         } else {
             for bin in bins.iter().take(MAX_LISTED) {
                 push_unique(&mut commands, run_bin(bin));
             }
         }
     }
-    push_unique(&mut commands, CommandSpec::new("cargo:test", "cargo", &["test"]).with_sep());
-    push_unique(&mut commands, CommandSpec::new("cargo:build", "cargo", &["build"]));
+    push_unique(
+        &mut commands,
+        CommandSpec::new("cargo:test", "cargo", &["test"]).with_sep(),
+    );
+    push_unique(
+        &mut commands,
+        CommandSpec::new("cargo:build", "cargo", &["build"]),
+    );
 
-    vec![Finding { source: manifest, cwd: root, tool: Some(&CARGO), evidence: "Cargo.toml".to_owned(), commands }]
+    vec![Finding {
+        source: manifest,
+        cwd: root,
+        tool: Some(&CARGO),
+        evidence: "Cargo.toml".to_owned(),
+        commands,
+    }]
 }
 
 // ───────────────────────────── Python ─────────────────────────────
@@ -265,7 +331,11 @@ fn table_keys(doc: &toml::Table, path: &[&str]) -> Vec<String> {
 fn has_table(doc: &toml::Table, path: &[&str]) -> bool {
     let mut value: Option<&toml::Value> = None;
     for (i, key) in path.iter().enumerate() {
-        value = if i == 0 { doc.get(*key) } else { value.and_then(|v| v.get(*key)) };
+        value = if i == 0 {
+            doc.get(*key)
+        } else {
+            value.and_then(|v| v.get(*key))
+        };
         if value.is_none() {
             return false;
         }
@@ -275,11 +345,22 @@ fn has_table(doc: &toml::Table, path: &[&str]) -> bool {
 
 /// `.py` 檔的專案命令：uv、poetry，以及專案 `.venv` 裡已經裝好的腳本。
 pub fn python_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
-    let Some(dir) = file.parent() else { return Vec::new() };
-    let Some(manifest) = find_up(dir, "pyproject.toml", home) else { return Vec::new() };
-    let Some(root) = manifest.parent().map(Path::to_path_buf) else { return Vec::new() };
-    let Some(doc) = read_toml(&manifest) else { return Vec::new() };
-    let file_name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(dir) = file.parent() else {
+        return Vec::new();
+    };
+    let Some(manifest) = find_up(dir, "pyproject.toml", home) else {
+        return Vec::new();
+    };
+    let Some(root) = manifest.parent().map(Path::to_path_buf) else {
+        return Vec::new();
+    };
+    let Some(doc) = read_toml(&manifest) else {
+        return Vec::new();
+    };
+    let file_name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
 
     let mut scripts = table_keys(&doc, &["project", "scripts"]);
     for name in table_keys(&doc, &["tool", "poetry", "scripts"]) {
@@ -295,11 +376,19 @@ pub fn python_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
     let uses_poetry = poetry_lock || has_table(&doc, &["tool", "poetry"]);
     // 虛擬環境裡已經裝好的腳本：直接執行，不需要 uv 或 poetry。
     // 環境資料夾的名字和直譯器搜尋一致（`.venv`、`venv`、`env`，要有 `pyvenv.cfg`），第一個有這個腳本的環境優先
-    let envs: Vec<PathBuf> = [".venv", "venv", "env"].iter().map(|n| root.join(n)).filter(|d| d.join("pyvenv.cfg").is_file()).collect();
+    let envs: Vec<PathBuf> = [".venv", "venv", "env"]
+        .iter()
+        .map(|n| root.join(n))
+        .filter(|d| d.join("pyvenv.cfg").is_file())
+        .collect();
     let mut direct: Vec<CommandSpec> = Vec::new();
     for name in &scripts {
         let found = envs.iter().find_map(|env| {
-            let exe = if cfg!(windows) { env.join("Scripts").join(format!("{name}.exe")) } else { env.join("bin").join(name) };
+            let exe = if cfg!(windows) {
+                env.join("Scripts").join(format!("{name}.exe"))
+            } else {
+                env.join("bin").join(name)
+            };
             exe.is_file().then_some(exe)
         });
         if let Some(exe) = found {
@@ -318,24 +407,55 @@ pub fn python_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
         parts.join(", ")
     };
     if uses_uv {
-        let mut commands = vec![CommandSpec::new("uv:file", "uv", &["run"]).with_file(&file_name).with_sep()];
+        let mut commands = vec![
+            CommandSpec::new("uv:file", "uv", &["run"])
+                .with_file(&file_name)
+                .with_sep(),
+        ];
         for name in &scripts {
-            commands.push(CommandSpec::new(format!("uv:script:{name}"), "uv", &["run", name]).with_sep());
+            commands.push(
+                CommandSpec::new(format!("uv:script:{name}"), "uv", &["run", name]).with_sep(),
+            );
         }
-        findings.push(Finding { source: manifest.clone(), cwd: root.clone(), tool: Some(&UV), evidence: evidence("uv.lock", uv_lock), commands });
+        findings.push(Finding {
+            source: manifest.clone(),
+            cwd: root.clone(),
+            tool: Some(&UV),
+            evidence: evidence("uv.lock", uv_lock),
+            commands,
+        });
     }
     if uses_poetry {
-        let mut commands = vec![CommandSpec::new("poetry:file", "poetry", &["run", "python"]).with_file(&file_name).with_sep()];
+        let mut commands = vec![
+            CommandSpec::new("poetry:file", "poetry", &["run", "python"])
+                .with_file(&file_name)
+                .with_sep(),
+        ];
         for name in &scripts {
-            commands.push(CommandSpec::new(format!("poetry:script:{name}"), "poetry", &["run", name]).with_sep());
+            commands.push(
+                CommandSpec::new(format!("poetry:script:{name}"), "poetry", &["run", name])
+                    .with_sep(),
+            );
         }
-        findings.push(Finding { source: manifest.clone(), cwd: root.clone(), tool: Some(&POETRY), evidence: evidence("poetry.lock", poetry_lock), commands });
+        findings.push(Finding {
+            source: manifest.clone(),
+            cwd: root.clone(),
+            tool: Some(&POETRY),
+            evidence: evidence("poetry.lock", poetry_lock),
+            commands,
+        });
     }
     if !direct.is_empty() {
         for spec in &mut direct {
             spec.extra_sep = false; // 腳本自己的參數，直接接在後面
         }
-        findings.push(Finding { source: manifest, cwd: root, tool: None, evidence: "pyproject.toml".to_owned(), commands: direct });
+        findings.push(Finding {
+            source: manifest,
+            cwd: root,
+            tool: None,
+            evidence: "pyproject.toml".to_owned(),
+            commands: direct,
+        });
     }
     findings
 }
@@ -344,7 +464,10 @@ pub fn python_findings(file: &Path, home: Option<&Path>) -> Vec<Finding> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolStatus {
-    Available { path: PathBuf, version: String },
+    Available {
+        path: PathBuf,
+        version: String,
+    },
     NotFound,
     /// 找到了但跑不起來（例如 rustup 的 `cargo` 沒有安裝任何工具鏈），附上原因。
     Broken(String),
@@ -352,15 +475,33 @@ pub enum ToolStatus {
 
 /// 工具在 `PATH`（以及家目錄裡的固定位置）上的實際檔案；Windows 試 `.exe`、`.cmd`、`.bat`，
 /// 並排除商店的假捷徑 `WindowsApps`。
-pub fn find_tool(spec: &ToolSpec, home: Option<&Path>, path_var: Option<&OsStr>) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = path_var.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+pub fn find_tool(
+    spec: &ToolSpec,
+    home: Option<&Path>,
+    path_var: Option<&OsStr>,
+) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = path_var
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
     if let Some(home) = home {
         dirs.extend(spec.home_dirs.iter().map(|d| home.join(d)));
     }
-    let exts: &[&str] = if cfg!(windows) { &[".exe", ".cmd", ".bat"] } else { &[""] };
+    let exts: &[&str] = if cfg!(windows) {
+        &[".exe", ".cmd", ".bat"]
+    } else {
+        &[""]
+    };
     dirs.iter()
-        .filter(|d| !d.to_string_lossy().to_ascii_lowercase().replace('\\', "/").contains("windowsapps"))
-        .flat_map(|d| exts.iter().map(move |e| d.join(format!("{}{e}", spec.name))))
+        .filter(|d| {
+            !d.to_string_lossy()
+                .to_ascii_lowercase()
+                .replace('\\', "/")
+                .contains("windowsapps")
+        })
+        .flat_map(|d| {
+            exts.iter()
+                .map(move |e| d.join(format!("{}{e}", spec.name)))
+        })
         .find(|p| p.is_file())
 }
 
@@ -385,7 +526,10 @@ pub fn probe_tool(path: &Path, timeout: Duration) -> Result<String, String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     let mut cmd = Command::new(path);
-    cmd.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -414,9 +558,17 @@ pub fn probe_tool(path: &Path, timeout: Duration) -> Result<String, String> {
     }
     if !status.success() {
         let text = String::from_utf8_lossy(&err);
-        let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+        let line = text
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("");
         let line: String = line.chars().take(160).collect();
-        return Err(if line.is_empty() { format!("exit code {}", status.code().unwrap_or(-1)) } else { line });
+        return Err(if line.is_empty() {
+            format!("exit code {}", status.code().unwrap_or(-1))
+        } else {
+            line
+        });
     }
     let text = String::from_utf8_lossy(&out).into_owned() + &String::from_utf8_lossy(&err);
     Ok(crate::runtime_env::first_dotted_number(&text).unwrap_or_default())
@@ -441,7 +593,10 @@ pub struct ProjectCommand {
 impl ProjectCommand {
     /// 滑鼠停在選單項目上時顯示：執行的資料夾與完整的命令列。
     pub fn tooltip(&self) -> String {
-        let line = std::iter::once(self.program.display().to_string()).chain(self.args.iter().cloned()).collect::<Vec<_>>().join(" ");
+        let line = std::iter::once(self.program.display().to_string())
+            .chain(self.args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
         format!("{}\n{line}", self.cwd.display())
     }
 }
@@ -492,7 +647,11 @@ pub fn resolve(
         if finding.commands.is_empty() {
             continue;
         }
-        let source = finding.source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let source = finding
+            .source
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let bind = |out: &mut ProjectResolved, spec: &CommandSpec, program: PathBuf| {
             if out.commands.iter().any(|c| c.id == spec.id) {
                 return;
@@ -519,7 +678,11 @@ pub fn resolve(
                     }
                 }
             }
-            Some(tool) => match status.entry(tool.name).or_insert_with(|| detect_tool(tool, home, path_var, probe)).clone() {
+            Some(tool) => match status
+                .entry(tool.name)
+                .or_insert_with(|| detect_tool(tool, home, path_var, probe))
+                .clone()
+            {
                 ToolStatus::Available { path, .. } => {
                     for spec in &finding.commands {
                         bind(&mut out, spec, path.clone());
@@ -527,8 +690,17 @@ pub fn resolve(
                 }
                 other => {
                     if !out.notices.iter().any(|n| n.tool == tool.name) {
-                        let problem = if let ToolStatus::Broken(reason) = other { Some(reason) } else { None };
-                        out.notices.push(Notice { tool: tool.name, evidence: finding.evidence.clone(), problem, hint: tool.hint() });
+                        let problem = if let ToolStatus::Broken(reason) = other {
+                            Some(reason)
+                        } else {
+                            None
+                        };
+                        out.notices.push(Notice {
+                            tool: tool.name,
+                            evidence: finding.evidence.clone(),
+                            problem,
+                            hint: tool.hint(),
+                        });
                     }
                 }
             },
@@ -555,7 +727,12 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn get(&self, ctx: &egui::Context, lang: &str, file: &Path) -> Option<Arc<ProjectResolved>> {
+    pub fn get(
+        &self,
+        ctx: &egui::Context,
+        lang: &str,
+        file: &Path,
+    ) -> Option<Arc<ProjectResolved>> {
         if !supports(lang) {
             return None;
         }
@@ -565,7 +742,11 @@ impl Resolver {
             None => (None, true),
             Some(Slot::Pending) => (None, false),
             Some(Slot::Ready(r, at, refreshing)) => {
-                let limit = if r.is_empty() { STALE_AFTER_EMPTY } else { STALE_AFTER };
+                let limit = if r.is_empty() {
+                    STALE_AFTER_EMPTY
+                } else {
+                    STALE_AFTER
+                };
                 (Some(r.clone()), !*refreshing && at.elapsed() > limit)
             }
         };
@@ -578,7 +759,10 @@ impl Resolver {
             }
             let (slots, ctx) = (self.slots.clone(), ctx.clone());
             std::thread::spawn(move || {
-                let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).filter(|h| !h.is_empty()).map(PathBuf::from);
+                let home = std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .filter(|h| !h.is_empty())
+                    .map(PathBuf::from);
                 let path = std::env::var_os("PATH");
                 let probe = |p: &Path| probe_tool(p, Duration::from_secs(4));
                 let resolved = resolve(&key.0, &key.1, home.as_deref(), path.as_deref(), &probe);
@@ -593,10 +777,14 @@ impl Resolver {
 
     /// 全部標成過期（使用者按了「重新搜尋」，或剛裝好工具）：下次問的時候在背景重找，找完之前先顯示舊的。
     pub fn refresh(&self) {
-        let Ok(mut slots) = self.slots.lock() else { return };
+        let Ok(mut slots) = self.slots.lock() else {
+            return;
+        };
         for slot in slots.values_mut() {
             if let Slot::Ready(_, at, _) = slot {
-                *at = at.checked_sub(STALE_AFTER + Duration::from_secs(1)).unwrap_or(*at);
+                *at = at
+                    .checked_sub(STALE_AFTER + Duration::from_secs(1))
+                    .unwrap_or(*at);
             }
         }
     }
@@ -653,7 +841,11 @@ mod tests {
     fn path_with(bin: &Path, tools: &[&str]) -> std::ffi::OsString {
         std::fs::create_dir_all(bin).unwrap();
         for tool in tools {
-            std::fs::write(bin.join(format!("{tool}{}", if cfg!(windows) { ".exe" } else { "" })), "").unwrap();
+            std::fs::write(
+                bin.join(format!("{tool}{}", if cfg!(windows) { ".exe" } else { "" })),
+                "",
+            )
+            .unwrap();
         }
         std::env::join_paths([bin]).unwrap()
     }
@@ -676,11 +868,22 @@ mod tests {
         let example = write(dir.path(), "examples/hello.rs", "fn main() {}");
         let path = path_with(&dir.path().join("bin"), &["cargo"]);
         let r = resolve("Rust", &example, None, Some(&path), &ok_probe);
-        assert_eq!(labels(&r), ["cargo run --example hello", "cargo run", "cargo test", "cargo build"]);
+        assert_eq!(
+            labels(&r),
+            [
+                "cargo run --example hello",
+                "cargo run",
+                "cargo test",
+                "cargo build"
+            ]
+        );
         assert!(r.notices.is_empty());
         assert_eq!(r.commands[0].cwd, dir.path());
         assert_eq!(r.sources, ["Cargo.toml"]);
-        assert!(r.commands.iter().all(|c| !c.takes_file), "cargo 不接目前的檔案");
+        assert!(
+            r.commands.iter().all(|c| !c.takes_file),
+            "cargo 不接目前的檔案"
+        );
     }
 
     #[test]
@@ -691,28 +894,57 @@ mod tests {
         let tool = write(dir.path(), "src/bin/tool.rs", "fn main() {}");
         let f = cargo_findings(&tool, None);
         let ids: Vec<&str> = f[0].commands.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, ["cargo:bin:tool", "cargo:bin:demo", "cargo:test", "cargo:build"], "有兩個執行檔又沒有 default-run：沒有單純的 cargo run");
+        assert_eq!(
+            ids,
+            [
+                "cargo:bin:tool",
+                "cargo:bin:demo",
+                "cargo:test",
+                "cargo:build"
+            ],
+            "有兩個執行檔又沒有 default-run：沒有單純的 cargo run"
+        );
 
         let lib = tempfile::tempdir().unwrap();
         write(lib.path(), "Cargo.toml", PKG);
         let src = write(lib.path(), "src/lib.rs", "");
-        let ids: Vec<String> = cargo_findings(&src, None)[0].commands.iter().map(|c| c.id.clone()).collect();
+        let ids: Vec<String> = cargo_findings(&src, None)[0]
+            .commands
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
         assert_eq!(ids, ["cargo:test", "cargo:build"], "只有函式庫：不能 run");
     }
 
     #[test]
     fn cargo_integration_tests_and_the_nearest_manifest_win() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"member\"]\n");
-        write(dir.path(), "member/Cargo.toml", "[package]\nname = \"member\"\nversion = \"0.1.0\"\n");
+        write(
+            dir.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"member\"]\n",
+        );
+        write(
+            dir.path(),
+            "member/Cargo.toml",
+            "[package]\nname = \"member\"\nversion = \"0.1.0\"\n",
+        );
         write(dir.path(), "member/src/main.rs", "fn main() {}");
         let test = write(dir.path(), "member/tests/api.rs", "");
         let f = cargo_findings(&test, None);
-        assert_eq!(f[0].cwd, dir.path().join("member"), "用最近的 Cargo.toml（成員自己的）");
+        assert_eq!(
+            f[0].cwd,
+            dir.path().join("member"),
+            "用最近的 Cargo.toml（成員自己的）"
+        );
         assert_eq!(f[0].commands[0].label, "cargo test --test api");
         // 虛擬 workspace 根目錄（沒有 [package]）只有 test、build
         let root_file = write(dir.path(), "xtask.rs", "");
-        let ids: Vec<String> = cargo_findings(&root_file, None)[0].commands.iter().map(|c| c.id.clone()).collect();
+        let ids: Vec<String> = cargo_findings(&root_file, None)[0]
+            .commands
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
         assert_eq!(ids, ["cargo:test", "cargo:build"]);
     }
 
@@ -722,11 +954,17 @@ mod tests {
         write(dir.path(), "Cargo.toml", PKG);
         write(dir.path(), "inner/.git/HEAD", "");
         let file = write(dir.path(), "inner/a.rs", "");
-        assert!(cargo_findings(&file, None).is_empty(), "不會用 .git 外面別的專案的設定");
+        assert!(
+            cargo_findings(&file, None).is_empty(),
+            "不會用 .git 外面別的專案的設定"
+        );
         let bad = tempfile::tempdir().unwrap();
         write(bad.path(), "Cargo.toml", "this is [not toml");
         let file = write(bad.path(), "a.rs", "");
-        assert!(cargo_findings(&file, None).is_empty(), "讀不懂的設定檔直接略過");
+        assert!(
+            cargo_findings(&file, None).is_empty(),
+            "讀不懂的設定檔直接略過"
+        );
     }
 
     #[test]
@@ -753,7 +991,10 @@ mod tests {
         let broken = |_: &Path| Err("rustup could not choose a version of cargo".to_owned());
         let r = resolve("Rust", &file, None, Some(&path), &broken);
         assert!(r.commands.is_empty());
-        assert_eq!(r.notices[0].problem.as_deref(), Some("rustup could not choose a version of cargo"));
+        assert_eq!(
+            r.notices[0].problem.as_deref(),
+            Some("rustup could not choose a version of cargo")
+        );
     }
 
     #[test]
@@ -762,7 +1003,8 @@ mod tests {
         let bin = home.path().join(".cargo/bin");
         path_with(&bin, &["cargo"]);
         let spec = &CARGO;
-        let found = find_tool(spec, Some(home.path()), Some(OsStr::new(""))).expect("PATH 沒有也要試 ~/.cargo/bin");
+        let found = find_tool(spec, Some(home.path()), Some(OsStr::new("")))
+            .expect("PATH 沒有也要試 ~/.cargo/bin");
         assert!(found.starts_with(&bin));
         assert!(find_tool(spec, None, Some(OsStr::new(""))).is_none());
     }
@@ -770,14 +1012,21 @@ mod tests {
     #[test]
     fn uv_projects_offer_uv_commands_only_when_uv_is_installed() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "pyproject.toml", "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\n");
+        write(
+            dir.path(),
+            "pyproject.toml",
+            "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\n",
+        );
         write(dir.path(), "uv.lock", "");
         let file = write(dir.path(), "main.py", "print(1)");
         let none = path_with(&dir.path().join("none"), &[]);
         let r = resolve("Python", &file, None, Some(&none), &ok_probe);
         assert!(r.commands.is_empty(), "沒有 uv：不能按的項目一個都不放");
         assert_eq!(r.notices.len(), 1);
-        assert_eq!((r.notices[0].tool, r.notices[0].evidence.as_str()), ("uv", "pyproject.toml, uv.lock"));
+        assert_eq!(
+            (r.notices[0].tool, r.notices[0].evidence.as_str()),
+            ("uv", "pyproject.toml, uv.lock")
+        );
 
         let with_uv = path_with(&dir.path().join("with"), &["uv"]);
         let r = resolve("Python", &file, None, Some(&with_uv), &ok_probe);
@@ -789,8 +1038,21 @@ mod tests {
     #[test]
     fn scripts_installed_in_a_venv_named_venv_or_env_are_listed_too() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "pyproject.toml", "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\nother = \"app:other\"\n");
-        let bin = |env: &str, name: &str| format!("{env}/{}", if cfg!(windows) { format!("Scripts/{name}.exe") } else { format!("bin/{name}") });
+        write(
+            dir.path(),
+            "pyproject.toml",
+            "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\nother = \"app:other\"\n",
+        );
+        let bin = |env: &str, name: &str| {
+            format!(
+                "{env}/{}",
+                if cfg!(windows) {
+                    format!("Scripts/{name}.exe")
+                } else {
+                    format!("bin/{name}")
+                }
+            )
+        };
         write(dir.path(), "venv/pyvenv.cfg", "");
         write(dir.path(), &bin("venv", "serve"), "");
         write(dir.path(), "env/pyvenv.cfg", "");
@@ -798,21 +1060,37 @@ mod tests {
         let file = write(dir.path(), "main.py", "");
         let none = path_with(&dir.path().join("none"), &[]);
         let r = resolve("Python", &file, None, Some(&none), &ok_probe);
-        assert_eq!(labels(&r), ["other", "serve"], "不同名字的環境裡的腳本都要列出來");
+        assert_eq!(
+            labels(&r),
+            ["other", "serve"],
+            "不同名字的環境裡的腳本都要列出來"
+        );
     }
 
     #[test]
     fn venv_scripts_run_directly_even_without_uv() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "pyproject.toml", "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\n[tool.uv]\n");
+        write(
+            dir.path(),
+            "pyproject.toml",
+            "[project]\nname = \"app\"\n[project.scripts]\nserve = \"app:main\"\n[tool.uv]\n",
+        );
         write(dir.path(), ".venv/pyvenv.cfg", "");
-        let exe = if cfg!(windows) { ".venv/Scripts/serve.exe" } else { ".venv/bin/serve" };
+        let exe = if cfg!(windows) {
+            ".venv/Scripts/serve.exe"
+        } else {
+            ".venv/bin/serve"
+        };
         write(dir.path(), exe, "");
         let file = write(dir.path(), "main.py", "");
         let none = path_with(&dir.path().join("none"), &[]);
         let r = resolve("Python", &file, None, Some(&none), &ok_probe);
         assert_eq!(labels(&r), ["serve"], "有 .venv：腳本直接執行，不需要 uv");
-        assert!(r.commands[0].program.ends_with(Path::new(exe).file_name().unwrap()));
+        assert!(
+            r.commands[0]
+                .program
+                .ends_with(Path::new(exe).file_name().unwrap())
+        );
         assert_eq!(r.notices.len(), 1, "uv 的專案設定還是提醒一下 uv 沒裝");
         // 有 uv 時，`uv run serve` 也要列出來（uv 會先同步環境），直接執行的版本接在後面
         let with_uv = path_with(&dir.path().join("with"), &["uv"]);
@@ -823,17 +1101,28 @@ mod tests {
     #[test]
     fn a_plain_pyproject_without_evidence_of_uv_or_poetry_shows_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "pyproject.toml", "[project]\nname = \"app\"\n[build-system]\nrequires = [\"setuptools\"]\n");
+        write(
+            dir.path(),
+            "pyproject.toml",
+            "[project]\nname = \"app\"\n[build-system]\nrequires = [\"setuptools\"]\n",
+        );
         let file = write(dir.path(), "main.py", "");
         let path = path_with(&dir.path().join("bin"), &["uv", "poetry"]);
         let r = resolve("Python", &file, None, Some(&path), &ok_probe);
-        assert!(r.is_empty(), "光有 pyproject.toml 不代表要用 uv：什麼都不顯示");
+        assert!(
+            r.is_empty(),
+            "光有 pyproject.toml 不代表要用 uv：什麼都不顯示"
+        );
     }
 
     #[test]
     fn poetry_projects_offer_poetry_run() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "pyproject.toml", "[tool.poetry]\nname = \"app\"\n[tool.poetry.scripts]\ncli = \"app:main\"\n");
+        write(
+            dir.path(),
+            "pyproject.toml",
+            "[tool.poetry]\nname = \"app\"\n[tool.poetry.scripts]\ncli = \"app:main\"\n",
+        );
         let file = write(dir.path(), "app.py", "");
         let path = path_with(&dir.path().join("bin"), &["poetry"]);
         let r = resolve("Python", &file, None, Some(&path), &ok_probe);
@@ -841,7 +1130,16 @@ mod tests {
     }
 
     fn command(id: &str) -> ProjectCommand {
-        ProjectCommand { id: id.to_owned(), label: id.to_owned(), program: PathBuf::from(id), args: vec![], cwd: PathBuf::new(), source: String::new(), takes_file: false, extra_sep: false }
+        ProjectCommand {
+            id: id.to_owned(),
+            label: id.to_owned(),
+            program: PathBuf::from(id),
+            args: vec![],
+            cwd: PathBuf::new(),
+            source: String::new(),
+            takes_file: false,
+            extra_sep: false,
+        }
     }
 
     fn interpreters(works: bool) -> crate::runtime_env::Resolved {
@@ -852,26 +1150,50 @@ mod tests {
             origin: "PATH".to_owned(),
             env_dir: None,
         };
-        crate::runtime_env::Resolved { items: vec![crate::runtime_env::Item { candidate, version: works.then(|| "3.12".to_owned()) }] }
+        crate::runtime_env::Resolved {
+            items: vec![crate::runtime_env::Item {
+                candidate,
+                version: works.then(|| "3.12".to_owned()),
+            }],
+        }
     }
 
     #[test]
     fn the_interpreter_stays_the_default_and_a_chosen_command_wins_only_while_it_exists() {
-        let project = ProjectResolved { commands: vec![command("cargo:run"), command("cargo:test")], ..Default::default() };
+        let project = ProjectResolved {
+            commands: vec![command("cargo:run"), command("cargo:test")],
+            ..Default::default()
+        };
         let interp = interpreters(true);
         // 沒有手動選：預設仍是直譯器
-        assert!(matches!(active(None, None, Some(&interp), Some(&project)), Active::Interpreter(_)));
+        assert!(matches!(
+            active(None, None, Some(&interp), Some(&project)),
+            Active::Interpreter(_)
+        ));
         // 手動選了專案命令
-        assert!(matches!(active(Some("cargo:test"), None, Some(&interp), Some(&project)), Active::Command(c) if c.id == "cargo:test"));
+        assert!(
+            matches!(active(Some("cargo:test"), None, Some(&interp), Some(&project)), Active::Command(c) if c.id == "cargo:test")
+        );
         // 選的命令已經不在了（設定檔改了、工具被移除）：退回直譯器
-        assert!(matches!(active(Some("cargo:gone"), None, Some(&interp), Some(&project)), Active::Interpreter(_)));
+        assert!(matches!(
+            active(Some("cargo:gone"), None, Some(&interp), Some(&project)),
+            Active::Interpreter(_)
+        ));
         // 沒有直譯器（Rust）：用第一個專案命令
-        assert!(matches!(active(None, None, None, Some(&project)), Active::Command(c) if c.id == "cargo:run"));
+        assert!(
+            matches!(active(None, None, None, Some(&project)), Active::Command(c) if c.id == "cargo:run")
+        );
         // 直譯器都壞了：也用第一個專案命令
         let broken = interpreters(false);
-        assert!(matches!(active(None, None, Some(&broken), Some(&project)), Active::Command(_)));
+        assert!(matches!(
+            active(None, None, Some(&broken), Some(&project)),
+            Active::Command(_)
+        ));
         // 什麼都沒有
-        assert!(matches!(active(None, None, Some(&broken), Some(&ProjectResolved::default())), Active::None));
+        assert!(matches!(
+            active(None, None, Some(&broken), Some(&ProjectResolved::default())),
+            Active::None
+        ));
         assert!(matches!(active(None, None, None, None), Active::None));
     }
 
@@ -881,7 +1203,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = write(dir.path(), "a.go", "");
         assert!(resolve("Go", &file, None, None, &ok_probe).is_empty());
-        assert!(Resolver::default().get(&egui::Context::default(), "Go", &file).is_none());
+        assert!(
+            Resolver::default()
+                .get(&egui::Context::default(), "Go", &file)
+                .is_none()
+        );
     }
 
     #[test]
@@ -891,7 +1217,10 @@ mod tests {
         let file = write(dir.path(), "src/main.rs", "fn main() {}");
         let ctx = egui::Context::default();
         let resolver = Resolver::default();
-        assert!(resolver.get(&ctx, "Rust", &file).is_none(), "第一次：背景開始找");
+        assert!(
+            resolver.get(&ctx, "Rust", &file).is_none(),
+            "第一次：背景開始找"
+        );
         let start = Instant::now();
         let found = loop {
             if let Some(r) = resolver.get(&ctx, "Rust", &file) {
@@ -901,7 +1230,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         };
         // 不管這台機器有沒有裝 cargo，都不會同時有命令和說明，而且一定有東西可以告訴使用者
-        assert!(found.commands.is_empty() != found.notices.is_empty(), "{found:?}");
+        assert!(
+            found.commands.is_empty() != found.notices.is_empty(),
+            "{found:?}"
+        );
         resolver.refresh();
     }
 }

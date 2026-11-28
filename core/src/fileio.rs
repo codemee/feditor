@@ -422,7 +422,12 @@ mod tests {
         let bytes = encode(ZH, &f).unwrap();
         assert!(std::str::from_utf8(&bytes).is_err());
         let d = decode(&bytes);
-        assert_eq!(d.format.encoding, BIG5, "偵測成 {}", d.format.encoding.name());
+        assert_eq!(
+            d.format.encoding,
+            BIG5,
+            "偵測成 {}",
+            d.format.encoding.name()
+        );
         assert_eq!(d.text, ZH);
         assert!(!d.lossy);
         assert_eq!(encode(&d.text, &d.format).unwrap(), bytes);
@@ -541,6 +546,10 @@ mod tests {
         assert_eq!(labels.len(), choices.len(), "每個選項的名稱都不同");
         // 不適用 BOM 的編碼，帶不帶 BOM 名稱都一樣，所以不該各列一項
         assert_eq!(format_label(encoding_rs::BIG5, true), "Big5");
-        assert!(choices.iter().all(|(e, b)| !*b || [UTF_8, UTF_16LE, UTF_16BE].contains(e)));
+        assert!(
+            choices
+                .iter()
+                .all(|(e, b)| !*b || [UTF_8, UTF_16LE, UTF_16BE].contains(e))
+        );
     }
 }

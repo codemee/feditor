@@ -11,12 +11,18 @@ use feditor_core::motion;
 
 /// 縮排一層的字串（依「改用空白」與 Tab 欄寬）。
 pub fn indent_unit() -> String {
-    if motion::tab_uses_spaces() { " ".repeat(motion::tab_width()) } else { "\t".to_owned() }
+    if motion::tab_uses_spaces() {
+        " ".repeat(motion::tab_width())
+    } else {
+        "\t".to_owned()
+    }
 }
 
 /// 行首的空白與 Tab。
 pub fn leading_ws(line: &str) -> String {
-    line.chars().take_while(|c| *c == ' ' || *c == '\t').collect()
+    line.chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
 }
 
 /// 把行首的縮排換成目前設定的字元，欄位寬度不變（Tab 依欄寬換算）。
@@ -28,7 +34,11 @@ pub fn normalize_lead(line: &str) -> String {
     if motion::tab_uses_spaces() {
         format!("{}{rest}", " ".repeat(cols))
     } else {
-        format!("{}{}{rest}", "\t".repeat(cols / width), " ".repeat(cols % width))
+        format!(
+            "{}{}{rest}",
+            "\t".repeat(cols / width),
+            " ".repeat(cols % width)
+        )
     }
 }
 
@@ -43,7 +53,11 @@ pub(super) fn analyze(lang: &Language, line: &str, state: State) -> (Vec<char>, 
     let (spans, end) = highlight_line(lang, line, state);
     let mut kinds = vec![Kind::Plain; chars.len()];
     for (range, kind) in spans {
-        for k in kinds.iter_mut().take(range.end.min(chars.len())).skip(range.start) {
+        for k in kinds
+            .iter_mut()
+            .take(range.end.min(chars.len()))
+            .skip(range.start)
+        {
             *k = kind;
         }
     }
@@ -78,7 +92,9 @@ pub fn enter_plan(lang: Option<&Language>, state: State, before: &str, after: &s
         return plain(&base);
     };
     let (chars, kinds, _) = analyze(lang, before, state);
-    let last = (0..chars.len()).rev().find(|&i| !chars[i].is_whitespace() && kinds[i] != Kind::Comment);
+    let last = (0..chars.len())
+        .rev()
+        .find(|&i| !chars[i].is_whitespace() && kinds[i] != Kind::Comment);
     let Some(i) = last.filter(|&i| kinds[i] == Kind::Plain) else {
         return plain(&base);
     };
@@ -96,7 +112,10 @@ pub fn enter_plan(lang: Option<&Language>, state: State, before: &str, after: &s
     };
     if closer.is_some() && after.chars().find(|c| !c.is_whitespace()) == closer {
         let caret = inner.chars().count();
-        return EnterPlan { text: format!("{inner}\n{base}"), caret };
+        return EnterPlan {
+            text: format!("{inner}\n{base}"),
+            caret,
+        };
     }
     let caret = inner.chars().count();
     EnterPlan { text: inner, caret }
@@ -114,7 +133,12 @@ pub fn closer_dedent(lang: Option<&Language>, state: State, before: &str, typed:
     if before.ends_with('\t') {
         1
     } else {
-        before.chars().rev().take_while(|c| *c == ' ').count().min(motion::tab_width())
+        before
+            .chars()
+            .rev()
+            .take_while(|c| *c == ' ')
+            .count()
+            .min(motion::tab_width())
     }
 }
 
@@ -136,7 +160,13 @@ pub fn scan(lang: Option<&Language>, lines: &[String]) -> Vec<LineIndent> {
     let Some(lang) = lang else {
         return lines
             .iter()
-            .map(|l| if l.trim().is_empty() { LineIndent::Blank } else { LineIndent::Same })
+            .map(|l| {
+                if l.trim().is_empty() {
+                    LineIndent::Blank
+                } else {
+                    LineIndent::Same
+                }
+            })
             .collect();
     };
     let brace = lang.indent == IndentStyle::Brace;
@@ -233,7 +263,11 @@ mod tests {
     struct Tabs(usize, bool, bool);
     impl Tabs {
         fn set(width: usize, spaces: bool) -> Self {
-            Tabs(motion::set_tab_width(width), motion::set_tab_uses_spaces(spaces), motion::auto_indent())
+            Tabs(
+                motion::set_tab_width(width),
+                motion::set_tab_uses_spaces(spaces),
+                motion::auto_indent(),
+            )
         }
     }
     impl Drop for Tabs {
@@ -255,11 +289,27 @@ mod tests {
         assert_eq!(plan(rust(), "fn main() {", ""), ("\n    ".into(), 5));
         assert_eq!(plan(rust(), "    if x {", ""), ("\n        ".into(), 9));
         assert_eq!(plan(rust(), "    foo(", ""), ("\n        ".into(), 9));
-        assert_eq!(plan(rust(), "let v = [   ", ""), ("\n    ".into(), 5), "行尾空白不影響");
-        assert_eq!(plan(rust(), "x = 1; // {", ""), ("\n".into(), 1), "註解裡的括號不算");
-        assert_eq!(plan(rust(), "let s = \"{\";", ""), ("\n".into(), 1), "字串裡的括號不算");
+        assert_eq!(
+            plan(rust(), "let v = [   ", ""),
+            ("\n    ".into(), 5),
+            "行尾空白不影響"
+        );
+        assert_eq!(
+            plan(rust(), "x = 1; // {", ""),
+            ("\n".into(), 1),
+            "註解裡的括號不算"
+        );
+        assert_eq!(
+            plan(rust(), "let s = \"{\";", ""),
+            ("\n".into(), 1),
+            "字串裡的括號不算"
+        );
         assert_eq!(plan(rust(), "foo(); // 說明 {", ""), ("\n".into(), 1));
-        assert_eq!(plan(rust(), "  foo { // 開始", ""), ("\n      ".into(), 7), "行尾註解略過");
+        assert_eq!(
+            plan(rust(), "  foo { // 開始", ""),
+            ("\n      ".into(), 7),
+            "行尾註解略過"
+        );
     }
 
     #[test]
@@ -273,9 +323,16 @@ mod tests {
     #[test]
     fn enter_between_matching_brackets_opens_three_lines() {
         let _t = Tabs::set(4, true);
-        assert_eq!(plan(rust(), "    fn f() {", "}"), ("\n        \n    ".into(), 9));
+        assert_eq!(
+            plan(rust(), "    fn f() {", "}"),
+            ("\n        \n    ".into(), 9)
+        );
         assert_eq!(plan(rust(), "foo(", ")"), ("\n    \n".into(), 5));
-        assert_eq!(plan(rust(), "foo(", "x)"), ("\n    ".into(), 5), "後面不是閉括號就不展開");
+        assert_eq!(
+            plan(rust(), "foo(", "x)"),
+            ("\n    ".into(), 5),
+            "後面不是閉括號就不展開"
+        );
         assert_eq!(plan(python(), "def f():", ""), ("\n    ".into(), 5));
         assert_eq!(plan(python(), "xs = [", "]"), ("\n    \n".into(), 5));
     }
@@ -283,12 +340,31 @@ mod tests {
     #[test]
     fn python_colon_opens_a_block_but_other_languages_only_copy_the_indent() {
         let _t = Tabs::set(4, true);
-        assert_eq!(plan(python(), "  if x:  # 註解", ""), ("\n      ".into(), 7));
-        assert_eq!(plan(python(), "x = 'a:'", ""), ("\n".into(), 1), "字串裡的冒號不算");
-        assert_eq!(plan(python(), "# note:", ""), ("\n".into(), 1), "註解裡的冒號不算");
+        assert_eq!(
+            plan(python(), "  if x:  # 註解", ""),
+            ("\n      ".into(), 7)
+        );
+        assert_eq!(
+            plan(python(), "x = 'a:'", ""),
+            ("\n".into(), 1),
+            "字串裡的冒號不算"
+        );
+        assert_eq!(
+            plan(python(), "# note:", ""),
+            ("\n".into(), 1),
+            "註解裡的冒號不算"
+        );
         assert_eq!(plan(rust(), "match x {", ""), ("\n    ".into(), 5));
-        assert_eq!(plan(rust(), "let x: u8", ""), ("\n".into(), 1), "Rust 的冒號不開區塊");
-        assert_eq!(plan(None, "foo {", ""), ("\n".into(), 1), "沒有語言只沿用縮排");
+        assert_eq!(
+            plan(rust(), "let x: u8", ""),
+            ("\n".into(), 1),
+            "Rust 的冒號不開區塊"
+        );
+        assert_eq!(
+            plan(None, "foo {", ""),
+            ("\n".into(), 1),
+            "沒有語言只沿用縮排"
+        );
         assert_eq!(plan(None, "  foo {", ""), ("\n  ".into(), 3));
     }
 
@@ -328,7 +404,12 @@ mod tests {
     fn reformat(lang: Option<&Language>, text: &str) -> String {
         let ls = lines(text);
         let unit = indent_unit();
-        scan(lang, &ls).into_iter().zip(&ls).map(|(how, l)| format_line(l, how, &unit)).collect::<Vec<_>>().join("\n")
+        scan(lang, &ls)
+            .into_iter()
+            .zip(&ls)
+            .map(|(how, l)| format_line(l, how, &unit))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -354,19 +435,30 @@ mod tests {
     #[test]
     fn reformat_without_a_depth_rule_only_trims_and_normalizes_the_lead() {
         let _t = Tabs::set(4, true);
-        assert_eq!(reformat(python(), "if x:\n\tfoo()  \n  \nbar()"), "if x:\n    foo()\n\nbar()");
+        assert_eq!(
+            reformat(python(), "if x:\n\tfoo()  \n  \nbar()"),
+            "if x:\n    foo()\n\nbar()"
+        );
         assert_eq!(reformat(None, "a  \n\tb"), "a\n    b");
         let _t2 = Tabs::set(4, false);
-        assert_eq!(reformat(python(), "if x:\n        foo()"), "if x:\n\t\tfoo()");
+        assert_eq!(
+            reformat(python(), "if x:\n        foo()"),
+            "if x:\n\t\tfoo()"
+        );
         let triple = "s = \"\"\"\n   keep  \n\"\"\"\nx = 1  ";
-        assert_eq!(reformat(python(), triple), "s = \"\"\"\n   keep  \n\"\"\"\nx = 1");
+        assert_eq!(
+            reformat(python(), triple),
+            "s = \"\"\"\n   keep  \n\"\"\"\nx = 1"
+        );
     }
 
     #[test]
     fn json_is_pretty_printed_with_the_current_indent_and_key_order() {
         assert_eq!(
             json_pretty("{\"b\":[1,2],\"a\":{\"x\":\"  y\"}}", "    ").as_deref(),
-            Some("{\n    \"b\": [\n        1,\n        2\n    ],\n    \"a\": {\n        \"x\": \"  y\"\n    }\n}")
+            Some(
+                "{\n    \"b\": [\n        1,\n        2\n    ],\n    \"a\": {\n        \"x\": \"  y\"\n    }\n}"
+            )
         );
         assert_eq!(json_pretty("[1]", "\t").as_deref(), Some("[\n\t1\n]"));
         assert_eq!(json_pretty("{ not json", "  "), None);

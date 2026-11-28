@@ -6,19 +6,22 @@
 //! 換焦點就是把兩邊對調（和切換分頁同一套做法）。
 
 use crate::editor::model::EditorState;
+use crate::editor::model::Selection;
 use crate::editor::view::EditorView;
 use crate::panes::{self, PaneId, Side, Zone};
-use crate::settings::ViewOptions;
-use crate::editor::model::Selection;
 use crate::preview_pane::PreviewPane;
 use crate::session::{Session, SessionEntry, SessionPane, SessionPreview, SessionTerminal};
+use crate::settings::ViewOptions;
 use crate::tabs::TabRecord;
 use crate::tabs::{Tab, TabSet};
-use std::collections::HashMap;
-use crate::{Action, App, Then, Document, Icon, LogKind, editor_id, find_input_id, flat_list, icons, language, no_hover_outline, syntax, tight_buttons};
+use crate::{
+    Action, App, Document, Icon, LogKind, Then, editor_id, find_input_id, flat_list, icons,
+    language, no_hover_outline, syntax, tight_buttons,
+};
 use eframe::egui;
 use feditor_core::i18n::t;
 use feditor_core::tf;
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// 窗格卡片的圓角半徑，以及編輯畫面離卡片邊緣的距離（要夠大，編輯區的角才不會超出卡片的圓角）。
@@ -70,11 +73,19 @@ pub struct TabDrag {
 
 impl App {
     pub(crate) fn set_ref(&self, id: PaneId) -> Option<&TabSet> {
-        if id == self.layout.focus { Some(&self.tabs) } else { self.layout.others.get(&id) }
+        if id == self.layout.focus {
+            Some(&self.tabs)
+        } else {
+            self.layout.others.get(&id)
+        }
     }
 
     fn set_mut(&mut self, id: PaneId) -> Option<&mut TabSet> {
-        if id == self.layout.focus { Some(&mut self.tabs) } else { self.layout.others.get_mut(&id) }
+        if id == self.layout.focus {
+            Some(&mut self.tabs)
+        } else {
+            self.layout.others.get_mut(&id)
+        }
     }
 
     pub(crate) fn pane_tab_count(&self, id: PaneId) -> usize {
@@ -123,7 +134,9 @@ impl App {
     /// 換焦點的底層動作：目前有焦點的分頁集（內容已經收回）退到 `others`，`id` 那個成為有焦點的。
     /// 舊的窗格若已經不在版面裡（剛被關掉），它的分頁集就直接丟掉。
     fn switch_focus_stashed(&mut self, id: PaneId) {
-        let Some(new) = self.layout.others.remove(&id) else { return };
+        let Some(new) = self.layout.others.remove(&id) else {
+            return;
+        };
         let old = std::mem::replace(&mut self.tabs, new);
         let old_id = self.layout.focus;
         if self.layout.root.contains(old_id) && !old.is_empty() {
@@ -139,7 +152,8 @@ impl App {
         }
         let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
         self.switch_focus_stashed(id);
-        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        self.tabs
+            .unstash(&mut self.doc, &mut self.editor, recording);
         self.pending_editor_focus = true;
         self.tab_changed();
         self.check_external_changes();
@@ -170,7 +184,9 @@ impl App {
             (egui::Key::ArrowLeft, panes::Dir::Left),
             (egui::Key::ArrowRight, panes::Dir::Right),
         ] {
-            let Some(target) = panes::neighbor(&self.pane_rects, from, dir) else { continue };
+            let Some(target) = panes::neighbor(&self.pane_rects, from, dir) else {
+                continue;
+            };
             if !ctx.input_mut(|i| i.consume_key(modifiers, key)) {
                 continue;
             }
@@ -200,7 +216,8 @@ impl App {
         self.layout.root.split(at, side, new_id);
         self.layout.others.insert(new_id, TabSet::from_tab(tab));
         self.switch_focus_stashed(new_id);
-        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        self.tabs
+            .unstash(&mut self.doc, &mut self.editor, recording);
         self.pending_editor_focus = true;
         self.tab_changed();
     }
@@ -214,19 +231,23 @@ impl App {
     /// 窗格 `id` 的第 `i` 個分頁有沒有還沒看的終端機通知。
     pub(crate) fn pane_tab_attention(&self, id: PaneId, i: usize) -> bool {
         let live = (id == self.layout.focus).then_some(&self.doc);
-        self.set_ref(id).is_some_and(|s| s.terminal_attention(live, i))
+        self.set_ref(id)
+            .is_some_and(|s| s.terminal_attention(live, i))
     }
 
     /// 窗格 `id` 的第 `i` 個分頁是不是終端機。
     fn pane_tab_is_terminal(&self, id: PaneId, i: usize) -> bool {
         let live = (id == self.layout.focus).then_some(&self.doc);
-        self.set_ref(id).is_some_and(|s| s.terminal_tabs(live).contains(&i))
+        self.set_ref(id)
+            .is_some_and(|s| s.terminal_tabs(live).contains(&i))
     }
 
     /// 把窗格 `from` 的第 `idx` 個分頁搬到 `target`；搬完焦點在分頁所在的窗格。
     /// 來源窗格因此空了就關掉它。分頁是「搬」不是「複製」：同一份文件不會同時出現在兩個窗格。
     pub(crate) fn move_tab(&mut self, from: PaneId, idx: usize, target: Target) {
-        let Some(src_len) = self.set_ref(from).map(TabSet::len) else { return };
+        let Some(src_len) = self.set_ref(from).map(TabSet::len) else {
+            return;
+        };
         if idx >= src_len {
             return;
         }
@@ -240,7 +261,9 @@ impl App {
             Target::Split(at, _) => {
                 // 目的地是一般窗格或預覽窗格都行（拖到預覽窗格的側邊，就是把預覽窗格切開）。
                 // 只剩一個分頁的窗格往自己的側邊切，切完來源就空了，沒有意義
-                if (self.set_ref(at).is_none() && !self.is_preview(at)) || (at == from && src_len == 1) {
+                if (self.set_ref(at).is_none() && !self.is_preview(at))
+                    || (at == from && src_len == 1)
+                {
                     return;
                 }
             }
@@ -272,7 +295,8 @@ impl App {
         if dest != self.layout.focus {
             self.switch_focus_stashed(dest);
         }
-        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        self.tabs
+            .unstash(&mut self.doc, &mut self.editor, recording);
         self.pending_editor_focus = true;
         self.tab_changed();
     }
@@ -284,8 +308,12 @@ impl App {
             return;
         }
         let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
-        let changed = self.set_mut(pane).and_then(|s| s.reorder(from, to)).is_some();
-        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        let changed = self
+            .set_mut(pane)
+            .and_then(|s| s.reorder(from, to))
+            .is_some();
+        self.tabs
+            .unstash(&mut self.doc, &mut self.editor, recording);
         if changed {
             self.tab_changed();
         }
@@ -297,8 +325,11 @@ impl App {
             return;
         }
         let recording = self.tabs.stash(&mut self.doc, &mut self.editor);
-        let changed = self.set_mut(pane).is_some_and(|s| s.sort_by_name(descending));
-        self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+        let changed = self
+            .set_mut(pane)
+            .is_some_and(|s| s.sort_by_name(descending));
+        self.tabs
+            .unstash(&mut self.doc, &mut self.editor, recording);
         if changed {
             self.tab_changed();
         }
@@ -318,7 +349,8 @@ impl App {
     /// 關閉窗格的下一步：還有未儲存的文件就問，沒有了就關。
     pub(crate) fn next_pane_close_prompt(&mut self) {
         let Some(id) = self.closing_pane else { return };
-        let pending: Vec<(PaneId, usize)> = self.all_dirty().into_iter().filter(|k| k.0 == id).collect();
+        let pending: Vec<(PaneId, usize)> =
+            self.all_dirty().into_iter().filter(|k| k.0 == id).collect();
         match pending.first().copied() {
             Some((pane, i)) => {
                 self.focus_pane(pane);
@@ -362,13 +394,16 @@ impl App {
     /// 焦點交給相鄰的窗格。
     pub(crate) fn remove_focused_pane(&mut self) {
         let id = self.layout.focus;
-        let Some(near) = self.layout.root.remove(id) else { return };
+        let Some(near) = self.layout.root.remove(id) else {
+            return;
+        };
         let near = self.nearest_tab_pane(near);
         let recording = self.editor.recording.take();
         if let Some(set) = self.layout.others.remove(&near) {
             self.tabs = set; // 原本的分頁集（只剩被關掉的那個分頁）直接丟掉
             self.layout.focus = near;
-            self.tabs.unstash(&mut self.doc, &mut self.editor, recording);
+            self.tabs
+                .unstash(&mut self.doc, &mut self.editor, recording);
         }
         self.pending_editor_focus = true;
         self.tab_changed();
@@ -382,7 +417,10 @@ impl App {
             let found = if id == self.layout.focus {
                 self.tabs.find_path(&self.doc, path)
             } else {
-                self.layout.others.get(&id).and_then(|s| s.find_path_stashed(path))
+                self.layout
+                    .others
+                    .get(&id)
+                    .and_then(|s| s.find_path_stashed(path))
             };
             found.map(|i| (id, i))
         })
@@ -395,13 +433,16 @@ impl App {
             let dirty = if id == self.layout.focus {
                 self.tabs.dirty_tabs(&self.doc)
             } else {
-                self.layout.others.get(&id).map(TabSet::dirty_tabs_stashed).unwrap_or_default()
+                self.layout
+                    .others
+                    .get(&id)
+                    .map(TabSet::dirty_tabs_stashed)
+                    .unwrap_or_default()
             };
             out.extend(dirty.into_iter().map(|i| (id, i)));
         }
         out
     }
-
 
     /// 所有窗格開著的檔案與窗格版面，用來記住工作階段。
     pub(crate) fn session_all(&self) -> Session {
@@ -413,7 +454,11 @@ impl App {
             let records = if id == self.layout.focus {
                 self.tabs.session_records(Some((&self.doc, &self.editor)))
             } else {
-                self.layout.others.get(&id).map(|s| s.session_records(None)).unwrap_or_default()
+                self.layout
+                    .others
+                    .get(&id)
+                    .map(|s| s.session_records(None))
+                    .unwrap_or_default()
             };
             let (mut files, mut terminals, mut active) = (Vec::new(), Vec::new(), 0);
             for (pos, (record, is_active)) in records.into_iter().enumerate() {
@@ -422,12 +467,35 @@ impl App {
                 }
                 match record {
                     TabRecord::File(path, caret) => files.push((path, caret)),
-                    TabRecord::Terminal { number, name, dir, shell } => terminals.push(SessionTerminal { at: pos, number, name, dir, shell }),
+                    TabRecord::Terminal {
+                        number,
+                        name,
+                        dir,
+                        shell,
+                    } => terminals.push(SessionTerminal {
+                        at: pos,
+                        number,
+                        name,
+                        dir,
+                        shell,
+                    }),
                 }
-            }            panes.push(SessionPane { id, active, files, terminals });
+            }
+            panes.push(SessionPane {
+                id,
+                active,
+                files,
+                terminals,
+            });
         }
-        let mut previews: Vec<SessionPreview> =
-            self.previews.keys().map(|id| SessionPreview { id: *id, source: self.layout.focus }).collect();
+        let mut previews: Vec<SessionPreview> = self
+            .previews
+            .keys()
+            .map(|id| SessionPreview {
+                id: *id,
+                source: self.layout.focus,
+            })
+            .collect();
         previews.sort_by_key(|p| p.id);
         Session {
             panes,
@@ -441,7 +509,8 @@ impl App {
     /// 整個拿掉，預覽窗格要是失去了它預覽的窗格也拿掉。回傳是不是真的還原了版面
     ///（工作階段沒有版面、只有一個窗格、或一個檔案都開不了時回傳 `false`，由呼叫端用單一窗格的方式處理）。
     pub(crate) fn restore_session_layout(&mut self, session: &Session) -> bool {
-        let Some((mut root, leaves)) = session.layout.as_deref().and_then(panes::Node::from_spec) else {
+        let Some((mut root, leaves)) = session.layout.as_deref().and_then(panes::Node::from_spec)
+        else {
             return false;
         };
         // 只有一個窗格而且沒有終端機：交給呼叫端用單一窗格的方式處理（開在目前的窗格）
@@ -451,7 +520,10 @@ impl App {
         // 1. 每個一般窗格的分頁
         let mut sets: HashMap<PaneId, TabSet> = HashMap::new();
         for pane in &session.panes {
-            if !leaves.iter().any(|(id, preview)| *id == pane.id && !preview) {
+            if !leaves
+                .iter()
+                .any(|(id, preview)| *id == pane.id && !preview)
+            {
                 continue;
             }
             let mut set: Option<TabSet> = None;
@@ -469,7 +541,9 @@ impl App {
                         if !path.exists() {
                             continue;
                         }
-                        let Ok((doc, warnings)) = Document::open(path) else { continue };
+                        let Ok((doc, warnings)) = Document::open(path) else {
+                            continue;
+                        };
                         for w in warnings {
                             self.push(LogKind::Warn, w);
                         }
@@ -480,15 +554,25 @@ impl App {
                     }
                     // 終端機：開一個新的 shell，放回同樣的位置、取同樣的名字，從關掉程式時的資料夾開始（資料夾不在了就用預設的）
                     SessionEntry::Terminal(t) => {
-                        let dir = t.dir.clone().filter(|d| d.is_dir()).or_else(|| terminal_dir.clone());
-                        let shell = t.shell.clone().unwrap_or_else(|| self.settings.terminal_shell.clone());
+                        let dir = t
+                            .dir
+                            .clone()
+                            .filter(|d| d.is_dir())
+                            .or_else(|| terminal_dir.clone());
+                        let shell = t
+                            .shell
+                            .clone()
+                            .unwrap_or_else(|| self.settings.terminal_shell.clone());
                         let mut doc = Document::new_terminal(t.number, dir.clone(), shell);
                         if let Some(terminal) = doc.terminal.as_mut() {
                             if let Some(name) = &t.name {
                                 terminal.set_custom_name(name);
                             }
                         }
-                        Tab { doc, editor: EditorState::default() }
+                        Tab {
+                            doc,
+                            editor: EditorState::default(),
+                        }
                     }
                 };
                 match &mut set {
@@ -511,9 +595,16 @@ impl App {
             return false;
         }
         // 2. 沒有檔案可開的窗格從版面拿掉；預覽窗格整個程式只留一個（舊版存的可能有好幾個）
-        let keep_preview = leaves.iter().find(|(_, preview)| *preview).map(|(id, _)| *id);
+        let keep_preview = leaves
+            .iter()
+            .find(|(_, preview)| *preview)
+            .map(|(id, _)| *id);
         for (id, preview) in &leaves {
-            let keep = if *preview { Some(*id) == keep_preview } else { sets.contains_key(id) };
+            let keep = if *preview {
+                Some(*id) == keep_preview
+            } else {
+                sets.contains_key(id)
+            };
             if !keep {
                 root.remove(*id);
             }
@@ -522,9 +613,13 @@ impl App {
         let focus = if sets.contains_key(&session.focus) {
             session.focus
         } else {
-            root.leaves().into_iter().find(|id| sets.contains_key(id)).unwrap_or(session.focus)
+            root.leaves()
+                .into_iter()
+                .find(|id| sets.contains_key(id))
+                .unwrap_or(session.focus)
         };
-        self.layout.reserve_ids_up_to(leaves.iter().map(|(id, _)| *id).max().unwrap_or(0));
+        self.layout
+            .reserve_ids_up_to(leaves.iter().map(|(id, _)| *id).max().unwrap_or(0));
         self.layout.root = root;
         self.layout.others.clear();
         self.previews.clear();
@@ -556,7 +651,10 @@ impl App {
         let lines = if pane == self.layout.focus {
             self.doc.buffer.line_count()
         } else {
-            self.layout.others.get(&pane).map_or(1, |s| s.active_doc_stashed().buffer.line_count())
+            self.layout
+                .others
+                .get(&pane)
+                .map_or(1, |s| s.active_doc_stashed().buffer.line_count())
         };
         let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
         let char_w = ctx.fonts_mut(|f| f.glyph_width(&font, '0'));
@@ -568,7 +666,12 @@ impl App {
     pub(crate) fn begin_tab_drag(&mut self, pane: PaneId, index: usize) {
         if index < self.pane_tab_count(pane) {
             let label = self.pane_label(pane, index).0;
-            self.tab_drag = Some(TabDrag { pane, index, label, preview: false });
+            self.tab_drag = Some(TabDrag {
+                pane,
+                index,
+                label,
+                preview: false,
+            });
         }
     }
 
@@ -592,13 +695,19 @@ impl App {
 
     /// 一個窗格的分頁列：中間是分頁（可拖曳）。放不下時不顯示捲軸，改成左右兩側各一個細線的 `<` `>` 箭頭捲動；
     /// 右邊有「分頁清單」下拉鈕可以直接選一個分頁，最右邊（有多個窗格時）是關閉窗格的按鈕。
-    pub(crate) fn pane_tab_bar(&self, ui: &mut egui::Ui, pane: PaneId, show_close_pane: bool) -> Option<Action> {
+    pub(crate) fn pane_tab_bar(
+        &self,
+        ui: &mut egui::Ui,
+        pane: PaneId,
+        show_close_pane: bool,
+    ) -> Option<Action> {
         let mut action = None;
         let ctx = ui.ctx().clone();
         let state_id = egui::Id::unique(("tab_scroll_state", pane));
         // 上一個畫面量到的：（捲動位置, 最大捲動量, 分頁放不下, 下一個畫面要強制設定的捲動位置）
-        let (prev_offset, prev_max, overflow, force) =
-            ctx.data(|d| d.get_temp::<(f32, f32, bool, Option<f32>)>(state_id)).unwrap_or((0.0, 0.0, false, None));
+        let (prev_offset, prev_max, overflow, force) = ctx
+            .data(|d| d.get_temp::<(f32, f32, bool, Option<f32>)>(state_id))
+            .unwrap_or((0.0, 0.0, false, None));
         let count = self.pane_tab_count(pane);
         ctx.data_mut(|d| d.insert_temp(tab_rects_id(pane), Vec::<egui::Rect>::new()));
         let mut scroll_to = force;
@@ -610,7 +719,13 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 tight_buttons(ui);
                 if show_close_pane
-                    && icons::small_button(ui, Icon::ClosePane, t("關閉窗格（裡面的分頁一起關閉）"), true).clicked()
+                    && icons::small_button(
+                        ui,
+                        Icon::ClosePane,
+                        t("關閉窗格（裡面的分頁一起關閉）"),
+                        true,
+                    )
+                    .clicked()
                 {
                     action = Some(Action::ClosePane(pane));
                 }
@@ -618,20 +733,34 @@ impl App {
                     self.tab_list_button(ui, pane, &mut action);
                 }
                 if overflow
-                    && icons::small_button(ui, Icon::ChevronRight, t("向右捲動分頁"), prev_offset < prev_max - 0.5).clicked()
+                    && icons::small_button(
+                        ui,
+                        Icon::ChevronRight,
+                        t("向右捲動分頁"),
+                        prev_offset < prev_max - 0.5,
+                    )
+                    .clicked()
                 {
                     scroll_to = Some((prev_offset + TAB_SCROLL_STEP).clamp(0.0, prev_max));
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     if overflow
-                        && icons::small_button(ui, Icon::ChevronLeft, t("向左捲動分頁"), prev_offset > 0.5).clicked()
+                        && icons::small_button(
+                            ui,
+                            Icon::ChevronLeft,
+                            t("向左捲動分頁"),
+                            prev_offset > 0.5,
+                        )
+                        .clicked()
                     {
                         scroll_to = Some((prev_offset - TAB_SCROLL_STEP).clamp(0.0, prev_max));
                     }
                     let mut area = egui::ScrollArea::horizontal()
                         .id_salt(("tab_scroll", pane))
                         .auto_shrink([false, true])
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                        );
                     let forced = scroll_to;
                     if let Some(x) = forced {
                         area = area.horizontal_scroll_offset(x);
@@ -675,25 +804,33 @@ impl App {
         let button = icons::small_button(ui, Icon::ChevronDown, t("選擇分頁"), true);
         egui::Popup::menu(&button).show(|ui| {
             no_hover_outline(ui);
-            egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                flat_list(ui, |ui| {
-                    for i in 0..self.pane_tab_count(pane) {
-                        let text = self.pane_tab_text(pane, i);
-                        if ui.selectable_label(i == self.pane_active(pane), text).clicked() {
-                            *action = Some(Action::PaneTab(pane, TabCmd::Switch(i)));
-                            ui.close();
+            egui::ScrollArea::vertical()
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    flat_list(ui, |ui| {
+                        for i in 0..self.pane_tab_count(pane) {
+                            let text = self.pane_tab_text(pane, i);
+                            if ui
+                                .selectable_label(i == self.pane_active(pane), text)
+                                .clicked()
+                            {
+                                *action = Some(Action::PaneTab(pane, TabCmd::Switch(i)));
+                                ui.close();
+                            }
                         }
-                    }
-                    // 排序放在清單最下面：依標籤名稱，升冪或降冪
-                    ui.separator();
-                    for (label, descending) in [(t("依名稱排序（升冪 A→Z）"), false), (t("依名稱排序（降冪 Z→A）"), true)] {
-                        if ui.selectable_label(false, label).clicked() {
-                            *action = Some(Action::SortTabs(pane, descending));
-                            ui.close();
+                        // 排序放在清單最下面：依標籤名稱，升冪或降冪
+                        ui.separator();
+                        for (label, descending) in [
+                            (t("依名稱排序（升冪 A→Z）"), false),
+                            (t("依名稱排序（降冪 Z→A）"), true),
+                        ] {
+                            if ui.selectable_label(false, label).clicked() {
+                                *action = Some(Action::SortTabs(pane, descending));
+                                ui.close();
+                            }
                         }
-                    }
+                    });
                 });
-            });
         });
     }
     /// 一個分頁：整個是一個元件，名稱在左，× 在右側內部，滑鼠移到分頁上才畫出 ×
@@ -708,28 +845,43 @@ impl App {
         let text = self.pane_tab_text_marked(pane, i, false);
         let active_here = i == self.pane_active(pane);
         let font = egui::TextStyle::Button.resolve(ui.style());
-        let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::WHITE);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text, font, egui::Color32::WHITE);
         let (pad, close_w) = (8.0, 14.0);
         // 終端機在背景收到通知：標籤最右邊（× 的位置）放一個鈴鐺，滑鼠移上去才換成 ×；
         // 不用 ●（檔案的未儲存標記），也不貼著文字，免得混淆
         let attention = self.pane_tab_attention(pane, i);
-        let size = egui::vec2(pad + icon_w + galley.size().x + 6.0 + close_w + 4.0, TAB_HEIGHT);
+        let size = egui::vec2(
+            pad + icon_w + galley.size().x + 6.0 + close_w + 4.0,
+            TAB_HEIGHT,
+        );
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         // 記下每個分頁的位置，拖曳排序時用來判斷插在哪裡（分頁列每個畫面開頭會清空）
-        ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<Vec<egui::Rect>>(tab_rects_id(pane)).push(rect));
+        ui.ctx().data_mut(|d| {
+            d.get_temp_mut_or_default::<Vec<egui::Rect>>(tab_rects_id(pane))
+                .push(rect)
+        });
         let close = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 4.0 - close_w / 2.0, rect.center().y),
             egui::vec2(close_w, close_w),
         );
-        let close_resp = ui.interact(close, ui.make_persistent_id(("tab_close", pane, i)), egui::Sense::click());
+        let close_resp = ui.interact(
+            close,
+            ui.make_persistent_id(("tab_close", pane, i)),
+            egui::Sense::click(),
+        );
         let over = response.hovered() || close_resp.hovered();
         // 作用中的分頁換了（切換、新增、開啟）：分頁列自動捲到它，窄的窗格裡才看得到現在是哪一個
-        let seen = ui.ctx().data(|d| d.get_temp::<usize>(egui::Id::unique(("tab_last_active", pane))));
+        let seen = ui
+            .ctx()
+            .data(|d| d.get_temp::<usize>(egui::Id::unique(("tab_last_active", pane))));
         if active_here {
             if seen != Some(i) {
                 ui.scroll_to_rect(rect, Some(egui::Align::Center));
             }
-            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(("tab_last_active", pane)), i));
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("tab_last_active", pane)), i));
         }
         let (fill, text_color, hover_fill, divider, accent) = {
             let v = ui.visuals();
@@ -752,7 +904,12 @@ impl App {
         if active_here {
             ui.painter().rect_filled(
                 rect,
-                egui::CornerRadius { nw: TAB_RADIUS, ne: TAB_RADIUS, sw: 0, se: 0 },
+                egui::CornerRadius {
+                    nw: TAB_RADIUS,
+                    ne: TAB_RADIUS,
+                    sw: 0,
+                    se: 0,
+                },
                 fill,
             );
             // 下緣一條細的強調線（像活頁簿的工作表標籤）：深色主題裡作用中與非作用中分頁的底色差很小，
@@ -761,18 +918,26 @@ impl App {
             // 但分頁被捲出可見範圍時，線也要跟著消失：裁切範圍取分頁列的可見區域（往下多留一點給這條線）
             let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("tab_accent"));
             let clip = ui.clip_rect();
-            let line_clip = egui::Rect::from_min_max(clip.min, egui::pos2(clip.max.x, clip.max.y + 3.0));
-            ui.ctx().layer_painter(layer).with_clip_rect(line_clip).rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(rect.left() + 4.0, rect.bottom() - 2.0),
-                    egui::pos2(rect.right() - 4.0, rect.bottom()),
-                ),
-                egui::CornerRadius::same(1),
-                accent,
-            );
+            let line_clip =
+                egui::Rect::from_min_max(clip.min, egui::pos2(clip.max.x, clip.max.y + 3.0));
+            ui.ctx()
+                .layer_painter(layer)
+                .with_clip_rect(line_clip)
+                .rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(rect.left() + 4.0, rect.bottom() - 2.0),
+                        egui::pos2(rect.right() - 4.0, rect.bottom()),
+                    ),
+                    egui::CornerRadius::same(1),
+                    accent,
+                );
         } else {
             if over {
-                ui.painter().rect_filled(rect.shrink2(egui::vec2(0.0, 2.0)), egui::CornerRadius::same(5), hover_fill);
+                ui.painter().rect_filled(
+                    rect.shrink2(egui::vec2(0.0, 2.0)),
+                    egui::CornerRadius::same(5),
+                    hover_fill,
+                );
             }
             let next_is_active = i + 1 == self.pane_active(pane);
             if !over && !next_is_active && i + 1 < self.pane_tab_count(pane) {
@@ -784,33 +949,57 @@ impl App {
                 );
             }
         }
-        let text_pos = egui::pos2(rect.left() + pad + icon_w, rect.center().y - galley.size().y / 2.0);
-        ui.painter().galley_with_override_text_color(text_pos, galley, text_color);
+        let text_pos = egui::pos2(
+            rect.left() + pad + icon_w,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter()
+            .galley_with_override_text_color(text_pos, galley, text_color);
         if let Some(shell) = &shell {
-            let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + pad + TAB_ICON / 2.0, rect.center().y), egui::vec2(TAB_ICON, TAB_ICON));
+            let icon_rect = egui::Rect::from_center_size(
+                egui::pos2(rect.left() + pad + TAB_ICON / 2.0, rect.center().y),
+                egui::vec2(TAB_ICON, TAB_ICON),
+            );
             let texture = self.shell_icons.get_by_command(ui.ctx(), shell);
             // 沒有作用中的分頁圖示調淡一點，和文字一樣退到背景
-            let tint = if active_here { egui::Color32::WHITE } else { egui::Color32::WHITE.gamma_multiply(0.7) };
+            let tint = if active_here {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::WHITE.gamma_multiply(0.7)
+            };
             crate::shell_icons::paint_icon(ui, texture.as_ref(), icon_rect, tint, text_color);
         }
         // 狀態記號放在 × 的位置：終端機有新通知是鈴鐺，檔案有未儲存的修改是一個小紅點（兩者不會同時出現）
         if !over {
             if attention {
-                icons::paint(ui, Icon::Bell, egui::Rect::from_center_size(close.center(), egui::vec2(close_w, close_w)), ui.visuals().warn_fg_color);
+                icons::paint(
+                    ui,
+                    Icon::Bell,
+                    egui::Rect::from_center_size(close.center(), egui::vec2(close_w, close_w)),
+                    ui.visuals().warn_fg_color,
+                );
             } else if dirty {
-                ui.painter().circle_filled(close.center(), 3.5, ui.visuals().error_fg_color);
+                ui.painter()
+                    .circle_filled(close.center(), 3.5, ui.visuals().error_fg_color);
             }
         }
         if over {
             if close_resp.hovered() {
-                ui.painter().rect_filled(close, egui::CornerRadius::same(3), ui.visuals().widgets.hovered.bg_fill);
+                ui.painter().rect_filled(
+                    close,
+                    egui::CornerRadius::same(3),
+                    ui.visuals().widgets.hovered.bg_fill,
+                );
             }
             let c = close.center();
             let d = 3.0;
             let stroke = egui::Stroke::new(1.0, text_color);
-            ui.painter().line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
-            ui.painter().line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
-        }        if close_resp.clicked() {
+            ui.painter()
+                .line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
+            ui.painter()
+                .line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
+        }
+        if close_resp.clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Close(i)));
         } else if response.double_clicked() {
             action = Some(Action::PaneTab(pane, TabCmd::Rename(i)));
@@ -828,12 +1017,19 @@ impl App {
             if is_terminal {
                 let tip = t("終端機：雙按重新命名，拖曳標籤可以移到別的窗格，按 × 結束這個 shell");
                 if attention {
-                    response.on_hover_text(format!("{tip}\n{}", t("有新的通知，回到這個終端機就會清掉")));
+                    response.on_hover_text(format!(
+                        "{tip}\n{}",
+                        t("有新的通知，回到這個終端機就會清掉")
+                    ));
                 } else {
                     response.on_hover_text(tip);
                 }
             } else if dirty {
-                response.on_hover_text(format!("{}\n{}", tf!("{full}\n雙按重新命名檔案", full = full), t("尚未儲存")));
+                response.on_hover_text(format!(
+                    "{}\n{}",
+                    tf!("{full}\n雙按重新命名檔案", full = full),
+                    t("尚未儲存")
+                ));
             } else {
                 response.on_hover_text(tf!("{full}\n雙按重新命名檔案", full = full));
             }
@@ -863,7 +1059,13 @@ impl App {
         // 滑鼠按在別的窗格上：那個窗格取得焦點（拖曳分頁時不換；確認對話框開著時也不換：
         // 按對話框的按鈕時，按下的位置底下可能是別的窗格，焦點被切走的話，「儲存」「不儲存」就會作用在錯的分頁上）
         if self.tab_drag.is_none() && self.modal.is_none() {
-            let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
+            let pressed = ctx.input(|i| {
+                if i.pointer.any_pressed() {
+                    i.pointer.interact_pos()
+                } else {
+                    None
+                }
+            });
             if let Some(pos) = pressed {
                 if let Some(&(id, _)) = arranged.panes.iter().find(|(_, r)| r.contains(pos)) {
                     if self.is_preview(id) {
@@ -917,7 +1119,8 @@ impl App {
                 (v.panel_fill, stroke)
             };
             ui.painter().rect_filled(rect, CARD_RADIUS, card_fill);
-            ui.painter().rect_stroke(rect, CARD_RADIUS, card_stroke, egui::StrokeKind::Inside);
+            ui.painter()
+                .rect_stroke(rect, CARD_RADIUS, card_stroke, egui::StrokeKind::Inside);
 
             // 預覽窗格：自己的標題列與內容，不能放分頁，也不參與焦點
             if self.is_preview(id) {
@@ -932,9 +1135,16 @@ impl App {
             {
                 // 分頁列一律顯示（只剩一個窗格、一個分頁也一樣）：終端機要靠雙按分頁改名，版面也不會跳動
                 // 最左邊的分頁對齊編輯區的文字區（行號區的右邊），不是壓在行號區上
-                let left = (CARD_INSET + self.gutter_width(&ctx, id)).round().clamp(8.0, 120.0) as i8;
+                let left = (CARD_INSET + self.gutter_width(&ctx, id))
+                    .round()
+                    .clamp(8.0, 120.0) as i8;
                 let framed = egui::Frame::new()
-                    .inner_margin(egui::Margin { left, right: 8, top: 5, bottom: 0 })
+                    .inner_margin(egui::Margin {
+                        left,
+                        right: 8,
+                        top: 5,
+                        bottom: 0,
+                    })
                     .show(&mut child, |ui| {
                         ui.set_min_width(ui.available_width());
                         self.pane_tab_bar(ui, id, several_tab_panes)
@@ -956,7 +1166,10 @@ impl App {
                 let strip_left = rect.min.x + inset + self.gutter_width(&ctx, id);
                 let fill = ui.visuals().extreme_bg_color;
                 ui.painter().rect_filled(
-                    egui::Rect::from_min_max(egui::pos2(strip_left, top), egui::pos2(rect.max.x - inset, top + pad + 1.0)),
+                    egui::Rect::from_min_max(
+                        egui::pos2(strip_left, top),
+                        egui::pos2(rect.max.x - inset, top + pad + 1.0),
+                    ),
                     egui::CornerRadius::ZERO,
                     fill,
                 );
@@ -969,21 +1182,38 @@ impl App {
                 // 編輯畫面是拿裁切範圍當背景範圍來畫的：裁切範圍要縮到內縮之後的區域，
                 // 不然背景會連卡片的框線一起蓋掉
                 ui.set_clip_rect(body.intersect(ui.clip_rect()));
-                let App { doc, editor, find, settings, layout, .. } = &mut *self;
+                let App {
+                    doc,
+                    editor,
+                    find,
+                    settings,
+                    layout,
+                    ..
+                } = &mut *self;
                 let options = settings.view;
                 if id == layout.focus {
                     if let Some(terminal) = doc.terminal.as_mut() {
-                        crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
+                        crate::terminal_pane::draw_body(
+                            ui,
+                            terminal,
+                            body,
+                            &crate::terminal_pane::TerminalOptions::from_settings(settings),
+                        );
                     } else {
                         let reveal = std::mem::take(&mut find.reveal);
                         let highlight = find.current_chars.clone();
                         let scope = find.scope.clone();
                         let before = doc.buffer.len_chars();
                         // 使用者在編輯區改了文字：標成未儲存，之前找到的位置與筆數作廢
-                        if show_pane_editor(ui, id, doc, editor, options, highlight, scope, reveal, &*settings) {
+                        if show_pane_editor(
+                            ui, id, doc, editor, options, highlight, scope, reveal, &*settings,
+                        ) {
                             find.invalidate();
                             // 「只在選取範圍內搜尋」的範圍跟著這次編輯移動
-                            find.shift_scope(editor.sel.head, doc.buffer.len_chars() as isize - before as isize);
+                            find.shift_scope(
+                                editor.sel.head,
+                                doc.buffer.len_chars() as isize - before as isize,
+                            );
                         }
                     }
                 } else if let Some(set) = layout.others.get_mut(&id) {
@@ -991,7 +1221,12 @@ impl App {
                     if let Some(terminal) = d.terminal.as_mut() {
                         // 沒有焦點的窗格不能搶鍵盤焦點（剛開啟、還記著「要焦點」的終端機會一畫出來就搶走）
                         terminal.want_focus = false;
-                        crate::terminal_pane::draw_body(ui, terminal, body, &crate::terminal_pane::TerminalOptions::from_settings(settings));
+                        crate::terminal_pane::draw_body(
+                            ui,
+                            terminal,
+                            body,
+                            &crate::terminal_pane::TerminalOptions::from_settings(settings),
+                        );
                     } else {
                         show_pane_editor(ui, id, d, e, options, None, None, false, &*settings);
                     }
@@ -1001,7 +1236,11 @@ impl App {
 
         // 分隔線：拖曳調整比例（不會小於窗格的最小大小）
         for d in &arranged.dividers {
-            let resp = ui.interact(d.rect, egui::Id::unique(("pane_divider", d.path.clone())), egui::Sense::drag());
+            let resp = ui.interact(
+                d.rect,
+                egui::Id::unique(("pane_divider", d.path.clone())),
+                egui::Sense::drag(),
+            );
             let icon = match d.axis {
                 panes::Axis::Horizontal => egui::CursorIcon::ResizeHorizontal,
                 panes::Axis::Vertical => egui::CursorIcon::ResizeVertical,
@@ -1021,8 +1260,12 @@ impl App {
             // 平常只是兩張卡片之間的空隙；滑鼠移上去或拖曳時，中間浮出一條強調色的短圓角條
             if resp.hovered() || resp.dragged() {
                 let grip = match d.axis {
-                    panes::Axis::Horizontal => egui::vec2(3.0, (d.rect.height() * 0.3).clamp(24.0, 80.0)),
-                    panes::Axis::Vertical => egui::vec2((d.rect.width() * 0.3).clamp(24.0, 80.0), 3.0),
+                    panes::Axis::Horizontal => {
+                        egui::vec2(3.0, (d.rect.height() * 0.3).clamp(24.0, 80.0))
+                    }
+                    panes::Axis::Vertical => {
+                        egui::vec2((d.rect.width() * 0.3).clamp(24.0, 80.0), 3.0)
+                    }
                 };
                 ui.painter().rect_filled(
                     egui::Rect::from_center_size(d.rect.center(), grip),
@@ -1042,7 +1285,11 @@ impl App {
     }
 
     /// 拖曳分頁中：畫放置區預覽與跟著滑鼠的分頁名稱；放開滑鼠時回傳搬動的動作。
-    fn drag_overlay(&mut self, ctx: &egui::Context, shapes: &[(PaneId, egui::Rect, f32)]) -> Option<Action> {
+    fn drag_overlay(
+        &mut self,
+        ctx: &egui::Context,
+        shapes: &[(PaneId, egui::Rect, f32)],
+    ) -> Option<Action> {
         let drag = self.tab_drag.clone()?;
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.tab_drag = None;
@@ -1050,14 +1297,21 @@ impl App {
         }
         let pos = ctx.input(|i| i.pointer.hover_pos().or(i.pointer.latest_pos()));
         let hit = pos.and_then(|p| {
-            shapes.iter().find(|(_, r, _)| r.contains(p)).map(|&(id, rect, bar_h)| (id, rect, panes::drop_zone(rect, bar_h, p)))
+            shapes
+                .iter()
+                .find(|(_, r, _)| r.contains(p))
+                .map(|&(id, rect, bar_h)| (id, rect, panes::drop_zone(rect, bar_h, p)))
         });
         // 拖在自己窗格的分頁列上：是調整順序，不是搬到別處。插入位置由滑鼠左邊有幾個分頁決定
-        let tab_rects: Vec<egui::Rect> = ctx.data(|d| d.get_temp(tab_rects_id(drag.pane))).unwrap_or_default();
+        let tab_rects: Vec<egui::Rect> = ctx
+            .data(|d| d.get_temp(tab_rects_id(drag.pane)))
+            .unwrap_or_default();
         let reorder_at = match (drag.preview, pos) {
             (false, Some(p)) if !tab_rects.is_empty() => shapes
                 .iter()
-                .find(|(id, r, bar_h)| *id == drag.pane && *bar_h > 0.0 && p.y < r.min.y + bar_h && r.contains(p))
+                .find(|(id, r, bar_h)| {
+                    *id == drag.pane && *bar_h > 0.0 && p.y < r.min.y + bar_h && r.contains(p)
+                })
                 .map(|_| tab_rects.iter().filter(|r| r.center().x < p.x).count()),
             _ => None,
         };
@@ -1068,31 +1322,56 @@ impl App {
         };
 
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("tab_drag_overlay"));
+        let layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("tab_drag_overlay"),
+        );
         let painter = ctx.layer_painter(layer);
         let accent = ctx.global_style().visuals.selection.bg_fill;
         if let Some(at) = reorder_at {
             let (x, bar) = match tab_rects.get(at) {
                 Some(r) => (r.left(), *r),
-                None => (tab_rects[tab_rects.len() - 1].right(), tab_rects[tab_rects.len() - 1]),
+                None => (
+                    tab_rects[tab_rects.len() - 1].right(),
+                    tab_rects[tab_rects.len() - 1],
+                ),
             };
             painter.rect_filled(
-                egui::Rect::from_min_max(egui::pos2(x - 1.5, bar.top() + 2.0), egui::pos2(x + 1.5, bar.bottom() - 2.0)),
+                egui::Rect::from_min_max(
+                    egui::pos2(x - 1.5, bar.top() + 2.0),
+                    egui::pos2(x + 1.5, bar.bottom() - 2.0),
+                ),
                 egui::CornerRadius::same(1),
                 accent,
             );
         }
         if let Some((_, rect, zone)) = useful {
             let preview = panes::preview_rect(rect, zone).shrink(2.0);
-            painter.rect_filled(preview, egui::CornerRadius::same(4), accent.gamma_multiply(0.35));
-            painter.rect_stroke(preview, egui::CornerRadius::same(4), egui::Stroke::new(2.0, accent), egui::StrokeKind::Inside);
+            painter.rect_filled(
+                preview,
+                egui::CornerRadius::same(4),
+                accent.gamma_multiply(0.35),
+            );
+            painter.rect_stroke(
+                preview,
+                egui::CornerRadius::same(4),
+                egui::Stroke::new(2.0, accent),
+                egui::StrokeKind::Inside,
+            );
         }
         if let Some(p) = pos {
             let font = egui::TextStyle::Button.resolve(&ctx.global_style());
             let galley = painter.layout_no_wrap(drag.label.clone(), font, egui::Color32::WHITE);
-            let rect = egui::Rect::from_min_size(p + egui::vec2(12.0, 8.0), galley.size() + egui::vec2(16.0, 8.0));
+            let rect = egui::Rect::from_min_size(
+                p + egui::vec2(12.0, 8.0),
+                galley.size() + egui::vec2(16.0, 8.0),
+            );
             painter.rect_filled(rect, egui::CornerRadius::same(4), accent);
-            painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, egui::Color32::WHITE);
+            painter.galley(
+                rect.min + egui::vec2(8.0, 4.0),
+                galley,
+                egui::Color32::WHITE,
+            );
         }
         ctx.request_repaint();
 
@@ -1132,7 +1411,8 @@ pub(crate) fn show_pane_editor(
 ) -> bool {
     let resolved = syntax::resolve(doc.lang, doc.path.as_deref(), &doc.buffer);
     // Tab 欄寬依這份文件的檔案類型（沒有語言的純文字用預設的）；畫完還原，免得影響別的窗格與狀態列
-    let previous_tab = feditor_core::motion::set_tab_width(settings.tab_width_for(resolved.map(|l| l.name)));
+    let previous_tab =
+        feditor_core::motion::set_tab_width(settings.tab_width_for(resolved.map(|l| l.name)));
     // 行註解符號：語言有就用語言的（手動選了語言、或沒有檔名時才有意義），否則看副檔名
     editor.comment_prefix = resolved
         .and_then(|l| l.line_comment())

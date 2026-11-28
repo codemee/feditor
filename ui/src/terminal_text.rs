@@ -40,7 +40,11 @@ pub fn find_matches(glyphs: &[Glyph], query: &str) -> Vec<(usize, usize)> {
     }
     let mut i = 0;
     while i + q.len() <= glyphs.len() {
-        if glyphs[i..i + q.len()].iter().zip(&q).all(|(g, c)| fold(g.c) == *c) {
+        if glyphs[i..i + q.len()]
+            .iter()
+            .zip(&q)
+            .all(|(g, c)| fold(g.c) == *c)
+        {
             out.push((i, i + q.len()));
             i += q.len();
         } else {
@@ -56,7 +60,11 @@ pub fn segments(glyphs: &[Glyph], start: usize, end: usize) -> Vec<Segment> {
     for g in &glyphs[start..end] {
         match out.last_mut() {
             Some(s) if s.line == g.line && s.end_col == g.col => s.end_col = g.col + g.width(),
-            _ => out.push(Segment { line: g.line, start_col: g.col, end_col: g.col + g.width() }),
+            _ => out.push(Segment {
+                line: g.line,
+                start_col: g.col,
+                end_col: g.col + g.width(),
+            }),
         }
     }
     out
@@ -74,13 +82,22 @@ pub fn openable_link(uri: &str) -> bool {
 fn scheme_len(glyphs: &[Glyph]) -> Option<usize> {
     SCHEMES.iter().find_map(|s| {
         let n = s.chars().count();
-        (glyphs.len() >= n && glyphs[..n].iter().zip(s.chars()).all(|(g, c)| g.c.to_ascii_lowercase() == c)).then_some(n)
+        (glyphs.len() >= n
+            && glyphs[..n]
+                .iter()
+                .zip(s.chars())
+                .all(|(g, c)| g.c.to_ascii_lowercase() == c))
+        .then_some(n)
     })
 }
 
 /// 網址裡可以出現的字元：可見的 ASCII，但不含常拿來包住網址的符號。中日韓文字不算，所以網址後面緊接中文也不會被吃進去。
 fn url_char(c: char) -> bool {
-    c.is_ascii_graphic() && !matches!(c, '<' | '>' | '"' | '\'' | '`' | '{' | '}' | '|' | '\\' | '^')
+    c.is_ascii_graphic()
+        && !matches!(
+            c,
+            '<' | '>' | '"' | '\'' | '`' | '{' | '}' | '|' | '\\' | '^'
+        )
 }
 
 /// 找出包含 `index` 這個字元的網址（`http`、`https`、`ftp`、`file`）：回傳（開頭, 結尾, 網址文字）。
@@ -88,7 +105,8 @@ fn url_char(c: char) -> bool {
 pub fn url_at(glyphs: &[Glyph], index: usize) -> Option<(usize, usize, String)> {
     let mut i = 0;
     while i < glyphs.len() {
-        let starts_url = scheme_len(&glyphs[i..]).filter(|_| i == 0 || !glyphs[i - 1].c.is_ascii_alphanumeric());
+        let starts_url =
+            scheme_len(&glyphs[i..]).filter(|_| i == 0 || !glyphs[i - 1].c.is_ascii_alphanumeric());
         let Some(prefix) = starts_url else {
             i += 1;
             continue;
@@ -103,7 +121,10 @@ pub fn url_at(glyphs: &[Glyph], index: usize) -> Option<(usize, usize, String)> 
             let text: String = glyphs[i..end].iter().map(|g| g.c).collect();
             let count = |c: char| text.chars().filter(|x| *x == c).count();
             let unbalanced = |open: char, close: char| count(close) > count(open);
-            if matches!(last, '.' | ',' | ';' | ':' | '!' | '?') || (last == ')' && unbalanced('(', ')')) || (last == ']' && unbalanced('[', ']')) {
+            if matches!(last, '.' | ',' | ';' | ':' | '!' | '?')
+                || (last == ')' && unbalanced('(', ')'))
+                || (last == ']' && unbalanced('[', ']'))
+            {
                 end -= 1;
             } else {
                 break;
@@ -151,7 +172,14 @@ mod tests {
         let cjk = row("a你好b", 0);
         let m = find_matches(&cjk, "你好");
         assert_eq!(m, vec![(1, 3)]);
-        assert_eq!(segments(&cjk, 1, 3), vec![Segment { line: 0, start_col: 1, end_col: 5 }]);
+        assert_eq!(
+            segments(&cjk, 1, 3),
+            vec![Segment {
+                line: 0,
+                start_col: 1,
+                end_col: 5
+            }]
+        );
     }
 
     #[test]
@@ -162,7 +190,18 @@ mod tests {
         assert_eq!(m.len(), 1);
         assert_eq!(
             segments(&g, m[0].0, m[0].1),
-            vec![Segment { line: 3, start_col: 8, end_col: 11 }, Segment { line: 4, start_col: 0, end_col: 2 }]
+            vec![
+                Segment {
+                    line: 3,
+                    start_col: 8,
+                    end_col: 11
+                },
+                Segment {
+                    line: 4,
+                    start_col: 0,
+                    end_col: 2
+                }
+            ]
         );
     }
 
@@ -173,22 +212,54 @@ mod tests {
             url_at(&g, at).map(|(a, b, u)| (text(&g, (a, b)), u))
         };
         let plain = "see https://example.com/a?b=1#c now";
-        assert_eq!(url(plain, 10).map(|x| x.1).as_deref(), Some("https://example.com/a?b=1#c"));
+        assert_eq!(
+            url(plain, 10).map(|x| x.1).as_deref(),
+            Some("https://example.com/a?b=1#c")
+        );
         assert_eq!(url(plain, 0), None, "網址前面的字不算");
         assert_eq!(url(plain, 31), None, "網址後面的字不算");
         // 句尾標點不算網址
-        assert_eq!(url("go to http://x.org/path.", 10).map(|x| x.1).as_deref(), Some("http://x.org/path"));
-        assert_eq!(url("(http://x.org/a)", 5).map(|x| x.1).as_deref(), Some("http://x.org/a"), "沒配對的右括號不算");
-        assert_eq!(url("http://en.wikipedia.org/wiki/Rust_(language)", 5).map(|x| x.1).as_deref(), Some("http://en.wikipedia.org/wiki/Rust_(language)"), "有配對的括號要留著");
-        assert_eq!(url("<https://x.org/a>", 5).map(|x| x.1).as_deref(), Some("https://x.org/a"));
-        assert_eq!(url("\"ftp://host/f.txt\"", 5).map(|x| x.1).as_deref(), Some("ftp://host/f.txt"));
-        assert_eq!(url("file:///C:/a/b.txt ok", 3).map(|x| x.1).as_deref(), Some("file:///C:/a/b.txt"));
-        assert_eq!(url("HTTPS://X.ORG/A", 3).map(|x| x.1).as_deref(), Some("HTTPS://X.ORG/A"), "協定不分大小寫");
+        assert_eq!(
+            url("go to http://x.org/path.", 10).map(|x| x.1).as_deref(),
+            Some("http://x.org/path")
+        );
+        assert_eq!(
+            url("(http://x.org/a)", 5).map(|x| x.1).as_deref(),
+            Some("http://x.org/a"),
+            "沒配對的右括號不算"
+        );
+        assert_eq!(
+            url("http://en.wikipedia.org/wiki/Rust_(language)", 5)
+                .map(|x| x.1)
+                .as_deref(),
+            Some("http://en.wikipedia.org/wiki/Rust_(language)"),
+            "有配對的括號要留著"
+        );
+        assert_eq!(
+            url("<https://x.org/a>", 5).map(|x| x.1).as_deref(),
+            Some("https://x.org/a")
+        );
+        assert_eq!(
+            url("\"ftp://host/f.txt\"", 5).map(|x| x.1).as_deref(),
+            Some("ftp://host/f.txt")
+        );
+        assert_eq!(
+            url("file:///C:/a/b.txt ok", 3).map(|x| x.1).as_deref(),
+            Some("file:///C:/a/b.txt")
+        );
+        assert_eq!(
+            url("HTTPS://X.ORG/A", 3).map(|x| x.1).as_deref(),
+            Some("HTTPS://X.ORG/A"),
+            "協定不分大小寫"
+        );
         // 協定前面不能緊接字母，只有協定沒有內容也不算
         assert_eq!(url("xhttp://x.org", 6), None);
         assert_eq!(url("http:// alone", 2), None);
         // 中文緊接在網址後面不會被吃進去
-        assert_eq!(url("網址https://x.org/a很好", 6).map(|x| x.1).as_deref(), Some("https://x.org/a"));
+        assert_eq!(
+            url("網址https://x.org/a很好", 6).map(|x| x.1).as_deref(),
+            Some("https://x.org/a")
+        );
         // 兩個網址：點到哪個就是哪個
         let two = "http://a.org http://b.org";
         assert_eq!(url(two, 2).map(|x| x.1).as_deref(), Some("http://a.org"));
@@ -204,6 +275,10 @@ mod tests {
         let (a, b, u) = url_at(&g, at_second_row).expect("跨列的網址");
         assert_eq!(u, "https://example.com/a/long/path");
         let segs = segments(&g, a, b);
-        assert_eq!(segs.iter().map(|s| s.line).collect::<Vec<_>>(), vec![5, 6], "底線要畫在兩列上");
+        assert_eq!(
+            segs.iter().map(|s| s.line).collect::<Vec<_>>(),
+            vec![5, 6],
+            "底線要畫在兩列上"
+        );
     }
 }

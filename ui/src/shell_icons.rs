@@ -30,37 +30,56 @@ impl ShellIcons {
 
     /// 執行這個指令的 shell 的圖示；指令是空字串時用系統預設 shell 的（終端機分頁的標籤用）。
     pub fn get_by_command(&self, ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
-        self.textures.borrow_mut().entry(command.to_owned()).or_insert_with(|| load(ctx, command)).clone()
+        self.textures
+            .borrow_mut()
+            .entry(command.to_owned())
+            .or_insert_with(|| load(ctx, command))
+            .clone()
     }
 }
 
 #[cfg(windows)]
 fn load(ctx: &egui::Context, command: &str) -> Option<TextureHandle> {
     use crate::terminal;
-    let effective = if command.trim().is_empty() { terminal::system_default_shell().program } else { command.to_owned() };
+    let effective = if command.trim().is_empty() {
+        terminal::system_default_shell().program
+    } else {
+        command.to_owned()
+    };
     let path = icon_source(&resolve_shim(&terminal::program_path(&effective)?));
     let image = exe_icon(&path)?;
-    Some(ctx.load_texture(format!("shell-icon:{command}"), image, egui::TextureOptions::LINEAR))
+    Some(ctx.load_texture(
+        format!("shell-icon:{command}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    ))
 }
 
 /// Scoop 的 shim（`shims\pwsh.exe`）是個通用的小執行檔，圖示是一個藍色的視窗，不是 shell 本身的；
 /// 旁邊同名的 `.shim` 文字檔寫著真正的程式（`path = "C:\...\pwsh.exe"`），圖示要用那個。不是 shim 就原樣回傳。
 #[cfg(any(windows, test))]
 fn resolve_shim(exe: &std::path::Path) -> std::path::PathBuf {
-    let target = std::fs::read_to_string(exe.with_extension("shim")).ok().and_then(|text| {
-        text.lines().find_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            (key.trim() == "path").then(|| std::path::PathBuf::from(value.trim().trim_matches('"')))
-        })
-    });
-    target.filter(|t| t.is_file()).unwrap_or_else(|| exe.to_path_buf())
+    let target = std::fs::read_to_string(exe.with_extension("shim"))
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "path")
+                    .then(|| std::path::PathBuf::from(value.trim().trim_matches('"')))
+            })
+        });
+    target
+        .filter(|t| t.is_file())
+        .unwrap_or_else(|| exe.to_path_buf())
 }
 
 /// Git 裡的 `bin\bash.exe`、`usr\bin\bash.exe` 本身沒有圖示（檔案總管裡是個通用圖示），
 /// Git 的標誌在 Git 根資料夾的 `git-bash.exe`；往上找得到就用它，找不到原樣回傳。
 #[cfg(any(windows, test))]
 fn icon_source(exe: &std::path::Path) -> std::path::PathBuf {
-    let is_bash = exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("bash.exe"));
+    let is_bash = exe
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("bash.exe"));
     if is_bash {
         // bin\bash.exe 往上一層、usr\bin\bash.exe 往上兩層就是 Git 的根資料夾
         for root in exe.ancestors().skip(1).take(3) {
@@ -79,10 +98,21 @@ fn load(_ctx: &egui::Context, _command: &str) -> Option<TextureHandle> {
 }
 
 /// 在 `rect` 畫 shell 的圖示：有材質就畫它（`tint` 可以調淡），沒有就畫程式自己的終端機圖示（顏色用 `fallback`）。
-pub fn paint_icon(ui: &Ui, texture: Option<&TextureHandle>, rect: egui::Rect, tint: Color32, fallback: Color32) {
+pub fn paint_icon(
+    ui: &Ui,
+    texture: Option<&TextureHandle>,
+    rect: egui::Rect,
+    tint: Color32,
+    fallback: Color32,
+) {
     match texture {
         Some(texture) => {
-            ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+            ui.painter().image(
+                texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                tint,
+            );
         }
         None => icons::paint(ui, Icon::Terminal, rect, fallback),
     }
@@ -90,20 +120,41 @@ pub fn paint_icon(ui: &Ui, texture: Option<&TextureHandle>, rect: egui::Rect, ti
 
 /// 清單上的一列：圖示加名稱，`selected` 時有選取的底色（和 `selectable_label` 的樣子一致）。
 /// `texture` 是 `None` 時畫程式自己的終端機圖示。
-pub fn shell_row(ui: &mut Ui, texture: Option<&TextureHandle>, label: &str, selected: bool) -> egui::Response {
+pub fn shell_row(
+    ui: &mut Ui,
+    texture: Option<&TextureHandle>,
+    label: &str,
+    selected: bool,
+) -> egui::Response {
     let font = egui::TextStyle::Button.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, Color32::WHITE);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, Color32::WHITE);
     let width = (PAD * 3.0 + ICON_SIZE + galley.size().x).max(ui.available_width());
     let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::click());
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact_selectable(&response, selected);
         if selected || response.hovered() || response.has_focus() {
-            ui.painter().rect_filled(rect, egui::CornerRadius::same(3), visuals.weak_bg_fill);
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::same(3), visuals.weak_bg_fill);
         }
-        let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + PAD + ICON_SIZE / 2.0, rect.center().y), vec2(ICON_SIZE, ICON_SIZE));
-        paint_icon(ui, texture, icon_rect, Color32::WHITE, visuals.fg_stroke.color);
-        let text_pos = egui::pos2(rect.left() + PAD * 2.0 + ICON_SIZE, rect.center().y - galley.size().y / 2.0);
-        ui.painter().galley_with_override_text_color(text_pos, galley, visuals.fg_stroke.color);
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + PAD + ICON_SIZE / 2.0, rect.center().y),
+            vec2(ICON_SIZE, ICON_SIZE),
+        );
+        paint_icon(
+            ui,
+            texture,
+            icon_rect,
+            Color32::WHITE,
+            visuals.fg_stroke.color,
+        );
+        let text_pos = egui::pos2(
+            rect.left() + PAD * 2.0 + ICON_SIZE,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter()
+            .galley_with_override_text_color(text_pos, galley, visuals.fg_stroke.color);
     }
     response
 }
@@ -114,7 +165,8 @@ pub fn exe_icon(path: &std::path::Path) -> Option<egui::ColorImage> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Graphics::Gdi::{
-        BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits, GetObjectW, HBITMAP, ReleaseDC,
+        BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC,
+        GetDIBits, GetObjectW, HBITMAP, ReleaseDC,
     };
     use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
     use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
@@ -126,7 +178,12 @@ pub fn exe_icon(path: &std::path::Path) -> Option<egui::ColorImage> {
                 return None;
             }
             let mut bm: BITMAP = std::mem::zeroed();
-            if GetObjectW(color, std::mem::size_of::<BITMAP>() as i32, &mut bm as *mut _ as *mut c_void) == 0 {
+            if GetObjectW(
+                color,
+                std::mem::size_of::<BITMAP>() as i32,
+                &mut bm as *mut _ as *mut c_void,
+            ) == 0
+            {
                 return None;
             }
             let (w, h) = (bm.bmWidth, bm.bmHeight);
@@ -150,14 +207,30 @@ pub fn exe_icon(path: &std::path::Path) -> Option<egui::ColorImage> {
             info.bmiHeader = header;
             let hdc = GetDC(std::ptr::null_mut());
             let mut bgra = vec![0u8; (w * h * 4) as usize];
-            let rows = GetDIBits(hdc, color, 0, h as u32, bgra.as_mut_ptr() as *mut c_void, &mut info, DIB_RGB_COLORS);
+            let rows = GetDIBits(
+                hdc,
+                color,
+                0,
+                h as u32,
+                bgra.as_mut_ptr() as *mut c_void,
+                &mut info,
+                DIB_RGB_COLORS,
+            );
             // 沒有透明度資訊的舊式圖示：透明的部分在遮罩位圖裡（黑色是不透明、白色是透明）
             let mut mask_px = vec![0u8; (w * h * 4) as usize];
             let mut have_mask = false;
             if !mask.is_null() {
                 let mut mask_info: BITMAPINFO = std::mem::zeroed();
                 mask_info.bmiHeader = header;
-                have_mask = GetDIBits(hdc, mask, 0, h as u32, mask_px.as_mut_ptr() as *mut c_void, &mut mask_info, DIB_RGB_COLORS) != 0;
+                have_mask = GetDIBits(
+                    hdc,
+                    mask,
+                    0,
+                    h as u32,
+                    mask_px.as_mut_ptr() as *mut c_void,
+                    &mut mask_info,
+                    DIB_RGB_COLORS,
+                ) != 0;
             }
             ReleaseDC(std::ptr::null_mut(), hdc);
             if rows == 0 {
@@ -175,14 +248,23 @@ pub fn exe_icon(path: &std::path::Path) -> Option<egui::ColorImage> {
                 };
                 rgba.extend_from_slice(&[p[2], p[1], p[0], alpha]);
             }
-            Some(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba))
+            Some(egui::ColorImage::from_rgba_unmultiplied(
+                [w as usize, h as usize],
+                &rgba,
+            ))
         }
     }
 
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     unsafe {
         let mut file: SHFILEINFOW = std::mem::zeroed();
-        let ok = SHGetFileInfoW(wide.as_ptr(), 0, &mut file, std::mem::size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_SMALLICON);
+        let ok = SHGetFileInfoW(
+            wide.as_ptr(),
+            0,
+            &mut file,
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_SMALLICON,
+        );
         if ok == 0 || file.hIcon.is_null() {
             return None;
         }
@@ -209,13 +291,29 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_icon_of_a_real_windows_program_can_be_read_and_is_not_blank() {
-        let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
+        let system = std::env::var_os("SystemRoot")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "C:\\Windows".into());
         let cmd = system.join("System32").join("cmd.exe");
         let image = super::exe_icon(&cmd).expect("cmd.exe 有圖示");
-        assert!(image.size[0] >= 8 && image.size[1] >= 8 && image.size[0] <= 64, "{:?}", image.size);
+        assert!(
+            image.size[0] >= 8 && image.size[1] >= 8 && image.size[0] <= 64,
+            "{:?}",
+            image.size
+        );
         let visible = image.pixels.iter().filter(|p| p.a() > 0).count();
-        assert!(visible > image.pixels.len() / 10, "圖示不該是全透明的：{visible}/{}", image.pixels.len());
-        assert!(image.pixels.iter().any(|p| p.a() > 0 && (p.r() != p.g() || p.g() != p.b() || p.r() > 0)), "要有看得見的顏色");
+        assert!(
+            visible > image.pixels.len() / 10,
+            "圖示不該是全透明的：{visible}/{}",
+            image.pixels.len()
+        );
+        assert!(
+            image
+                .pixels
+                .iter()
+                .any(|p| p.a() > 0 && (p.r() != p.g() || p.g() != p.b() || p.r() > 0)),
+            "要有看得見的顏色"
+        );
         // 不存在的檔案：沒有圖示，也不會 panic
         assert!(super::exe_icon(&system.join("no-such-program.exe")).is_none());
     }
@@ -228,7 +326,11 @@ mod tests {
         std::fs::write(&shim, "x").unwrap();
         std::fs::write(&real, "x").unwrap();
         assert_eq!(super::resolve_shim(&shim), shim, "沒有 .shim 檔：原樣");
-        std::fs::write(dir.join("tool.shim"), format!("path = \"{}\"\r\nargs = \r\n", real.display())).unwrap();
+        std::fs::write(
+            dir.join("tool.shim"),
+            format!("path = \"{}\"\r\nargs = \r\n", real.display()),
+        )
+        .unwrap();
         assert_eq!(super::resolve_shim(&shim), real);
         std::fs::write(dir.join("tool.shim"), "path = \"Z:\\no\\such.exe\"").unwrap();
         assert_eq!(super::resolve_shim(&shim), shim, "目標不存在：原樣");
@@ -238,10 +340,16 @@ mod tests {
     #[test]
     fn git_bash_takes_its_icon_from_the_git_launcher() {
         let git = std::env::temp_dir().join(format!("feditor-giticon-{}", std::process::id()));
-        for sub in [std::path::PathBuf::from("bin"), std::path::PathBuf::from("usr").join("bin")] {
+        for sub in [
+            std::path::PathBuf::from("bin"),
+            std::path::PathBuf::from("usr").join("bin"),
+        ] {
             std::fs::create_dir_all(git.join(sub)).unwrap();
         }
-        let (bin, usr) = (git.join("bin").join("bash.exe"), git.join("usr").join("bin").join("bash.exe"));
+        let (bin, usr) = (
+            git.join("bin").join("bash.exe"),
+            git.join("usr").join("bin").join("bash.exe"),
+        );
         std::fs::write(&bin, "x").unwrap();
         std::fs::write(&usr, "x").unwrap();
         assert_eq!(super::icon_source(&bin), bin, "沒有 git-bash.exe：原樣");
@@ -256,6 +364,13 @@ mod tests {
     #[test]
     fn a_shell_without_a_readable_icon_simply_has_no_texture() {
         // 找不到的程式：沒有路徑，也就不會嘗試讀圖示
-        assert!(crate::terminal::program_path_in("definitely-not-a-shell", Some(std::ffi::OsStr::new("")), &|_| false).is_none());
+        assert!(
+            crate::terminal::program_path_in(
+                "definitely-not-a-shell",
+                Some(std::ffi::OsStr::new("")),
+                &|_| false
+            )
+            .is_none()
+        );
     }
 }

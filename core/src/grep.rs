@@ -119,7 +119,8 @@ pub fn search_dir(
             let Ok(read) = std::fs::read_dir(&path) else {
                 continue;
             };
-            let mut children: Vec<PathBuf> = read.filter_map(Result::ok).map(|e| e.path()).collect();
+            let mut children: Vec<PathBuf> =
+                read.filter_map(Result::ok).map(|e| e.path()).collect();
             // 反向放進堆疊，取出時就是檔名由小到大
             children.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
             for child in children {
@@ -127,7 +128,8 @@ pub fn search_dir(
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if child.is_dir() && (!opts.recursive || opts.skip_dirs.iter().any(|d| *d == name)) {
+                if child.is_dir() && (!opts.recursive || opts.skip_dirs.iter().any(|d| *d == name))
+                {
                     continue;
                 }
                 if child.is_file() && !matches_filter(&name, &opts.file_filter) {
@@ -148,7 +150,16 @@ pub fn search_dir(
         }
         summary.files_searched += 1;
         let text = fileio::decode(&bytes).text;
-        if !scan_text(&path, &text, &searcher, opts.max_hits, None, cancel, &mut summary, &mut on_hit) {
+        if !scan_text(
+            &path,
+            &text,
+            &searcher,
+            opts.max_hits,
+            None,
+            cancel,
+            &mut summary,
+            &mut on_hit,
+        ) {
             break 'walk;
         }
     }
@@ -169,8 +180,20 @@ pub fn search_text(
     mut on_hit: impl FnMut(Hit),
 ) -> Result<Summary, SearchError> {
     let searcher = Searcher::new(pattern, search)?;
-    let mut summary = Summary { files_searched: 1, ..Summary::default() };
-    scan_text(path, text, &searcher, max_hits, within, cancel, &mut summary, &mut on_hit);
+    let mut summary = Summary {
+        files_searched: 1,
+        ..Summary::default()
+    };
+    scan_text(
+        path,
+        text,
+        &searcher,
+        max_hits,
+        within,
+        cancel,
+        &mut summary,
+        &mut on_hit,
+    );
     Ok(summary)
 }
 
@@ -189,13 +212,17 @@ fn scan_text(
     // 有搜尋範圍：只看範圍結尾以前的文字（符合不會跨出去），從範圍開頭開始找；
     // 行號與欄位還是對整份文字算
     let (lo, text_end) = match within {
-        Some(r) => (r.start.min(text.len()), r.end.min(text.len()).max(r.start.min(text.len()))),
+        Some(r) => (
+            r.start.min(text.len()),
+            r.end.min(text.len()).max(r.start.min(text.len())),
+        ),
         None => (0, text.len()),
     };
     let hay = &text[..text_end];
     let line_end_from = |from: usize| text[from..].find('\n').map_or(text.len(), |i| from + i);
     let line_start0 = text[..lo].rfind('\n').map_or(0, |i| i + 1);
-    let (mut line_no, mut line_start, mut pos) = (text[..line_start0].matches('\n').count(), line_start0, lo);
+    let (mut line_no, mut line_start, mut pos) =
+        (text[..line_start0].matches('\n').count(), line_start0, lo);
     let mut line_end = line_end_from(line_start);
     // 每一個符合都是一筆結果（同一行有幾個就列幾筆），筆數才和編輯區的計數一致
     while let Some(m) = searcher.find_next(hay, pos) {
@@ -204,7 +231,9 @@ fn scan_text(
             line_no += 1;
             line_end = line_end_from(line_start);
         }
-        let line =text[line_start..line_end].strip_suffix('\r').unwrap_or(&text[line_start..line_end]);
+        let line = text[line_start..line_end]
+            .strip_suffix('\r')
+            .unwrap_or(&text[line_start..line_end]);
         // 跨行的符合只標示第一行的部分
         let end_byte = m.end.min(line_start + line.len()).max(m.start);
         let start = text[line_start..m.start].chars().count();
@@ -246,7 +275,11 @@ fn scan_text(
 
 /// 直接改寫磁碟上的檔案：把所有符合的地方換成 `replacement`，回傳取代的筆數（沒有符合時不動檔案）。
 /// 保留原本的編碼、BOM 與換行；含有無法解讀的位元組的檔案（存回去會損毀）不改，回傳錯誤。
-pub fn replace_in_file(path: &Path, searcher: &Searcher, replacement: &str) -> Result<usize, String> {
+pub fn replace_in_file(
+    path: &Path,
+    searcher: &Searcher,
+    replacement: &str,
+) -> Result<usize, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let decoded = fileio::decode(&bytes);
     if looks_binary(&bytes) || decoded.lossy {
@@ -292,7 +325,10 @@ mod tests {
 
     fn run(dir: &Path, pattern: &str, opts: &GrepOptions) -> (Vec<Hit>, Summary) {
         let mut hits = Vec::new();
-        let s = search_dir(dir, pattern, opts, &AtomicBool::new(false), |h| hits.push(h)).unwrap();
+        let s = search_dir(dir, pattern, opts, &AtomicBool::new(false), |h| {
+            hits.push(h)
+        })
+        .unwrap();
         (hits, s)
     }
 
@@ -310,7 +346,12 @@ mod tests {
         let got: Vec<(String, usize)> = hits.iter().map(|h| (name(h), h.line)).collect();
         assert_eq!(
             got,
-            vec![("a.txt".into(), 0), ("b.txt".into(), 1), ("b.txt".into(), 2), ("c.txt".into(), 0)]
+            vec![
+                ("a.txt".into(), 0),
+                ("b.txt".into(), 1),
+                ("b.txt".into(), 2),
+                ("c.txt".into(), 0)
+            ]
         );
         assert_eq!(s.hits, 4);
         assert_eq!(s.files_searched, 3);
@@ -327,7 +368,12 @@ mod tests {
         let (hits, s) = run(d.path(), "foo", &GrepOptions::default());
         assert_eq!(hits.len(), 4, "同一行有幾個符合就列幾筆");
         assert_eq!(s.hits, 4);
-        assert_eq!(hits.iter().map(|h| (h.line, h.range.start)).collect::<Vec<_>>(), vec![(0, 0), (0, 4), (0, 8), (1, 4)]);
+        assert_eq!(
+            hits.iter()
+                .map(|h| (h.line, h.range.start))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (0, 4), (0, 8), (1, 4)]
+        );
         assert_eq!(hits[3].text, "bar foo", "行尾的 \\r 不會留在文字裡");
     }
 
@@ -338,17 +384,26 @@ mod tests {
         let plain = GrepOptions::default();
         assert_eq!(run(d.path(), "foo", &plain).0.len(), 3, "預設不分大小寫");
         let cs = GrepOptions {
-            search: SearchOptions { case_sensitive: true, ..plain.search },
+            search: SearchOptions {
+                case_sensitive: true,
+                ..plain.search
+            },
             ..plain.clone()
         };
         assert_eq!(run(d.path(), "foo", &cs).0.len(), 2);
         let ww = GrepOptions {
-            search: SearchOptions { whole_word: true, ..plain.search },
+            search: SearchOptions {
+                whole_word: true,
+                ..plain.search
+            },
             ..plain.clone()
         };
         assert_eq!(run(d.path(), "foo", &ww).0.len(), 2, "foobar 不算");
         let re = GrepOptions {
-            search: SearchOptions { regex: true, ..plain.search },
+            search: SearchOptions {
+                regex: true,
+                ..plain.search
+            },
             ..plain
         };
         assert_eq!(run(d.path(), "^foo$", &re).0.len(), 2);
@@ -365,7 +420,10 @@ mod tests {
         write(d.path(), "node_modules/z.txt", b"foo");
         write(d.path(), "keep.txt", b"foo");
         write(d.path(), "big.txt", &vec![b'a'; 2000]);
-        let opts = GrepOptions { max_file_bytes: 1000, ..GrepOptions::default() };
+        let opts = GrepOptions {
+            max_file_bytes: 1000,
+            ..GrepOptions::default()
+        };
         let (hits, s) = run(d.path(), "foo", &opts);
         assert_eq!(hits.iter().map(name).collect::<Vec<_>>(), vec!["keep.txt"]);
         assert_eq!(s.files_searched, 1);
@@ -407,7 +465,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "a.rs", b"foo");
         write(d.path(), "a.txt", b"foo");
-        let opts = GrepOptions { file_filter: "*.rs".into(), ..GrepOptions::default() };
+        let opts = GrepOptions {
+            file_filter: "*.rs".into(),
+            ..GrepOptions::default()
+        };
         assert_eq!(run(d.path(), "foo", &opts).0.len(), 1);
     }
 
@@ -415,12 +476,18 @@ mod tests {
     fn stops_at_the_hit_limit_and_when_cancelled() {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "a.txt", "foo\n".repeat(50).as_bytes());
-        let opts = GrepOptions { max_hits: 10, ..GrepOptions::default() };
+        let opts = GrepOptions {
+            max_hits: 10,
+            ..GrepOptions::default()
+        };
         let (hits, s) = run(d.path(), "foo", &opts);
         assert_eq!(hits.len(), 10);
         assert!(s.truncated);
         let cancel = AtomicBool::new(true);
-        let s = search_dir(d.path(), "foo", &GrepOptions::default(), &cancel, |_| panic!("不該有結果")).unwrap();
+        let s = search_dir(d.path(), "foo", &GrepOptions::default(), &cancel, |_| {
+            panic!("不該有結果")
+        })
+        .unwrap();
         assert!(s.cancelled);
     }
 
@@ -429,11 +496,17 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "a.txt", b"x]\r\ny\r\nz]\r\n");
         let opts = GrepOptions {
-            search: SearchOptions { regex: true, ..SearchOptions::default() },
+            search: SearchOptions {
+                regex: true,
+                ..SearchOptions::default()
+            },
             ..GrepOptions::default()
         };
         let (hits, _) = run(d.path(), r"\]\n", &opts);
-        let got: Vec<_> = hits.iter().map(|h| (h.line, h.range.clone(), h.text.as_str())).collect();
+        let got: Vec<_> = hits
+            .iter()
+            .map(|h| (h.line, h.range.clone(), h.text.as_str()))
+            .collect();
         assert_eq!(got, vec![(0, 1..2, "x]"), (2, 1..2, "z]")]);
     }
 
@@ -448,7 +521,10 @@ mod tests {
         assert_eq!(h.text_offset, 440);
         assert!(h.text.chars().count() <= 240);
         let rel = h.range.start - h.text_offset;
-        assert_eq!(&h.text.chars().skip(rel).take(6).collect::<String>(), "needle");
+        assert_eq!(
+            &h.text.chars().skip(rel).take(6).collect::<String>(),
+            "needle"
+        );
     }
 
     #[test]
@@ -456,8 +532,18 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "top.txt", b"foo");
         write(d.path(), "sub/deep.txt", b"foo");
-        let flat = GrepOptions { recursive: false, ..GrepOptions::default() };
-        assert_eq!(run(d.path(), "foo", &flat).0.iter().map(name).collect::<Vec<_>>(), vec!["top.txt"]);
+        let flat = GrepOptions {
+            recursive: false,
+            ..GrepOptions::default()
+        };
+        assert_eq!(
+            run(d.path(), "foo", &flat)
+                .0
+                .iter()
+                .map(name)
+                .collect::<Vec<_>>(),
+            vec!["top.txt"]
+        );
         assert_eq!(run(d.path(), "foo", &GrepOptions::default()).0.len(), 2);
     }
 
@@ -477,7 +563,22 @@ mod tests {
         .unwrap();
         assert_eq!(hits.iter().map(|h| h.line).collect::<Vec<_>>(), vec![1, 2]);
         assert_eq!((s.hits, s.files_searched, s.files_with_hits), (2, 1, 1));
-        assert!(search_text(Path::new(""), "x", "(", SearchOptions { regex: true, ..Default::default() }, 1, None, &AtomicBool::new(false), |_| {}).is_err());
+        assert!(
+            search_text(
+                Path::new(""),
+                "x",
+                "(",
+                SearchOptions {
+                    regex: true,
+                    ..Default::default()
+                },
+                1,
+                None,
+                &AtomicBool::new(false),
+                |_| {}
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -487,19 +588,52 @@ mod tests {
         let from = text.find("foo foo").unwrap() + 3;
         let to = text.len() - 4; // 不含最後一行的 foo
         let mut hits = Vec::new();
-        search_text(Path::new(""), text, "foo", SearchOptions::default(), 100, Some(from..to), &AtomicBool::new(false), |h| hits.push(h)).unwrap();
-        assert_eq!(hits.iter().map(|h| (h.line, h.range.clone())).collect::<Vec<_>>(), vec![(1, 7..10)]);
+        search_text(
+            Path::new(""),
+            text,
+            "foo",
+            SearchOptions::default(),
+            100,
+            Some(from..to),
+            &AtomicBool::new(false),
+            |h| hits.push(h),
+        )
+        .unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|h| (h.line, h.range.clone()))
+                .collect::<Vec<_>>(),
+            vec![(1, 7..10)]
+        );
     }
 
     #[test]
     fn every_match_is_a_hit_even_on_the_same_line() {
-        let opts = SearchOptions { regex: true, ..Default::default() };
+        let opts = SearchOptions {
+            regex: true,
+            ..Default::default()
+        };
         let ranges = |text: &str, pat: &str| {
             let mut hits = Vec::new();
-            search_text(Path::new(""), text, pat, opts, 100, None, &AtomicBool::new(false), |h| hits.push(h)).unwrap();
-            hits.iter().map(|h| (h.line, h.range.clone())).collect::<Vec<_>>()
+            search_text(
+                Path::new(""),
+                text,
+                pat,
+                opts,
+                100,
+                None,
+                &AtomicBool::new(false),
+                |h| hits.push(h),
+            )
+            .unwrap();
+            hits.iter()
+                .map(|h| (h.line, h.range.clone()))
+                .collect::<Vec<_>>()
         };
-        assert_eq!(ranges("a1 b22\nc333", r"\d+"), vec![(0, 1..2), (0, 4..6), (1, 1..4)]);
+        assert_eq!(
+            ranges("a1 b22\nc333", r"\d+"),
+            vec![(0, 1..2), (0, 4..6), (1, 1..4)]
+        );
         // 空的符合也各算一筆，而且不會原地踏步
         assert_eq!(ranges("a\nb", "^"), vec![(0, 0..0), (1, 0..0)]);
         assert_eq!(ranges("ab", r"\d*"), vec![(0, 0..0), (0, 1..1), (0, 2..2)]);
@@ -510,15 +644,27 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write(d.path(), "crlf.txt", b"foo\r\nbar foo\r\n");
         let sr = Searcher::new("foo", SearchOptions::default()).unwrap();
-        assert_eq!(replace_in_file(&d.path().join("crlf.txt"), &sr, "X").unwrap(), 2);
-        assert_eq!(std::fs::read(d.path().join("crlf.txt")).unwrap(), b"X\r\nbar X\r\n");
+        assert_eq!(
+            replace_in_file(&d.path().join("crlf.txt"), &sr, "X").unwrap(),
+            2
+        );
+        assert_eq!(
+            std::fs::read(d.path().join("crlf.txt")).unwrap(),
+            b"X\r\nbar X\r\n"
+        );
         // 沒有符合：不動檔案
         write(d.path(), "none.txt", b"bar");
-        assert_eq!(replace_in_file(&d.path().join("none.txt"), &sr, "X").unwrap(), 0);
+        assert_eq!(
+            replace_in_file(&d.path().join("none.txt"), &sr, "X").unwrap(),
+            0
+        );
         // 二進位檔：拒絕
         write(d.path(), "bin.dat", b"foo\0foo");
         assert!(replace_in_file(&d.path().join("bin.dat"), &sr, "X").is_err());
-        assert_eq!(std::fs::read(d.path().join("bin.dat")).unwrap(), b"foo\0foo");
+        assert_eq!(
+            std::fs::read(d.path().join("bin.dat")).unwrap(),
+            b"foo\0foo"
+        );
     }
 
     #[test]

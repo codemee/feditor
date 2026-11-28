@@ -202,12 +202,62 @@ static C_LIKE: Language = Language {
     block: SLASH_BLOCK,
     capital_types: true,
     keywords: &[
-        "auto", "bool", "break", "case", "catch", "char", "class", "const", "continue", "default",
-        "delete", "do", "double", "else", "enum", "explicit", "extern", "false", "float", "for",
-        "friend", "goto", "if", "include", "inline", "int", "long", "namespace", "new", "nullptr",
-        "operator", "private", "protected", "public", "register", "return", "short", "signed",
-        "sizeof", "static", "struct", "switch", "template", "this", "throw", "true", "try",
-        "typedef", "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "while",
+        "auto",
+        "bool",
+        "break",
+        "case",
+        "catch",
+        "char",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "delete",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "explicit",
+        "extern",
+        "false",
+        "float",
+        "for",
+        "friend",
+        "goto",
+        "if",
+        "include",
+        "inline",
+        "int",
+        "long",
+        "namespace",
+        "new",
+        "nullptr",
+        "operator",
+        "private",
+        "protected",
+        "public",
+        "register",
+        "return",
+        "short",
+        "signed",
+        "sizeof",
+        "static",
+        "struct",
+        "switch",
+        "template",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typedef",
+        "typename",
+        "union",
+        "unsigned",
+        "using",
+        "virtual",
+        "void",
+        "volatile",
+        "while",
     ],
     indent: IndentStyle::Brace,
     ..lang("C/C++")
@@ -218,13 +268,68 @@ static JAVA_LIKE: Language = Language {
     block: SLASH_BLOCK,
     capital_types: true,
     keywords: &[
-        "abstract", "as", "async", "await", "base", "boolean", "break", "byte", "case", "catch",
-        "char", "class", "const", "continue", "default", "do", "double", "else", "enum", "extends",
-        "false", "final", "finally", "float", "for", "foreach", "if", "implements", "import", "in",
-        "instanceof", "int", "interface", "internal", "is", "long", "namespace", "new", "null",
-        "override", "package", "private", "protected", "public", "return", "sealed", "short",
-        "static", "string", "super", "switch", "this", "throw", "throws", "true", "try", "using",
-        "var", "virtual", "void", "while", "yield",
+        "abstract",
+        "as",
+        "async",
+        "await",
+        "base",
+        "boolean",
+        "break",
+        "byte",
+        "case",
+        "catch",
+        "char",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extends",
+        "false",
+        "final",
+        "finally",
+        "float",
+        "for",
+        "foreach",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "instanceof",
+        "int",
+        "interface",
+        "internal",
+        "is",
+        "long",
+        "namespace",
+        "new",
+        "null",
+        "override",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "sealed",
+        "short",
+        "static",
+        "string",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "throws",
+        "true",
+        "try",
+        "using",
+        "var",
+        "virtual",
+        "void",
+        "while",
+        "yield",
     ],
     indent: IndentStyle::Brace,
     ..lang("Java/C#")
@@ -236,14 +341,65 @@ static JAVASCRIPT: Language = Language {
     backtick_strings: true,
     capital_types: true,
     keywords: &[
-        "async", "await", "break", "case", "catch", "class", "const", "continue", "debugger",
-        "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for",
-        "from", "function", "if", "implements", "import", "in", "instanceof", "interface", "let",
-        "new", "null", "of", "private", "protected", "public", "readonly", "return", "static",
-        "super", "switch", "this", "throw", "true", "try", "type", "typeof", "undefined", "var",
-        "void", "while", "with", "yield",
+        "async",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "from",
+        "function",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "instanceof",
+        "interface",
+        "let",
+        "new",
+        "null",
+        "of",
+        "private",
+        "protected",
+        "public",
+        "readonly",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "type",
+        "typeof",
+        "undefined",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
     ],
-    interp: Some(Interp { open: "${", close: "}", backtick: true, double: false, fstring: false }),
+    interp: Some(Interp {
+        open: "${",
+        close: "}",
+        backtick: true,
+        double: false,
+        fstring: false,
+    }),
     indent: IndentStyle::Brace,
     wrap: WrapStyle::Hang,
     trailing_comma: true,
@@ -260,7 +416,13 @@ static PYTHON: Language = Language {
         "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True",
         "try", "while", "with", "yield",
     ],
-    interp: Some(Interp { open: "{", close: "}", backtick: false, double: false, fstring: true }),
+    interp: Some(Interp {
+        open: "{",
+        close: "}",
+        backtick: false,
+        double: false,
+        fstring: true,
+    }),
     indent: IndentStyle::Python,
     trailing_comma: true,
     ..lang("Python")
@@ -272,9 +434,34 @@ static GO: Language = Language {
     quotes: &['"', '\''],
     backtick_strings: true,
     keywords: &[
-        "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",
-        "false", "for", "func", "go", "goto", "if", "import", "interface", "map", "nil",
-        "package", "range", "return", "select", "struct", "switch", "true", "type", "var",
+        "break",
+        "case",
+        "chan",
+        "const",
+        "continue",
+        "default",
+        "defer",
+        "else",
+        "fallthrough",
+        "false",
+        "for",
+        "func",
+        "go",
+        "goto",
+        "if",
+        "import",
+        "interface",
+        "map",
+        "nil",
+        "package",
+        "range",
+        "return",
+        "select",
+        "struct",
+        "switch",
+        "true",
+        "type",
+        "var",
     ],
     capital_types: true,
     indent: IndentStyle::Brace,
@@ -289,7 +476,13 @@ static SHELL: Language = Language {
         "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if",
         "in", "local", "return", "then", "until", "while", "param", "foreach", "switch",
     ],
-    interp: Some(Interp { open: "${", close: "}", backtick: false, double: true, fstring: false }),
+    interp: Some(Interp {
+        open: "${",
+        close: "}",
+        backtick: false,
+        double: true,
+        fstring: false,
+    }),
     ..lang("Shell")
 };
 
@@ -352,7 +545,8 @@ static MARKDOWN: Language = Language {
 // ── 使用者自訂語言 ───────────────────────────────────────────
 
 /// 使用者語言：（副檔名或檔名（小寫）, 語言）。啟動時載入一次，優先於內建語言。
-static USER: std::sync::OnceLock<Vec<(Vec<String>, &'static Language)>> = std::sync::OnceLock::new();
+static USER: std::sync::OnceLock<Vec<(Vec<String>, &'static Language)>> =
+    std::sync::OnceLock::new();
 
 /// 自訂語言檔的資料夾：設定資料夾下的 `syntax`。
 pub fn syntax_dir() -> Option<std::path::PathBuf> {
@@ -364,7 +558,12 @@ fn leak_str(s: String) -> &'static str {
 }
 
 fn leak_strs(v: Vec<String>) -> &'static [&'static str] {
-    Box::leak(v.into_iter().map(leak_str).collect::<Vec<_>>().into_boxed_slice())
+    Box::leak(
+        v.into_iter()
+            .map(leak_str)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    )
 }
 
 /// 以逗號或空白分隔的清單。
@@ -380,7 +579,11 @@ fn parse_flag(key: &str, value: &str) -> Result<bool, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "on" | "1" => Ok(true),
         "false" | "no" | "off" | "0" => Ok(false),
-        _ => Err(tf!("{key} 要寫 true 或 false，不是「{value}」", key = key, value = value)),
+        _ => Err(tf!(
+            "{key} 要寫 true 或 false，不是「{value}」",
+            key = key,
+            value = value
+        )),
     }
 }
 
@@ -424,9 +627,11 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
         let (key, value) = (key.trim(), value.trim());
         match key {
             "name" => name = Some(value.to_owned()),
-            "extensions" => exts.extend(split_list(value).into_iter().map(|e| {
-                e.trim_start_matches('.').to_ascii_lowercase()
-            })),
+            "extensions" => exts.extend(
+                split_list(value)
+                    .into_iter()
+                    .map(|e| e.trim_start_matches('.').to_ascii_lowercase()),
+            ),
             // 行註解符號本身可能含 # ，所以這個值不做「# 開頭是註解」的處理，用逗號／空白分隔
             "line_comment" => line_comments.extend(split_list(value)),
             "block_comment" => {
@@ -442,7 +647,13 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
             "keywords" => keywords.extend(split_list(value)),
             "interpolation" => match split_list(value).as_slice() {
                 [a, b] => interp_marks = Some((leak_str(a.clone()), leak_str(b.clone()))),
-                _ => return Err(tf!("第 {} 行：interpolation 要寫「開頭, 結尾」兩項，例如 {}", n + 1, "${, }")),
+                _ => {
+                    return Err(tf!(
+                        "第 {} 行：interpolation 要寫「開頭, 結尾」兩項，例如 {}",
+                        n + 1,
+                        "${, }"
+                    ));
+                }
             },
             "interpolation_in" => {
                 interp_in = Some(split_list(value));
@@ -467,7 +678,12 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
                 "markup" => lang.mode = Mode::Markup,
                 "markdown" => lang.mode = Mode::Markdown,
                 "config" => lang.config = true,
-                _ => return Err(tf!("第 {} 行：mode 只能是 code、markup、markdown、config", n + 1)),
+                _ => {
+                    return Err(tf!(
+                        "第 {} 行：mode 只能是 code、markup、markdown、config",
+                        n + 1
+                    ));
+                }
             },
             _ => return Err(tf!("第 {} 行：不認得的設定「{}」", n + 1, key)),
         }
@@ -478,13 +694,24 @@ pub fn parse_language(text: &str) -> Result<(Vec<String>, Language), String> {
     }
     if let Some((open, close)) = interp_marks {
         let places = interp_in.unwrap_or_else(|| vec!["backtick".into(), "double".into()]);
-        let mut ip = Interp { open, close, backtick: false, double: false, fstring: false };
+        let mut ip = Interp {
+            open,
+            close,
+            backtick: false,
+            double: false,
+            fstring: false,
+        };
         for p in &places {
             match p.to_ascii_lowercase().as_str() {
                 "backtick" => ip.backtick = true,
                 "double" => ip.double = true,
                 "fstring" => ip.fstring = true,
-                other => return Err(tf!("interpolation_in 只能是 backtick、double、fstring，不是「{other}」", other = other)),
+                other => {
+                    return Err(tf!(
+                        "interpolation_in 只能是 backtick、double、fstring，不是「{other}」",
+                        other = other
+                    ));
+                }
             }
         }
         lang.interp = Some(ip);
@@ -511,18 +738,28 @@ pub fn load_user_languages(dir: Option<&Path>) -> Vec<String> {
             .flatten()
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("conf")))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("conf"))
+            })
             .collect();
         files.sort();
         for path in files {
-            let label = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let label = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let Ok(bytes) = std::fs::read(&path) else {
                 messages.push(tf!("無法讀取語言檔 {label}", label = label));
                 continue;
             };
             match parse_language(&String::from_utf8_lossy(&bytes)) {
                 Ok((exts, lang)) => found.push((exts, Box::leak(Box::new(lang)))),
-                Err(e) => messages.push(tf!("語言檔 {label} 有誤，已略過：{e}", label = label, e = e)),
+                Err(e) => messages.push(tf!(
+                    "語言檔 {label} 有誤，已略過：{e}",
+                    label = label,
+                    e = e
+                )),
             }
         }
     }
@@ -547,8 +784,20 @@ pub enum LangChoice {
 /// 所有可以選的語言：使用者自訂的在前，其後是內建的；名稱重複的只列第一個。
 pub fn all_languages() -> Vec<&'static Language> {
     let builtin: [&'static Language; 14] = [
-        &RUST, &C_LIKE, &JAVA_LIKE, &JAVASCRIPT, &PYTHON, &GO, &SHELL, &SQL, &CSS, &LUA, &JSON,
-        &CONFIG, &MARKUP, &MARKDOWN,
+        &RUST,
+        &C_LIKE,
+        &JAVA_LIKE,
+        &JAVASCRIPT,
+        &PYTHON,
+        &GO,
+        &SHELL,
+        &SQL,
+        &CSS,
+        &LUA,
+        &JSON,
+        &CONFIG,
+        &MARKUP,
+        &MARKDOWN,
     ];
     let mut out: Vec<&'static Language> = Vec::new();
     let users = USER.get().into_iter().flatten().map(|(_, l)| *l);
@@ -577,9 +826,18 @@ pub fn detect(head: &str) -> Option<&'static Language> {
             "js"
         } else if rest.contains("lua") {
             "lua"
-        } else if ["sh", "bash", "zsh", "pwsh", "powershell", "fish", "ksh", "dash"]
-            .iter()
-            .any(|s| rest.split(|c: char| !c.is_alphanumeric()).any(|w| w == *s))
+        } else if [
+            "sh",
+            "bash",
+            "zsh",
+            "pwsh",
+            "powershell",
+            "fish",
+            "ksh",
+            "dash",
+        ]
+        .iter()
+        .any(|s| rest.split(|c: char| !c.is_alphanumeric()).any(|w| w == *s))
         {
             "sh"
         } else {
@@ -587,7 +845,11 @@ pub fn detect(head: &str) -> Option<&'static Language> {
         };
         return language_for_name(&format!("x.{ext}"));
     }
-    let lower: String = head.chars().take(64).collect::<String>().to_ascii_lowercase();
+    let lower: String = head
+        .chars()
+        .take(64)
+        .collect::<String>()
+        .to_ascii_lowercase();
     if lower.starts_with("<?php") {
         return language_for_name("x.php");
     }
@@ -615,7 +877,11 @@ pub fn resolve(choice: LangChoice, path: Option<&Path>, buf: &Buffer) -> Option<
         LangChoice::Auto if path.is_some() => language_for(path),
         LangChoice::Auto => {
             let n = buf.len_chars().min(400);
-            if n == 0 { None } else { detect(&buf.slice(0..n)) }
+            if n == 0 {
+                None
+            } else {
+                detect(&buf.slice(0..n))
+            }
         }
     }
 }
@@ -623,7 +889,10 @@ pub fn resolve(choice: LangChoice, path: Option<&Path>, buf: &Buffer) -> Option<
 impl Language {
     /// 這個語言的行註解符號（第一個）；沒有行註解就是 `None`。
     pub fn line_comment(&self) -> Option<&'static str> {
-        self.line_comments.first().copied().filter(|c| !c.is_empty())
+        self.line_comments
+            .first()
+            .copied()
+            .filter(|c| !c.is_empty())
     }
 }
 
@@ -638,7 +907,10 @@ pub fn language_for_name(name: &str) -> Option<&'static Language> {
     let ext = name.rsplit_once('.').map_or(name.as_str(), |(_, e)| e);
     if let Some(users) = USER.get() {
         // 副檔名或完整檔名（例如 makefile）都可以
-        if let Some((_, lang)) = users.iter().find(|(exts, _)| exts.iter().any(|e| e == ext || *e == name)) {
+        if let Some((_, lang)) = users
+            .iter()
+            .find(|(exts, _)| exts.iter().any(|e| e == ext || *e == name))
+        {
             return Some(lang);
         }
     }
@@ -680,7 +952,9 @@ fn is_ident(c: char) -> bool {
 }
 
 fn matches_at(chars: &[char], i: usize, pat: &str) -> bool {
-    pat.chars().enumerate().all(|(k, p)| chars.get(i + k) == Some(&p))
+    pat.chars()
+        .enumerate()
+        .all(|(k, p)| chars.get(i + k) == Some(&p))
 }
 
 fn find_from(chars: &[char], from: usize, pat: &str) -> Option<usize> {
@@ -688,14 +962,24 @@ fn find_from(chars: &[char], from: usize, pat: &str) -> Option<usize> {
 }
 
 /// 一行的分詞結果：字元範圍（相對於這一行）與種類，Plain 不列出；以及行尾的狀態。
-pub fn highlight_line(lang: &Language, line: &str, state: State) -> (Vec<(Range<usize>, Kind)>, State) {
+pub fn highlight_line(
+    lang: &Language,
+    line: &str,
+    state: State,
+) -> (Vec<(Range<usize>, Kind)>, State) {
     let chars: Vec<char> = line.chars().collect();
     highlight_chars(lang, &chars, state)
 }
 
 /// 字串裡的內嵌運算式：把 `chars[from..to]` 當成程式碼分詞，結果放進 `out`。
 /// （運算式裡面還有字串、甚至還有內嵌時，會遞迴處理。）
-fn push_code(lang: &Language, chars: &[char], from: usize, to: usize, out: &mut Vec<(Range<usize>, Kind)>) {
+fn push_code(
+    lang: &Language,
+    chars: &[char],
+    from: usize,
+    to: usize,
+    out: &mut Vec<(Range<usize>, Kind)>,
+) {
     if to > from {
         for (r, k) in highlight_chars(lang, &chars[from..to], State::Normal).0 {
             out.push((r.start + from..r.end + from, k));
@@ -790,7 +1074,11 @@ fn scan_interp(
     (end, (delim == '`').then_some(State::InterpStr('`')))
 }
 
-fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range<usize>, Kind)>, State) {
+fn highlight_chars(
+    lang: &Language,
+    chars: &[char],
+    state: State,
+) -> (Vec<(Range<usize>, Kind)>, State) {
     let mut out: Vec<(Range<usize>, Kind)> = Vec::new();
     let mut i = 0;
     let mut state = state;
@@ -876,10 +1164,21 @@ fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range
                 }
             }
         } else if let Some(sep) = chars.iter().position(|c| *c == '=' || *c == ':') {
-            let key_end = chars[..sep].iter().rposition(|c| !c.is_whitespace()).map_or(0, |p| p + 1);
+            let key_end = chars[..sep]
+                .iter()
+                .rposition(|c| !c.is_whitespace())
+                .map_or(0, |p| p + 1);
             let key_start = indent + usize::from(chars.get(indent) == Some(&'-')) * 2;
-            let is_comment = lang.line_comments.iter().any(|c| matches_at(&chars, indent, c));
-            if !is_comment && key_end > key_start && chars[key_start..key_end].iter().all(|c| is_ident(*c) || *c == '.' || *c == '-' || *c == ' ') {
+            let is_comment = lang
+                .line_comments
+                .iter()
+                .any(|c| matches_at(&chars, indent, c));
+            if !is_comment
+                && key_end > key_start
+                && chars[key_start..key_end]
+                    .iter()
+                    .all(|c| is_ident(*c) || *c == '.' || *c == '-' || *c == ' ')
+            {
                 out.push((key_start..key_end, Kind::Function));
             }
         }
@@ -911,7 +1210,10 @@ fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range
                 }
             }
         }
-        if lang.triple_quotes && (c == '"' || c == '\'') && matches_at(&chars, i, &format!("{c}{c}{c}")) {
+        if lang.triple_quotes
+            && (c == '"' || c == '\'')
+            && matches_at(&chars, i, &format!("{c}{c}{c}"))
+        {
             let pat = format!("{c}{c}{c}");
             match find_from(&chars, i + 3, &pat) {
                 Some(p) => {
@@ -939,7 +1241,9 @@ fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range
         if lang.rust_char && c == '\'' {
             // 字元常值 'a'、'\n'；其他（'a、'static）是生命週期
             let end = if chars.get(i + 1) == Some(&'\\') {
-                (i + 2..(i + 8).min(chars.len())).find(|&k| chars[k] == '\'').map(|k| k + 1)
+                (i + 2..(i + 8).min(chars.len()))
+                    .find(|&k| chars[k] == '\'')
+                    .map(|k| k + 1)
             } else if chars.get(i + 2) == Some(&'\'') {
                 Some(i + 3)
             } else {
@@ -974,7 +1278,11 @@ fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range
         }
         if c.is_ascii_digit() && (i == 0 || !is_ident(chars[i - 1])) {
             let mut j = i + 1;
-            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_' || (chars[j] == '.' && chars.get(j + 1).is_some_and(char::is_ascii_digit))) {
+            while j < chars.len()
+                && (chars[j].is_ascii_alphanumeric()
+                    || chars[j] == '_'
+                    || (chars[j] == '.' && chars.get(j + 1).is_some_and(char::is_ascii_digit)))
+            {
                 j += 1;
             }
             out.push((i..j, Kind::Number));
@@ -995,7 +1303,10 @@ fn highlight_chars(lang: &Language, chars: &[char], state: State) -> (Vec<(Range
             let next = chars[j..].iter().find(|c| !matches!(c, ' ' | '\t'));
             let kind = if is_kw {
                 Kind::Keyword
-            } else if lang.capital_types && c.is_uppercase() && word.chars().any(|ch| ch.is_lowercase()) {
+            } else if lang.capital_types
+                && c.is_uppercase()
+                && word.chars().any(|ch| ch.is_lowercase())
+            {
                 Kind::Type
             } else if next == Some(&'(') {
                 Kind::Function
@@ -1049,7 +1360,11 @@ fn highlight_markup(
                 }
             }
         }
-        if chars[i] == '<' && chars.get(i + 1).is_some_and(|c| is_ident_start(*c) || matches!(c, '/' | '!' | '?')) {
+        if chars[i] == '<'
+            && chars
+                .get(i + 1)
+                .is_some_and(|c| is_ident_start(*c) || matches!(c, '/' | '!' | '?'))
+        {
             // 標籤名稱（含 < 與 /）
             let mut j = i + 1;
             if matches!(chars.get(j), Some('/' | '!' | '?')) {
@@ -1206,8 +1521,18 @@ mod tests {
     fn dotenv_and_friends_use_the_config_highlighting() {
         let p = |s: &str| language_for(Some(Path::new(s))).map(|l| l.name);
         for n in [
-            ".env", ".env.local", ".env.production", ".env.example", ".ENV.Example", "prod.env",
-            ".flaskenv", ".editorconfig", ".gitconfig", ".gitattributes", ".npmrc", ".dockerignore",
+            ".env",
+            ".env.local",
+            ".env.production",
+            ".env.example",
+            ".ENV.Example",
+            "prod.env",
+            ".flaskenv",
+            ".editorconfig",
+            ".gitconfig",
+            ".gitattributes",
+            ".npmrc",
+            ".dockerignore",
         ] {
             assert_eq!(p(n), Some("設定檔"), "{n}");
         }
@@ -1234,7 +1559,11 @@ mod tests {
     fn rust_lifetimes_are_not_strings_but_char_literals_are() {
         let r = kinds(&RUST, "fn f<'a>(x: &'a str) -> char { 'x' }");
         assert!(r.contains(&("'x'".into(), Kind::String)));
-        assert!(!r.iter().any(|(t, k)| *k == Kind::String && t.contains("'a")), "{r:?}");
+        assert!(
+            !r.iter()
+                .any(|(t, k)| *k == Kind::String && t.contains("'a")),
+            "{r:?}"
+        );
         let r = kinds(&RUST, r"let n = '\n'; let s = '\'';");
         assert!(r.contains(&(r"'\n'".into(), Kind::String)));
     }
@@ -1242,7 +1571,11 @@ mod tests {
     #[test]
     fn keywords_inside_strings_and_comments_stay_plain() {
         let r = kinds(&RUST, r#"let s = "fn if"; // for while"#);
-        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 1, "{r:?}");
+        assert_eq!(
+            r.iter().filter(|(_, k)| *k == Kind::Keyword).count(),
+            1,
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -1262,7 +1595,11 @@ mod tests {
         let (spans, st) = highlight_line(&RUST, "end */ let", State::Block);
         assert_eq!(st, State::Normal);
         assert_eq!(spans[0], (0..6, Kind::Comment));
-        assert!(spans.iter().any(|(r, k)| *r == (7..10) && *k == Kind::Keyword));
+        assert!(
+            spans
+                .iter()
+                .any(|(r, k)| *r == (7..10) && *k == Kind::Keyword)
+        );
     }
 
     #[test]
@@ -1300,7 +1637,10 @@ mod tests {
         let r = kinds(&JAVASCRIPT, "`${ if (f(a)) { 1 } }` + 2");
         assert!(r.contains(&("if".into(), Kind::Keyword)));
         assert!(r.contains(&("f".into(), Kind::Function)), "{r:?}");
-        assert!(r.contains(&("2".into(), Kind::Number)), "運算式結束後回到程式碼：{r:?}");
+        assert!(
+            r.contains(&("2".into(), Kind::Number)),
+            "運算式結束後回到程式碼：{r:?}"
+        );
     }
 
     #[test]
@@ -1309,7 +1649,10 @@ mod tests {
         let r = kinds(&JAVASCRIPT, "`${ a ? \"}\" : `y${z}` } tail` + 7");
         assert!(r.contains(&("\"}\"".into(), Kind::String)), "{r:?}");
         assert!(r.contains(&("7".into(), Kind::Number)), "{r:?}");
-        let tail = r.iter().find(|(t, _)| t.ends_with("tail`")).expect("結尾的字串色");
+        let tail = r
+            .iter()
+            .find(|(t, _)| t.ends_with("tail`"))
+            .expect("結尾的字串色");
         assert_eq!(tail.1, Kind::String);
     }
 
@@ -1318,12 +1661,16 @@ mod tests {
         let (spans, st) = highlight_line(&JAVASCRIPT, "const s = `v ${", State::Normal);
         assert_eq!(st, State::InterpExpr('`'));
         assert_eq!(spans.last().unwrap().1, Kind::String);
-        let (spans, st) = highlight_line(&JAVASCRIPT, "  foo(1)} end`; let", State::InterpExpr('`'));
+        let (spans, st) =
+            highlight_line(&JAVASCRIPT, "  foo(1)} end`; let", State::InterpExpr('`'));
         assert_eq!(st, State::Normal);
         let r = kinds(&JAVASCRIPT, "foo(1)}"); // 只是確認運算式的 foo 會是函式
         assert!(r.iter().any(|(t, k)| t == "foo" && *k == Kind::Function));
         assert!(spans.iter().any(|(_, k)| *k == Kind::Function));
-        assert!(spans.iter().any(|(_, k)| *k == Kind::Keyword), "後面的 let 回到程式碼");
+        assert!(
+            spans.iter().any(|(_, k)| *k == Kind::Keyword),
+            "後面的 let 回到程式碼"
+        );
         // 運算式整行都沒結束：維持在運算式裡
         let (_, st) = highlight_line(&JAVASCRIPT, "  still going", State::InterpExpr('`'));
         assert_eq!(st, State::InterpExpr('`'));
@@ -1335,9 +1682,16 @@ mod tests {
         assert!(r.contains(&("len".into(), Kind::Function)), "{r:?}");
         // 沒有 f 前綴的字串、與跳脫的 {{ }}，整段都是字串
         assert!(r.contains(&("\"{no}\"".into(), Kind::String)), "{r:?}");
-        assert!(r.iter().any(|(t, k)| t.contains("{{lit}}") && *k == Kind::String), "{r:?}");
+        assert!(
+            r.iter()
+                .any(|(t, k)| t.contains("{{lit}}") && *k == Kind::String),
+            "{r:?}"
+        );
         let r = kinds(&PYTHON, "x = rf'{a + 1}'");
-        assert!(r.contains(&("1".into(), Kind::Number)), "rf 前綴也算：{r:?}");
+        assert!(
+            r.contains(&("1".into(), Kind::Number)),
+            "rf 前綴也算：{r:?}"
+        );
         let r = kinds(&PYTHON, "x = self'{a + 1}'"); // 前面是識別字：不是前綴
         assert!(!r.contains(&("1".into(), Kind::Number)), "{r:?}");
         // f-string 到行尾沒結束也不會卡在字串狀態
@@ -1351,14 +1705,21 @@ mod tests {
     fn shell_double_quotes_interpolate_single_quotes_do_not() {
         // 雙引號裡 ${…} 的內容是程式碼（if 是關鍵字），單引號整段都是字串
         let r = kinds(&SHELL, "echo \"${if} x\" '${if}'");
-        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 1, "{r:?}");
+        assert_eq!(
+            r.iter().filter(|(_, k)| *k == Kind::Keyword).count(),
+            1,
+            "{r:?}"
+        );
         assert!(r.contains(&("'${if}'".into(), Kind::String)), "{r:?}");
     }
 
     #[test]
     fn user_language_can_declare_interpolation() {
         let base = "name = Rb\nextensions = rb\nquotes = \", '\nkeywords = if end\n";
-        let (_, lang) = parse_language(&format!("{base}interpolation = #{{, }}\ninterpolation_in = double\n")).unwrap();
+        let (_, lang) = parse_language(&format!(
+            "{base}interpolation = #{{, }}\ninterpolation_in = double\n"
+        ))
+        .unwrap();
         let r = kinds(&lang, "\"a #{if} b\" '#{if}'");
         assert!(r.contains(&("if".into(), Kind::Keyword)), "{r:?}");
         assert!(r.contains(&("'#{if}'".into(), Kind::String)), "{r:?}");
@@ -1376,7 +1737,10 @@ mod tests {
     fn content_detection_for_unnamed_documents() {
         assert_eq!(name_of("#!/usr/bin/env python3\nprint(1)"), Some("Python"));
         assert_eq!(name_of("#!/bin/bash\necho hi"), Some("Shell"));
-        assert_eq!(name_of("#!/usr/bin/env node"), Some("JavaScript/TypeScript"));
+        assert_eq!(
+            name_of("#!/usr/bin/env node"),
+            Some("JavaScript/TypeScript")
+        );
         assert_eq!(name_of("#!/usr/bin/perl"), None, "不認得的直譯器不亂猜");
         assert_eq!(name_of("\u{feff}  <!DOCTYPE html>\n<p>"), Some("HTML/XML"));
         assert_eq!(name_of("<?xml version=\"1.0\"?>"), Some("HTML/XML"));
@@ -1389,7 +1753,10 @@ mod tests {
         assert_eq!(name_of("just some notes"), None);
         assert_eq!(name_of(""), None);
         // <?php 要有對應的自訂語言才認得（內建沒有 PHP）
-        assert_eq!(name_of("<?php echo 1;"), language_for_name("x.php").map(|l| l.name));
+        assert_eq!(
+            name_of("<?php echo 1;"),
+            language_for_name("x.php").map(|l| l.name)
+        );
     }
 
     #[test]
@@ -1404,7 +1771,10 @@ mod tests {
         assert_eq!(name(LangChoice::Auto, None, &rust), None);
         // 手動指定：任何情況都以它為準；純文字不上色
         assert_eq!(name(LangChoice::Named("Python"), rs, &rust), Some("Python"));
-        assert_eq!(name(LangChoice::Named("Python"), None, &rust), Some("Python"));
+        assert_eq!(
+            name(LangChoice::Named("Python"), None, &rust),
+            Some("Python")
+        );
         assert_eq!(name(LangChoice::Plain, rs, &rust), None);
         assert_eq!(name(LangChoice::Named("不存在"), rs, &rust), None);
     }
@@ -1461,7 +1831,11 @@ mod tests {
     #[test]
     fn sql_is_case_insensitive() {
         let r = kinds(&SQL, "SeLeCt * From t WHERE x = 1 -- c");
-        assert_eq!(r.iter().filter(|(_, k)| *k == Kind::Keyword).count(), 3, "{r:?}");
+        assert_eq!(
+            r.iter().filter(|(_, k)| *k == Kind::Keyword).count(),
+            3,
+            "{r:?}"
+        );
         assert!(r.contains(&("-- c".into(), Kind::Comment)));
     }
 
@@ -1479,12 +1853,21 @@ mod tests {
 
     #[test]
     fn markdown_headings_fences_and_inline_code() {
-        assert_eq!(kinds(&MARKDOWN, "## Title"), vec![("## Title".into(), Kind::Keyword)]);
-        assert_eq!(kinds(&MARKDOWN, "```rust"), vec![("```rust".into(), Kind::Comment)]);
+        assert_eq!(
+            kinds(&MARKDOWN, "## Title"),
+            vec![("## Title".into(), Kind::Keyword)]
+        );
+        assert_eq!(
+            kinds(&MARKDOWN, "```rust"),
+            vec![("```rust".into(), Kind::Comment)]
+        );
         let r = kinds(&MARKDOWN, "- use `cargo` now");
         assert!(r.contains(&("-".into(), Kind::Keyword)));
         assert!(r.contains(&("`cargo`".into(), Kind::String)));
-        assert!(kinds(&MARKDOWN, "#hashtag").is_empty(), "# 後面沒有空白不是標題");
+        assert!(
+            kinds(&MARKDOWN, "#hashtag").is_empty(),
+            "# 後面沒有空白不是標題"
+        );
     }
 
     #[test]
@@ -1496,7 +1879,10 @@ mod tests {
         assert!(r.contains(&("# trailing".into(), Kind::Comment)));
         let r = kinds(&CONFIG, "url = http://a/b#frag");
         assert!(!r.iter().any(|(_, k)| *k == Kind::Comment), "{r:?}");
-        assert_eq!(kinds(&CONFIG, "# whole line"), vec![("# whole line".into(), Kind::Comment)]);
+        assert_eq!(
+            kinds(&CONFIG, "# whole line"),
+            vec![("# whole line".into(), Kind::Comment)]
+        );
         let r = kinds(&CONFIG, "enabled: true");
         assert!(r.contains(&("true".into(), Kind::Keyword)));
     }
@@ -1558,7 +1944,11 @@ capital_types = true
         assert_eq!(lang.line_comments, &["//", "#"]);
         assert_eq!(lang.block, Some(("/*", "*/")));
         assert_eq!(lang.quotes, &['"', '\'']);
-        assert_eq!(lang.keywords, &["if", "else", "while", "return"], "多行 keywords 會合併");
+        assert_eq!(
+            lang.keywords,
+            &["if", "else", "while", "return"],
+            "多行 keywords 會合併"
+        );
         assert!(lang.capital_types);
         let r = kinds(&lang, "if foo(Bar, \"s\") # c");
         assert!(r.contains(&("if".into(), Kind::Keyword)));
@@ -1586,7 +1976,11 @@ capital_types = true
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("zed.conf"), PHP_CONF).unwrap();
         // 蓋掉內建的 .lua，再放一個壞檔與一個非 .conf 的檔案
-        std::fs::write(dir.join("lua.conf"), "name = MyLua\nextensions = lua\nkeywords = foo\n").unwrap();
+        std::fs::write(
+            dir.join("lua.conf"),
+            "name = MyLua\nextensions = lua\nkeywords = foo\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("broken.conf"), "name = X").unwrap();
         std::fs::write(dir.join("readme.txt"), "ignored").unwrap();
         let messages = load_user_languages(Some(&dir));
@@ -1607,8 +2001,20 @@ mod dotfile_tests {
 
     #[test]
     fn shell_rc_files_without_extension_are_shell() {
-        for n in [".zshrc", ".bashrc", ".zprofile", ".bash_profile", ".profile", ".zshenv", "zshrc"] {
-            assert_eq!(language_for_name(n).map(|l| l.name), Some(SHELL.name), "{n}");
+        for n in [
+            ".zshrc",
+            ".bashrc",
+            ".zprofile",
+            ".bash_profile",
+            ".profile",
+            ".zshenv",
+            "zshrc",
+        ] {
+            assert_eq!(
+                language_for_name(n).map(|l| l.name),
+                Some(SHELL.name),
+                "{n}"
+            );
         }
     }
 }

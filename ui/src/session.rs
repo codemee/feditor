@@ -56,7 +56,11 @@ pub enum SessionEntry<'a> {
 impl SessionPane {
     /// 檔案與終端機依 `at` 排回原來的分頁順序。
     pub fn entries(&self) -> Vec<SessionEntry<'_>> {
-        let mut out: Vec<SessionEntry<'_>> = self.files.iter().map(|(p, c)| SessionEntry::File(p, *c)).collect();
+        let mut out: Vec<SessionEntry<'_>> = self
+            .files
+            .iter()
+            .map(|(p, c)| SessionEntry::File(p, *c))
+            .collect();
         let mut terminals: Vec<&SessionTerminal> = self.terminals.iter().collect();
         terminals.sort_by_key(|t| t.at);
         for t in terminals {
@@ -113,7 +117,10 @@ impl Session {
                 }
                 "pane" => {
                     if let Ok(id) = value.trim().parse() {
-                        s.panes.push(SessionPane { id, ..Default::default() });
+                        s.panes.push(SessionPane {
+                            id,
+                            ..Default::default()
+                        });
                         current = Some(s.panes.len() - 1);
                     }
                 }
@@ -127,11 +134,23 @@ impl Session {
                     let at = parts.next().and_then(|v| v.trim().parse().ok());
                     let number = parts.next().and_then(|v| v.trim().parse().ok());
                     if let (Some(at), Some(number)) = (at, number) {
-                        let mut text = || parts.next().map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned);
+                        let mut text = || {
+                            parts
+                                .next()
+                                .map(str::trim)
+                                .filter(|n| !n.is_empty())
+                                .map(str::to_owned)
+                        };
                         let name = text();
                         let dir = text().map(PathBuf::from);
                         let shell = text();
-                        s.panes[i].terminals.push(SessionTerminal { at, number, name, dir, shell });
+                        s.panes[i].terminals.push(SessionTerminal {
+                            at,
+                            number,
+                            name,
+                            dir,
+                            shell,
+                        });
                     }
                 }
                 "active" | "file" => {
@@ -147,7 +166,10 @@ impl Session {
                         let value = value.trim_start();
                         let (path, caret) = value.rsplit_once('\t').unwrap_or((value, "0"));
                         if !path.trim().is_empty() {
-                            pane.files.push((PathBuf::from(path.trim_end()), caret.trim().parse().unwrap_or(0)));
+                            pane.files.push((
+                                PathBuf::from(path.trim_end()),
+                                caret.trim().parse().unwrap_or(0),
+                            ));
                         }
                     }
                 }
@@ -176,18 +198,31 @@ impl Session {
             }
             for t in &pane.terminals {
                 // 名字、shell 裡的換行與 Tab 會破壞格式，換成空白；路徑裡有控制字元就不記（實務上不會有）
-                let clean = |s: &str| -> String { s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect() };
+                let clean = |s: &str| -> String {
+                    s.chars()
+                        .map(|c| if c.is_control() { ' ' } else { c })
+                        .collect()
+                };
                 let name = clean(t.name.as_deref().unwrap_or(""));
-                let dir = t.dir.as_ref().map(|d| d.to_string_lossy().into_owned()).filter(|d| !d.chars().any(char::is_control)).unwrap_or_default();
+                let dir = t
+                    .dir
+                    .as_ref()
+                    .map(|d| d.to_string_lossy().into_owned())
+                    .filter(|d| !d.chars().any(char::is_control))
+                    .unwrap_or_default();
                 let shell = clean(t.shell.as_deref().unwrap_or(""));
-                out.push_str(&format!("terminal = {}\t{}\t{}\t{}\t{}\n", t.at, t.number, name, dir, shell));
+                out.push_str(&format!(
+                    "terminal = {}\t{}\t{}\t{}\t{}\n",
+                    t.at, t.number, name, dir, shell
+                ));
             }
         }
         out
     }
 
     fn path() -> Option<PathBuf> {
-        crate::settings::Settings::default_path().and_then(|p| p.parent().map(|d| d.join("session.conf")))
+        crate::settings::Settings::default_path()
+            .and_then(|p| p.parent().map(|d| d.join("session.conf")))
     }
 
     pub fn load() -> Self {
@@ -211,7 +246,12 @@ mod tests {
     use super::*;
 
     fn pane(id: u32, active: usize, files: &[(&str, usize)]) -> SessionPane {
-        SessionPane { id, active, files: files.iter().map(|(p, c)| (PathBuf::from(p), *c)).collect(), terminals: Vec::new() }
+        SessionPane {
+            id,
+            active,
+            files: files.iter().map(|(p, c)| (PathBuf::from(p), *c)).collect(),
+            terminals: Vec::new(),
+        }
     }
 
     #[test]
@@ -233,10 +273,27 @@ mod tests {
     fn terminal_tabs_round_trip_in_their_original_positions() {
         let mut p = pane(0, 1, &[("/a.txt", 5), ("/b.txt", 7)]);
         p.terminals = vec![
-            SessionTerminal { at: 1, number: 2, name: Some("伺服器 = 8080".to_owned()), dir: Some(PathBuf::from("/work/api server")), shell: Some("pwsh -NoLogo".to_owned()) },
-            SessionTerminal { at: 3, number: 1, name: None, dir: None, shell: None },
+            SessionTerminal {
+                at: 1,
+                number: 2,
+                name: Some("伺服器 = 8080".to_owned()),
+                dir: Some(PathBuf::from("/work/api server")),
+                shell: Some("pwsh -NoLogo".to_owned()),
+            },
+            SessionTerminal {
+                at: 3,
+                number: 1,
+                name: None,
+                dir: None,
+                shell: None,
+            },
         ];
-        let s = Session { panes: vec![p], previews: vec![], layout: Some("P0".to_owned()), focus: 0 };
+        let s = Session {
+            panes: vec![p],
+            previews: vec![],
+            layout: Some("P0".to_owned()),
+            focus: 0,
+        };
         let back = Session::parse(&s.to_text());
         assert_eq!(back, s);
         let kinds: Vec<String> = back.panes[0]
@@ -247,16 +304,55 @@ mod tests {
                 SessionEntry::Terminal(t) => format!("T{}", t.number),
             })
             .collect();
-        assert_eq!(kinds, vec!["/a.txt", "T2", "/b.txt", "T1"], "檔案與終端機照原本的順序排回去");
+        assert_eq!(
+            kinds,
+            vec!["/a.txt", "T2", "/b.txt", "T1"],
+            "檔案與終端機照原本的順序排回去"
+        );
         // 壞掉的 terminal 行略過；名字裡的控制字元不會破壞格式；作用中的位置夾在範圍內
-        let bad = Session::parse("pane = 0\nactive = 9\nterminal = x\t1\t\nterminal = 0\t3\ta\t/d\nfile = /f\t0\n");
-        assert_eq!(bad.panes[0].terminals, vec![SessionTerminal { at: 0, number: 3, name: Some("a".to_owned()), dir: Some(PathBuf::from("/d")), shell: None }]);
+        let bad = Session::parse(
+            "pane = 0\nactive = 9\nterminal = x\t1\t\nterminal = 0\t3\ta\t/d\nfile = /f\t0\n",
+        );
+        assert_eq!(
+            bad.panes[0].terminals,
+            vec![SessionTerminal {
+                at: 0,
+                number: 3,
+                name: Some("a".to_owned()),
+                dir: Some(PathBuf::from("/d")),
+                shell: None
+            }]
+        );
         assert_eq!(bad.panes[0].active, 1);
         // 舊版只有「位置、編號、名字」三欄：還能讀，資料夾與 shell 是空的
         let old = Session::parse("pane = 0\nterminal = 2\t4\t伺服器\n");
-        assert_eq!(old.panes[0].terminals, vec![SessionTerminal { at: 2, number: 4, name: Some("伺服器".to_owned()), dir: None, shell: None }]);
-        let weird = SessionTerminal { at: 0, number: 1, name: Some("a\nb\tc".to_owned()), dir: None, shell: None };
-        let round = Session::parse(&Session { panes: vec![SessionPane { terminals: vec![weird], ..Default::default() }], ..Default::default() }.to_text());
+        assert_eq!(
+            old.panes[0].terminals,
+            vec![SessionTerminal {
+                at: 2,
+                number: 4,
+                name: Some("伺服器".to_owned()),
+                dir: None,
+                shell: None
+            }]
+        );
+        let weird = SessionTerminal {
+            at: 0,
+            number: 1,
+            name: Some("a\nb\tc".to_owned()),
+            dir: None,
+            shell: None,
+        };
+        let round = Session::parse(
+            &Session {
+                panes: vec![SessionPane {
+                    terminals: vec![weird],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }
+            .to_text(),
+        );
         assert_eq!(round.panes[0].terminals[0].name.as_deref(), Some("a b c"));
     }
 
@@ -273,7 +369,9 @@ mod tests {
         let s = Session::parse("junk\nactive = 99\nfile = \nfile = /a\tnotanumber\nunknown = 1\n");
         assert_eq!(s.panes, vec![pane(0, 0, &[("/a", 0)])]);
         assert_eq!(Session::parse(""), Session::default());
-        let s = Session::parse("pane = 1\nactive = 5\nfile = /x\npane = 2\nactive = 1\nfile = /y\nfile = /z\n");
+        let s = Session::parse(
+            "pane = 1\nactive = 5\nfile = /x\npane = 2\nactive = 1\nfile = /y\nfile = /z\n",
+        );
         assert_eq!(s.panes[0].active, 0, "只有一個檔案，作用中最多是 0");
         assert_eq!(s.panes[1].active, 1);
         // 壞掉的預覽、窗格編號略過

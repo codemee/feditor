@@ -39,19 +39,34 @@ fn fix_at(events: &mut [Event], caps_lock: bool, now: std::time::Instant) -> usi
         match event {
             Event::Ime(eframe::egui::ImeEvent::Commit(text)) => {
                 let mut chars = text.chars();
-                if matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_alphabetic()) {
+                if matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_alphabetic())
+                {
                     *last = Some(now);
                 }
             }
-            Event::Text(_) if caps_lock && !last.is_some_and(|t| now.duration_since(t) <= IME_LETTER_MEMORY) => {
+            Event::Text(_)
+                if caps_lock
+                    && !last.is_some_and(|t| now.duration_since(t) <= IME_LETTER_MEMORY) =>
+            {
                 plain_letter = None;
             }
-            Event::Key { key, pressed: true, modifiers, .. } => {
-                plain_letter = if modifiers.is_none() { letter_of(*key) } else { None };
+            Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => {
+                plain_letter = if modifiers.is_none() {
+                    letter_of(*key)
+                } else {
+                    None
+                };
             }
             Event::Text(text) => {
                 let mut chars = text.chars();
-                if let (Some(c), None, Some(expected)) = (chars.next(), chars.next(), plain_letter.take()) {
+                if let (Some(c), None, Some(expected)) =
+                    (chars.next(), chars.next(), plain_letter.take())
+                {
                     if c.is_ascii_uppercase() && c.to_ascii_lowercase() == expected {
                         *text = expected.to_string();
                         fixed += 1;
@@ -84,7 +99,13 @@ mod tests {
     use eframe::egui::Modifiers;
 
     fn key(k: Key, modifiers: Modifiers) -> Event {
-        Event::Key { key: k, physical_key: Some(k), pressed: true, repeat: false, modifiers }
+        Event::Key {
+            key: k,
+            physical_key: Some(k),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
     }
 
     /// 測試共用一個全域的記憶：每個測試開頭清掉，並且不要同時跑。
@@ -109,9 +130,13 @@ mod tests {
         ];
         assert_eq!(fix(&mut events, true), 1);
         assert!(matches!(&events[3], Event::Text(t) if t == "u"));
-        assert!(matches!(&events[5], Event::Text(t) if t == "D"), "按著 Shift 的還是大寫");
+        assert!(
+            matches!(&events[5], Event::Text(t) if t == "D"),
+            "按著 Shift 的還是大寫"
+        );
         // 過了一陣子輸入法都沒再送字母：Caps Lock 又當作真的大寫鎖定
-        let later = std::time::Instant::now() + IME_LETTER_MEMORY + std::time::Duration::from_secs(1);
+        let later =
+            std::time::Instant::now() + IME_LETTER_MEMORY + std::time::Duration::from_secs(1);
         let mut events = vec![key(Key::U, Modifiers::NONE), Event::Text("U".into())];
         assert_eq!(fix_at(&mut events, true, later), 0);
     }
@@ -120,7 +145,12 @@ mod tests {
     fn an_uppercase_letter_without_shift_or_caps_lock_goes_back_to_lowercase() {
         let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         reset();
-        let mut events = vec![key(Key::U, Modifiers::NONE), Event::Text("U".into()), key(Key::D, Modifiers::NONE), Event::Text("D".into())];
+        let mut events = vec![
+            key(Key::U, Modifiers::NONE),
+            Event::Text("U".into()),
+            key(Key::D, Modifiers::NONE),
+            Event::Text("D".into()),
+        ];
         assert_eq!(fix(&mut events, false), 2);
         assert!(matches!(&events[1], Event::Text(t) if t == "u"));
         assert!(matches!(&events[3], Event::Text(t) if t == "d"));

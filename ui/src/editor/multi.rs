@@ -56,13 +56,18 @@ impl EditorState {
         self.interrupt_composition();
         let idx = idx.min(buf.len_chars());
         let (mut all, primary) = self.all_selections();
-        if let Some(i) = all
-            .iter()
-            .position(|s| s.range().start <= idx && idx <= s.range().end && (!s.is_empty() || s.head == idx))
-        {
+        if let Some(i) = all.iter().position(|s| {
+            s.range().start <= idx && idx <= s.range().end && (!s.is_empty() || s.head == idx)
+        }) {
             if all.len() > 1 {
                 all.remove(i);
-                let p = if i < primary { primary - 1 } else if i == primary { all.len() - 1 } else { primary };
+                let p = if i < primary {
+                    primary - 1
+                } else if i == primary {
+                    all.len() - 1
+                } else {
+                    primary
+                };
                 self.set_selections(buf, all, p);
             }
         } else {
@@ -82,7 +87,9 @@ impl EditorState {
     pub fn add_caret_vertical(&mut self, buf: &mut Buffer, up: bool) -> bool {
         self.interrupt_composition();
         let (all, _) = self.all_selections();
-        let edge = if up { all.first() } else { all.last() }.copied().unwrap_or(self.sel);
+        let edge = if up { all.first() } else { all.last() }
+            .copied()
+            .unwrap_or(self.sel);
         let line = buf.line_of_char(edge.head.min(buf.len_chars()));
         let target = if up {
             if line == 0 {
@@ -97,7 +104,8 @@ impl EditorState {
         };
         let col = edge.head - buf.line_start(line);
         let dcol = motion::display_col(&buf.line_text(line), col);
-        let idx = buf.line_start(target) + motion::char_at_display_col(&buf.line_text(target), dcol);
+        let idx =
+            buf.line_start(target) + motion::char_at_display_col(&buf.line_text(target), dcol);
         let mut tagged: Vec<(Selection, bool)> = all.into_iter().map(|s| (s, false)).collect();
         tagged.push((Selection::collapsed(idx), true));
         let (all, primary) = normalize(tagged);
@@ -120,7 +128,8 @@ impl EditorState {
         let total = buf.len_chars();
         let find = |range: Range<usize>| -> Option<usize> {
             let hay = buf.slice(range.clone());
-            hay.find(&needle).map(|b| range.start + hay[..b].chars().count())
+            hay.find(&needle)
+                .map(|b| range.start + hay[..b].chars().count())
         };
         let found = find(from..total).or_else(|| {
             let first = all.first().map_or(0, |s| s.range().start);
@@ -265,9 +274,15 @@ impl EditorState {
             let (start, end) = (s.range().start + shift + pl, s.range().end + shift + pl);
             // 方向（游標在前還是在後）不變
             wrapped.push(if s.anchor <= s.head {
-                Selection { anchor: start, head: end }
+                Selection {
+                    anchor: start,
+                    head: end,
+                }
             } else {
-                Selection { anchor: end, head: start }
+                Selection {
+                    anchor: end,
+                    head: start,
+                }
             });
             shift += pl + sl;
         }
@@ -292,7 +307,11 @@ impl EditorState {
         let lines: Vec<&str> = text.trim_end_matches('\n').split('\n').collect();
         let distribute = lines.len() == n;
         self.edit_each(buf, |i, s, _| {
-            let t = if distribute { lines[i].to_owned() } else { text.clone() };
+            let t = if distribute {
+                lines[i].to_owned()
+            } else {
+                text.clone()
+            };
             (s.range(), t)
         })
     }
@@ -375,9 +394,15 @@ fn normalize(mut all: Vec<(Selection, bool)>) -> (Vec<Selection>, usize) {
                 // 方向沿用主要的那一個
                 let src = if primary { s } else { *last };
                 *last = if src.anchor <= src.head {
-                    Selection { anchor: merged.start, head: merged.end }
+                    Selection {
+                        anchor: merged.start,
+                        head: merged.end,
+                    }
                 } else {
-                    Selection { anchor: merged.end, head: merged.start }
+                    Selection {
+                        anchor: merged.end,
+                        head: merged.start,
+                    }
                 };
                 *last_primary |= primary;
                 continue;
@@ -395,7 +420,10 @@ mod tests {
 
     fn setup(text: &str, sels: &[(usize, usize)]) -> (Buffer, EditorState) {
         let mut s = EditorState::default();
-        s.sel = Selection { anchor: sels[0].0, head: sels[0].1 };
+        s.sel = Selection {
+            anchor: sels[0].0,
+            head: sels[0].1,
+        };
         s.extra = sels[1..]
             .iter()
             .map(|&(anchor, head)| Selection { anchor, head })
@@ -416,7 +444,11 @@ mod tests {
         assert_eq!(b.text(), "say \"hello\" now");
         assert_eq!(s.sel.range(), 5..10, "選取仍然是 hello，可以再包一層");
         assert!(s.wrap_selections(&mut b, "(", ")"));
-        assert_eq!(b.text(), "say \"(hello)\" now", "第二次包的是選取的 hello，不是外面的引號");
+        assert_eq!(
+            b.text(),
+            "say \"(hello)\" now",
+            "第二次包的是選取的 hello，不是外面的引號"
+        );
         assert_eq!(s.sel.range(), 6..11);
         b.undo();
         assert_eq!(b.text(), "say \"hello\" now", "每次包住是一個復原步驟");
@@ -447,7 +479,11 @@ mod tests {
         assert!(s.wrap_selections(&mut b, "<", ">"));
         assert_eq!(b.text(), "<one> <two> <three>");
         let ranges: Vec<_> = s.all_selections().0.iter().map(|x| x.range()).collect();
-        assert_eq!(ranges, vec![1..4, 7..10, 13..18], "每個選取都留在自己的文字上");
+        assert_eq!(
+            ranges,
+            vec![1..4, 7..10, 13..18],
+            "每個選取都留在自己的文字上"
+        );
         b.undo();
         assert_eq!(b.text(), "one two three", "全部一次還原");
         // 碰在一起的兩個選取：各包各的，不會互相壓到
@@ -535,7 +571,13 @@ mod tests {
         let (mut b, mut s) = setup("ab\ncd", &[(0, 0), (3, 3)]);
         s.move_right(&mut b, true, false);
         let (all, _) = s.all_selections();
-        assert_eq!(all, vec![Selection { anchor: 0, head: 1 }, Selection { anchor: 3, head: 4 }]);
+        assert_eq!(
+            all,
+            vec![
+                Selection { anchor: 0, head: 1 },
+                Selection { anchor: 3, head: 4 }
+            ]
+        );
     }
 
     #[test]
@@ -593,7 +635,10 @@ mod tests {
         assert!(s.add_next_occurrence(&mut b));
         assert!(s.add_next_occurrence(&mut b));
         let (all, _) = s.all_selections();
-        assert_eq!(all.iter().map(|x| x.range()).collect::<Vec<_>>(), vec![0..3, 8..11, 16..19]);
+        assert_eq!(
+            all.iter().map(|x| x.range()).collect::<Vec<_>>(),
+            vec![0..3, 8..11, 16..19]
+        );
         assert!(!s.add_next_occurrence(&mut b), "全部都選了");
         s.insert_text(&mut b, "x");
         assert_eq!(b.text(), "x bar x baz x");
@@ -609,7 +654,10 @@ mod tests {
             vec![
                 Selection { anchor: 1, head: 4 },
                 Selection { anchor: 8, head: 9 },
-                Selection { anchor: 11, head: 14 },
+                Selection {
+                    anchor: 11,
+                    head: 14
+                },
             ]
         );
         assert_eq!(primary, 2, "主要選取是拖曳終點那一行");

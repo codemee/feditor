@@ -50,7 +50,12 @@ impl FileWatcher {
             ctx.request_repaint_after(DEBOUNCE);
         })
         .ok();
-        Self { watcher, rx, dirs: HashSet::new(), last_event: None }
+        Self {
+            watcher,
+            rx,
+            dirs: HashSet::new(),
+            last_event: None,
+        }
     }
 
     /// 讓監看的資料夾和 `wanted` 一致（多的取消、少的加上）。沒變就什麼都不做。
@@ -99,7 +104,10 @@ pub fn refresh_background_tab(tab: &mut crate::tabs::Tab, logs: &mut Vec<(LogKin
         DiskChange::None => {}
         DiskChange::Gone => logs.push((
             LogKind::Warn,
-            tf!("{name} 已被刪除或移走，分頁裡的內容仍然保留；存檔會重新建立這個檔案", name = name),
+            tf!(
+                "{name} 已被刪除或移走，分頁裡的內容仍然保留；存檔會重新建立這個檔案",
+                name = name
+            ),
         )),
         DiskChange::Changed if tab.doc.dirty => {
             // 只提醒一次；等使用者切過去時再決定
@@ -115,12 +123,18 @@ pub fn refresh_background_tab(tab: &mut crate::tabs::Tab, logs: &mut Vec<(LogKin
             Ok(warnings) => {
                 tab.editor.extra.clear();
                 tab.editor.clamp(&tab.doc.buffer);
-                logs.push((LogKind::Info, tf!("{name} 已被其他程式修改，已自動重新載入", name = name)));
+                logs.push((
+                    LogKind::Info,
+                    tf!("{name} 已被其他程式修改，已自動重新載入", name = name),
+                ));
                 logs.extend(warnings.into_iter().map(|w| (LogKind::Warn, w)));
             }
             Err(e) => {
                 tab.doc.accept_disk_version();
-                logs.push((LogKind::Error, tf!("無法重新載入 {name}：{e}", name = name, e = e)));
+                logs.push((
+                    LogKind::Error,
+                    tf!("無法重新載入 {name}：{e}", name = name, e = e),
+                ));
             }
         },
     }
@@ -132,9 +146,18 @@ mod tests {
 
     #[test]
     fn watch_dirs_collects_each_parent_once() {
-        let dirs = watch_dirs([Path::new("/a/x.txt"), Path::new("/a/y.txt"), Path::new("/b/z.txt"), Path::new("rel.txt")]);
+        let dirs = watch_dirs([
+            Path::new("/a/x.txt"),
+            Path::new("/a/y.txt"),
+            Path::new("/b/z.txt"),
+            Path::new("rel.txt"),
+        ]);
         assert_eq!(dirs.len(), 3);
-        assert!(dirs.contains(Path::new("/a")) && dirs.contains(Path::new("/b")) && dirs.contains(Path::new(".")));
+        assert!(
+            dirs.contains(Path::new("/a"))
+                && dirs.contains(Path::new("/b"))
+                && dirs.contains(Path::new("."))
+        );
     }
 
     #[test]

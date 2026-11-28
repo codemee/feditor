@@ -312,8 +312,17 @@ mod tests {
     fn run_in(src: &str, text: &str, caret: (usize, usize)) -> (Buffer, EditorState, MacroReport) {
         let mut buf = Buffer::from_text(text);
         let mut state = EditorState::default();
-        state.sel = Selection { anchor: caret.0, head: caret.1 };
-        let r = run_js_macro_in(src, &mut buf, &mut state, Some("C:\\x\\a.txt".to_owned()), false);
+        state.sel = Selection {
+            anchor: caret.0,
+            head: caret.1,
+        };
+        let r = run_js_macro_in(
+            src,
+            &mut buf,
+            &mut state,
+            Some("C:\\x\\a.txt".to_owned()),
+            false,
+        );
         (buf, state, r)
     }
 
@@ -343,7 +352,11 @@ mod tests {
 
     #[test]
     fn wrap_surrounds_the_selection_and_keeps_it_on_the_original_text() {
-        let (buf, state, r) = run_in("editor.wrap('<', '>'); editor.wrap('\"', '\"');", "abc def ghi", (4, 7));
+        let (buf, state, r) = run_in(
+            "editor.wrap('<', '>'); editor.wrap('\"', '\"');",
+            "abc def ghi",
+            (4, 7),
+        );
         assert_eq!(r.error, None, "{:?}", r.error);
         assert_eq!(buf.text(), "abc <\"def\"> ghi", "第二次包的是還選著的 def");
         assert_eq!(state.sel.range(), 6..9, "選取還在 def 上");
@@ -387,7 +400,13 @@ mod tests {
         let mut buf = Buffer::from_text("abc");
         let mut state = EditorState::default();
         let before = buf.undo_depth();
-        run_js_macro_in("editor.type('1'); editor.type('2'); editor.run('enter');", &mut buf, &mut state, None, false);
+        run_js_macro_in(
+            "editor.type('1'); editor.type('2'); editor.run('enter');",
+            &mut buf,
+            &mut state,
+            None,
+            false,
+        );
         assert_eq!(buf.undo_depth(), before + 1);
         buf.undo();
         assert_eq!(buf.text(), "abc");
@@ -410,9 +429,18 @@ mod tests {
         let mut state = EditorState::default();
         state.start_recording();
         state.record_typed("a");
-        run_js_macro_in("editor.run('end'); editor.type('Z');", &mut buf, &mut state, None, false);
+        run_js_macro_in(
+            "editor.run('end'); editor.type('Z');",
+            &mut buf,
+            &mut state,
+            None,
+            false,
+        );
         let src = state.stop_recording().unwrap();
-        assert_eq!(src, "// 由錄製產生\neditor.type(\"a\");\n", "巨集內的動作不重複錄下");
+        assert_eq!(
+            src, "// 由錄製產生\neditor.type(\"a\");\n",
+            "巨集內的動作不重複錄下"
+        );
     }
 
     #[test]

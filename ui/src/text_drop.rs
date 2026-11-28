@@ -9,11 +9,16 @@ use std::sync::Mutex;
 
 use eframe::egui;
 use windows::Win32::Foundation::{HANDLE, HWND, POINT, POINTL};
-use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, DVASPECT_CONTENT, FORMATETC, IDataObject, TYMED_HGLOBAL};
-use windows::Win32::UI::Shell::{CLSID_DragDropHelper, IDropTargetHelper};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, CoCreateInstance, DVASPECT_CONTENT, FORMATETC, IDataObject, TYMED_HGLOBAL,
+};
 use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
-use windows::Win32::System::Ole::{DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE, IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop};
+use windows::Win32::System::Ole::{
+    DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE, IDropTarget, IDropTarget_Impl, RegisterDragDrop,
+    ReleaseStgMedium, RevokeDragDrop,
+};
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
+use windows::Win32::UI::Shell::{CLSID_DragDropHelper, IDropTargetHelper};
 use windows::Win32::UI::WindowsAndMessaging::GetPropW;
 use windows::core::{Interface, Ref, Result, implement, w};
 
@@ -26,7 +31,10 @@ static PENDING: Mutex<Vec<(String, (i32, i32))>> = Mutex::new(Vec::new());
 /// 取走放下的文字，位置換算成視窗內的座標（點）。
 pub fn take(ctx: &egui::Context) -> Vec<(String, egui::Pos2)> {
     let items = std::mem::take(&mut *PENDING.lock().unwrap_or_else(|e| e.into_inner()));
-    items.into_iter().map(|(text, (x, y))| (text, crate::screen_to_window(ctx, x, y))).collect()
+    items
+        .into_iter()
+        .map(|(text, (x, y))| (text, crate::screen_to_window(ctx, x, y)))
+        .collect()
 }
 
 /// 文字正拖在視窗上方時，游標的螢幕座標（像素）；沒有在拖就是 `None`。
@@ -62,13 +70,25 @@ struct TextDropTarget {
 }
 
 fn has_format(data: &IDataObject, format: u16) -> bool {
-    let fmt = FORMATETC { cfFormat: format, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0 as u32, lindex: -1, tymed: TYMED_HGLOBAL.0 as u32 };
+    let fmt = FORMATETC {
+        cfFormat: format,
+        ptd: std::ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0 as u32,
+        lindex: -1,
+        tymed: TYMED_HGLOBAL.0 as u32,
+    };
     // SAFETY: `fmt` 在呼叫期間有效
     unsafe { data.QueryGetData(&fmt) }.is_ok()
 }
 
 fn read_text(data: &IDataObject) -> Option<String> {
-    let fmt = FORMATETC { cfFormat: CF_UNICODETEXT, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0 as u32, lindex: -1, tymed: TYMED_HGLOBAL.0 as u32 };
+    let fmt = FORMATETC {
+        cfFormat: CF_UNICODETEXT,
+        ptd: std::ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0 as u32,
+        lindex: -1,
+        tymed: TYMED_HGLOBAL.0 as u32,
+    };
     // SAFETY: 依 COM 的規則取資料、鎖住全域記憶體讀到結尾的 0、解鎖並釋放
     unsafe {
         let mut medium = data.GetData(&fmt).ok()?;
@@ -81,7 +101,9 @@ fn read_text(data: &IDataObject) -> Option<String> {
             while *ptr.add(len) != 0 {
                 len += 1;
             }
-            Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
+            Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+                ptr, len,
+            )))
         };
         let _ = GlobalUnlock(hglobal);
         ReleaseStgMedium(&mut medium);
@@ -90,8 +112,16 @@ fn read_text(data: &IDataObject) -> Option<String> {
 }
 
 impl IDropTarget_Impl for TextDropTarget_Impl {
-    fn DragEnter(&self, data: Ref<'_, IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
-        let Some(data_object) = data.as_ref() else { return Ok(()) };
+    fn DragEnter(
+        &self,
+        data: Ref<'_, IDataObject>,
+        keys: MODIFIERKEYS_FLAGS,
+        pt: &POINTL,
+        effect: *mut DROPEFFECT,
+    ) -> Result<()> {
+        let Some(data_object) = data.as_ref() else {
+            return Ok(());
+        };
         if has_format(data_object, CF_HDROP) {
             self.mode.set(Mode::Files);
             return unsafe { self.files.DragEnter(data_object, keys, *pt, effect) };
@@ -102,15 +132,33 @@ impl IDropTarget_Impl for TextDropTarget_Impl {
             set_hover(Some((pt.x, pt.y)), &self.ctx);
             if let Some(helper) = &self.helper {
                 // SAFETY: 參數都在呼叫期間有效
-                let _ = unsafe { helper.DragEnter(self.hwnd, data_object, &POINT { x: pt.x, y: pt.y }, DROPEFFECT_COPY) };
+                let _ = unsafe {
+                    helper.DragEnter(
+                        self.hwnd,
+                        data_object,
+                        &POINT { x: pt.x, y: pt.y },
+                        DROPEFFECT_COPY,
+                    )
+                };
             }
         }
         // SAFETY: OLE 給的輸出參數
-        unsafe { *effect = if text { DROPEFFECT_COPY } else { DROPEFFECT_NONE } };
+        unsafe {
+            *effect = if text {
+                DROPEFFECT_COPY
+            } else {
+                DROPEFFECT_NONE
+            }
+        };
         Ok(())
     }
 
-    fn DragOver(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragOver(
+        &self,
+        keys: MODIFIERKEYS_FLAGS,
+        pt: &POINTL,
+        effect: *mut DROPEFFECT,
+    ) -> Result<()> {
         match self.mode.get() {
             Mode::Files => unsafe { self.files.DragOver(keys, *pt, effect) },
             mode => {
@@ -118,11 +166,19 @@ impl IDropTarget_Impl for TextDropTarget_Impl {
                     set_hover(Some((pt.x, pt.y)), &self.ctx);
                     if let Some(helper) = &self.helper {
                         // SAFETY: 參數都在呼叫期間有效
-                        let _ = unsafe { helper.DragOver(&POINT { x: pt.x, y: pt.y }, DROPEFFECT_COPY) };
+                        let _ = unsafe {
+                            helper.DragOver(&POINT { x: pt.x, y: pt.y }, DROPEFFECT_COPY)
+                        };
                     }
                 }
                 // SAFETY: OLE 給的輸出參數
-                unsafe { *effect = if mode == Mode::Text { DROPEFFECT_COPY } else { DROPEFFECT_NONE } };
+                unsafe {
+                    *effect = if mode == Mode::Text {
+                        DROPEFFECT_COPY
+                    } else {
+                        DROPEFFECT_NONE
+                    }
+                };
                 Ok(())
             }
         }
@@ -143,22 +199,34 @@ impl IDropTarget_Impl for TextDropTarget_Impl {
         }
     }
 
-    fn Drop(&self, data: Ref<'_, IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn Drop(
+        &self,
+        data: Ref<'_, IDataObject>,
+        keys: MODIFIERKEYS_FLAGS,
+        pt: &POINTL,
+        effect: *mut DROPEFFECT,
+    ) -> Result<()> {
         let mode = self.mode.replace(Mode::None);
         set_hover(None, &self.ctx);
-        let Some(data_object) = data.as_ref() else { return Ok(()) };
+        let Some(data_object) = data.as_ref() else {
+            return Ok(());
+        };
         if mode == Mode::Files {
             return unsafe { self.files.Drop(data_object, keys, *pt, effect) };
         }
         if mode == Mode::Text
             && let Some(helper) = &self.helper
         {
-            let _ = unsafe { helper.Drop(data_object, &POINT { x: pt.x, y: pt.y }, DROPEFFECT_COPY) };
+            let _ =
+                unsafe { helper.Drop(data_object, &POINT { x: pt.x, y: pt.y }, DROPEFFECT_COPY) };
         }
         if mode == Mode::Text
             && let Some(text) = read_text(data_object).filter(|t| !t.is_empty())
         {
-            PENDING.lock().unwrap_or_else(|e| e.into_inner()).push((text, (pt.x, pt.y)));
+            PENDING
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((text, (pt.x, pt.y)));
             self.ctx.request_repaint();
             // SAFETY: OLE 給的輸出參數
             unsafe { *effect = DROPEFFECT_COPY };
@@ -178,12 +246,26 @@ pub fn install(hwnd: isize, ctx: egui::Context) {
         if prop.0.is_null() {
             return;
         }
-        let Some(original) = IDropTarget::from_raw_borrowed(&prop.0).cloned() else { return };
+        let Some(original) = IDropTarget::from_raw_borrowed(&prop.0).cloned() else {
+            return;
+        };
         if RevokeDragDrop(hwnd).is_err() {
             return;
         }
-        let helper = CoCreateInstance::<_, IDropTargetHelper>(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok();
-        let ours: IDropTarget = TextDropTarget { files: original.clone(), ctx, mode: Cell::new(Mode::None), hwnd, helper }.into();
+        let helper = CoCreateInstance::<_, IDropTargetHelper>(
+            &CLSID_DragDropHelper,
+            None,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok();
+        let ours: IDropTarget = TextDropTarget {
+            files: original.clone(),
+            ctx,
+            mode: Cell::new(Mode::None),
+            hwnd,
+            helper,
+        }
+        .into();
         if RegisterDragDrop(hwnd, &ours).is_err() {
             // 登記失敗：把 winit 的放回去
             let _ = RegisterDragDrop(hwnd, &original);

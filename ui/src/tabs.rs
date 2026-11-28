@@ -4,8 +4,8 @@
 //! 這裡的 `slots[active]` 只是個空位；切換分頁時把內容換進換出。與畫面無關，方便單元測試。
 
 use crate::document::Document;
-use feditor_core::i18n::t;
 use crate::editor::model::EditorState;
+use feditor_core::i18n::t;
 use std::path::Path;
 
 #[derive(Default)]
@@ -122,7 +122,10 @@ impl TabSet {
 
     /// 只有一個分頁的分頁集。
     pub fn from_tab(tab: Tab) -> Self {
-        Self { slots: vec![tab], active: 0 }
+        Self {
+            slots: vec![tab],
+            active: 0,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -149,7 +152,10 @@ impl TabSet {
     pub fn take_tab(&mut self, i: usize) -> Tab {
         let tab = self.slots.remove(i);
         if i < self.active || self.active >= self.slots.len() {
-            self.active = self.active.saturating_sub(1).min(self.slots.len().saturating_sub(1));
+            self.active = self
+                .active
+                .saturating_sub(1)
+                .min(self.slots.len().saturating_sub(1));
         }
         tab
     }
@@ -196,8 +202,14 @@ impl TabSet {
             return false;
         }
         let new_active = order.iter().position(|&o| o == self.active).unwrap_or(0);
-        let mut old: Vec<Option<Tab>> = std::mem::take(&mut self.slots).into_iter().map(Some).collect();
-        self.slots = order.iter().map(|&o| old[o].take().expect("每個分頁只取一次")).collect();
+        let mut old: Vec<Option<Tab>> = std::mem::take(&mut self.slots)
+            .into_iter()
+            .map(Some)
+            .collect();
+        self.slots = order
+            .iter()
+            .map(|&o| old[o].take().expect("每個分頁只取一次"))
+            .collect();
         self.active = new_active;
         true
     }
@@ -275,7 +287,10 @@ impl TabSet {
 
     /// 要記進工作階段的分頁，依分頁順序，附上「是不是作用中分頁」：存過檔的檔案與終端機（沒存過的空白文件略過）。
     /// `live` 同 [`TabSet::session_entries`]。
-    pub fn session_records(&self, live: Option<(&Document, &EditorState)>) -> Vec<(TabRecord, bool)> {
+    pub fn session_records(
+        &self,
+        live: Option<(&Document, &EditorState)>,
+    ) -> Vec<(TabRecord, bool)> {
         (0..self.slots.len())
             .filter_map(|i| {
                 let (d, e) = match live {
@@ -298,14 +313,19 @@ impl TabSet {
     }
 
     /// 這個分頁集裡有存過檔的分頁：（路徑, 游標位置, 是不是作用中分頁）。`live` 同 [`TabSet::doc_in`]。
-    pub fn session_entries(&self, live: Option<(&Document, &EditorState)>) -> Vec<(std::path::PathBuf, usize, bool)> {
+    pub fn session_entries(
+        &self,
+        live: Option<(&Document, &EditorState)>,
+    ) -> Vec<(std::path::PathBuf, usize, bool)> {
         (0..self.slots.len())
             .filter_map(|i| {
                 let (d, e) = match live {
                     Some(pair) if i == self.active => pair,
                     _ => (&self.slots[i].doc, &self.slots[i].editor),
                 };
-                d.path.as_ref().map(|p| (p.clone(), e.sel.head, i == self.active))
+                d.path
+                    .as_ref()
+                    .map(|p| (p.clone(), e.sel.head, i == self.active))
             })
             .collect()
     }
@@ -314,7 +334,11 @@ impl TabSet {
     /// 作用中分頁的內容在外面（App 的 doc／ditor），不在這裡面。
     pub fn background_mut(&mut self, live: bool) -> impl Iterator<Item = &mut Tab> {
         let active = self.active;
-        self.slots.iter_mut().enumerate().filter(move |(i, _)| !(live && *i == active)).map(|(_, t)| t)
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter(move |(i, _)| !(live && *i == active))
+            .map(|(_, t)| t)
     }
 
     /// 第 i 個分頁的磁碟狀態（live 同 [TabSet::doc_in]）。
@@ -324,43 +348,70 @@ impl TabSet {
 
     /// 第 `i` 個分頁如果是終端機，它執行的 shell（程式加參數，空字串是系統預設）；不是終端機回傳 `None`。
     pub fn terminal_shell(&self, live: Option<&Document>, i: usize) -> Option<String> {
-        self.doc_in(live, i).terminal.as_ref().map(|t| t.shell().to_owned())
+        self.doc_in(live, i)
+            .terminal
+            .as_ref()
+            .map(|t| t.shell().to_owned())
     }
 
     /// 第 `i` 個分頁是不是有還沒看的終端機通知（`live` 同 [`TabSet::doc_in`]）。
     pub fn terminal_attention(&self, live: Option<&Document>, i: usize) -> bool {
-        self.doc_in(live, i).terminal.as_ref().is_some_and(|t| t.has_attention())
+        self.doc_in(live, i)
+            .terminal
+            .as_ref()
+            .is_some_and(|t| t.has_attention())
     }
 
     /// 終端機分頁的編號（`live` 同 [`TabSet::doc_in`]）。
     pub fn terminal_tabs(&self, live: Option<&Document>) -> Vec<usize> {
-        (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.is_some()).collect()
+        (0..self.slots.len())
+            .filter(|&i| self.doc_in(live, i).terminal.is_some())
+            .collect()
     }
 
     /// 這個分頁集裡所有的文件（含背景的分頁）。有焦點的窗格作用中分頁的內容在 `App` 手上，這裡那一格只是占位，要略過。
     pub fn docs_mut(&mut self, skip_active: bool) -> Vec<&mut Document> {
         let active = self.active;
-        self.slots.iter_mut().enumerate().filter(|(i, _)| !(skip_active && *i == active)).map(|(_, s)| &mut s.doc).collect()
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter(|(i, _)| !(skip_active && *i == active))
+            .map(|(_, s)| &mut s.doc)
+            .collect()
     }
 
     /// 這個分頁集裡所有的終端機（含背景的分頁）。有焦點的窗格作用中分頁的內容在 `App` 手上，不在這裡。
     pub fn terminals_mut(&mut self) -> Vec<&mut crate::terminal_pane::TerminalPane> {
-        self.slots.iter_mut().filter_map(|s| s.doc.terminal.as_deref_mut()).collect()
+        self.slots
+            .iter_mut()
+            .filter_map(|s| s.doc.terminal.as_deref_mut())
+            .collect()
     }
 
     /// 終端機分頁的（分頁編號, 終端機識別編號）。
     pub fn terminal_uids(&self, live: Option<&Document>) -> Vec<(usize, u64)> {
-        (0..self.slots.len()).filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| (i, t.uid()))).collect()
+        (0..self.slots.len())
+            .filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| (i, t.uid())))
+            .collect()
     }
 
     /// 這個分頁集裡終端機分頁的標題編號。
     pub fn terminal_numbers(&self, live: Option<&Document>) -> Vec<usize> {
-        (0..self.slots.len()).filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| t.number())).collect()
+        (0..self.slots.len())
+            .filter_map(|i| self.doc_in(live, i).terminal.as_ref().map(|t| t.number()))
+            .collect()
     }
 
     /// shell 已經結束的終端機分頁編號。
     pub fn exited_terminal_tabs(&self, live: Option<&Document>) -> Vec<usize> {
-        (0..self.slots.len()).filter(|&i| self.doc_in(live, i).terminal.as_ref().is_some_and(|t| t.exited())).collect()
+        (0..self.slots.len())
+            .filter(|&i| {
+                self.doc_in(live, i)
+                    .terminal
+                    .as_ref()
+                    .is_some_and(|t| t.exited())
+            })
+            .collect()
     }
 
     /// 有未儲存修改的分頁編號。
@@ -382,7 +433,12 @@ impl TabSet {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TabRecord {
     File(std::path::PathBuf, usize),
-    Terminal { number: usize, name: Option<String>, dir: Option<std::path::PathBuf>, shell: Option<String> },
+    Terminal {
+        number: usize,
+        name: Option<String>,
+        dir: Option<std::path::PathBuf>,
+        shell: Option<String>,
+    },
 }
 
 /// 自然排序：不分大小寫，連續的數字依數值大小比較（`a2` 在 `a10` 前面）。
@@ -469,12 +525,25 @@ mod tests {
 
     #[test]
     fn reorder_moves_a_tab_and_the_active_tab_follows_its_content() {
-        let mut t = TabSet::from_tab(Tab { doc: file_named("a"), editor: EditorState::default() });
+        let mut t = TabSet::from_tab(Tab {
+            doc: file_named("a"),
+            editor: EditorState::default(),
+        });
         for n in ["b", "c", "d"] {
             let at = t.len();
-            t.push_tab(Tab { doc: file_named(n), editor: EditorState::default() }, at);
+            t.push_tab(
+                Tab {
+                    doc: file_named(n),
+                    editor: EditorState::default(),
+                },
+                at,
+            );
         }
-        let order = |t: &TabSet| (0..t.len()).map(|i| t.label_stashed(i).0).collect::<Vec<_>>();
+        let order = |t: &TabSet| {
+            (0..t.len())
+                .map(|i| t.label_stashed(i).0)
+                .collect::<Vec<_>>()
+        };
         t.activate(2); // c
         assert_eq!(t.reorder(0, 3), Some(2)); // a 搬到 c 後面
         assert_eq!(order(&t), ["b", "c", "a", "d"]);
@@ -489,14 +558,27 @@ mod tests {
 
     #[test]
     fn sort_by_name_is_natural_case_insensitive_and_keeps_the_active_content() {
-        let mut t = TabSet::from_tab(Tab { doc: file_named("b10.txt"), editor: EditorState::default() });
+        let mut t = TabSet::from_tab(Tab {
+            doc: file_named("b10.txt"),
+            editor: EditorState::default(),
+        });
         for n in ["B2.txt", "a.txt", "b1.txt"] {
             let at = t.len();
-            t.push_tab(Tab { doc: file_named(n), editor: EditorState::default() }, at);
+            t.push_tab(
+                Tab {
+                    doc: file_named(n),
+                    editor: EditorState::default(),
+                },
+                at,
+            );
         }
         t.activate(1); // B2.txt
         assert!(t.sort_by_name(false));
-        let order = |t: &TabSet| (0..t.len()).map(|i| t.label_stashed(i).0).collect::<Vec<_>>();
+        let order = |t: &TabSet| {
+            (0..t.len())
+                .map(|i| t.label_stashed(i).0)
+                .collect::<Vec<_>>()
+        };
         assert_eq!(order(&t), ["a.txt", "b1.txt", "B2.txt", "b10.txt"]);
         assert_eq!(t.active(), 2);
         assert!(!t.sort_by_name(false), "已經排好了");
@@ -538,7 +620,10 @@ mod tests {
         f.editor.recording = Some(Vec::new());
         let rec = f.tabs.stash(&mut f.doc, &mut f.editor);
         assert!(rec.is_some(), "錄製交還給呼叫端");
-        assert!(f.editor.recording.is_none() && f.doc.text().is_empty(), "內容已經收回分頁集");
+        assert!(
+            f.editor.recording.is_none() && f.doc.text().is_empty(),
+            "內容已經收回分頁集"
+        );
         f.tabs.unstash(&mut f.doc, &mut f.editor, rec);
         assert_eq!(f.doc.text(), "second");
         assert_eq!(f.editor.sel.head, 4);
@@ -582,7 +667,10 @@ mod tests {
     }
 
     fn named_tab(text: &str) -> Tab {
-        Tab { doc: named(text), editor: EditorState::default() }
+        Tab {
+            doc: named(text),
+            editor: EditorState::default(),
+        }
     }
 
     #[test]
@@ -595,7 +683,11 @@ mod tests {
         assert_eq!(set.active(), 3, "超出範圍就放最後");
         let order: Vec<String> = (0..4).map(|i| set.label_stashed(i).0).collect();
         assert_eq!(order.len(), 4);
-        let texts: Vec<String> = set.slots.iter_mut().map(|t| t.doc.text().to_owned()).collect();
+        let texts: Vec<String> = set
+            .slots
+            .iter_mut()
+            .map(|t| t.doc.text().to_owned())
+            .collect();
         assert_eq!(texts, ["c", "a", "b", "d"]);
     }
 
@@ -605,7 +697,10 @@ mod tests {
         let p = dir.path().join("x.txt");
         std::fs::write(&p, "hi").unwrap();
         let (doc, _) = Document::open(&p).unwrap();
-        let mut set = TabSet::from_tab(Tab { doc, editor: EditorState::default() });
+        let mut set = TabSet::from_tab(Tab {
+            doc,
+            editor: EditorState::default(),
+        });
         set.push_tab(named_tab("unsaved"), 1);
         assert_eq!(set.find_path_stashed(&p), Some(0));
         assert_eq!(set.find_path_stashed(&dir.path().join("nope.txt")), None);
@@ -613,7 +708,10 @@ mod tests {
         let entries = set.session_entries(None);
         assert_eq!(entries.len(), 1, "沒存過檔的分頁不記");
         assert_eq!(entries[0].0, p);
-        assert!(!entries[0].2, "作用中的是第二個分頁（沒檔名），所以這個不是作用中");
+        assert!(
+            !entries[0].2,
+            "作用中的是第二個分頁（沒檔名），所以這個不是作用中"
+        );
     }
 
     #[test]
@@ -705,7 +803,10 @@ mod tests {
         f.doc.dirty = true;
         assert_eq!(f.tabs.dirty_tabs(&f.doc), vec![0, 1]);
         let (name, full, dirty) = f.tabs.label(&f.doc, 0);
-        assert_eq!((name.as_str(), full.as_str(), dirty), ("未命名", "尚未儲存", true));
+        assert_eq!(
+            (name.as_str(), full.as_str(), dirty),
+            ("未命名", "尚未儲存", true)
+        );
     }
 
     #[test]
@@ -717,7 +818,8 @@ mod tests {
         std::fs::write(&b, "b").unwrap();
         let mut f = fixture();
         f.doc = Document::open(&a).unwrap().0;
-        f.tabs.push(&mut f.doc, &mut f.editor, Document::open(&b).unwrap().0);
+        f.tabs
+            .push(&mut f.doc, &mut f.editor, Document::open(&b).unwrap().0);
         assert_eq!(f.tabs.find_path(&f.doc, &a), Some(0));
         assert_eq!(f.tabs.find_path(&f.doc, &b), Some(1));
         assert_eq!(f.tabs.find_path(&f.doc, &dir.path().join("c.txt")), None);
@@ -753,11 +855,16 @@ mod tests {
         f.doc = Document::open(&a).unwrap().0;
         f.editor.sel.head = 2;
         f.tabs.push(&mut f.doc, &mut f.editor, named("untitled"));
-        f.tabs.push(&mut f.doc, &mut f.editor, Document::open(&b).unwrap().0);
+        f.tabs
+            .push(&mut f.doc, &mut f.editor, Document::open(&b).unwrap().0);
         f.editor.sel.head = 3;
         let entries = f.tabs.session_entries(Some((&f.doc, &f.editor)));
         let files: Vec<_> = entries.iter().map(|(p, c, _)| (p.clone(), *c)).collect();
         assert_eq!(files, vec![(a, 2), (b, 3)], "沒存過的分頁不記");
-        assert_eq!(entries.iter().position(|e| e.2), Some(1), "作用中的是第二個存過檔的分頁");
+        assert_eq!(
+            entries.iter().position(|e| e.2),
+            Some(1),
+            "作用中的是第二個存過檔的分頁"
+        );
     }
 }

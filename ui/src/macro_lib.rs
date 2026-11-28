@@ -45,7 +45,10 @@ pub fn applies(langs: &[String], lang: Option<&str>) -> bool {
 
 /// 兩支巨集的適用範圍有沒有重疊（通用的和任何範圍都重疊）：重疊時不能用同一個快捷鍵，不然同一種檔案上會同時觸發。
 pub fn scopes_overlap(a: &[String], b: &[String]) -> bool {
-    a.is_empty() || b.is_empty() || a.iter().any(|x| b.iter().any(|y| x.eq_ignore_ascii_case(y)))
+    a.is_empty()
+        || b.is_empty()
+        || a.iter()
+            .any(|x| b.iter().any(|y| x.eq_ignore_ascii_case(y)))
 }
 
 /// 讀檔案開頭註解裡的 `@lang`（可以有好幾行，合併起來），逗號分隔、去掉空白與重複。
@@ -56,8 +59,12 @@ pub fn parse_langs(source: &str) -> Vec<String> {
         if t.is_empty() {
             continue;
         }
-        let Some(rest) = t.strip_prefix("//") else { break };
-        let Some(value) = rest.trim().strip_prefix("@lang") else { continue };
+        let Some(rest) = t.strip_prefix("//") else {
+            break;
+        };
+        let Some(value) = rest.trim().strip_prefix("@lang") else {
+            continue;
+        };
         // 只認「標記後面接空白或結尾」，免得 @language 之類被當成 @lang
         if !value.is_empty() && !value.starts_with(char::is_whitespace) {
             continue;
@@ -74,8 +81,7 @@ pub fn parse_langs(source: &str) -> Vec<String> {
 
 /// 巨集資料夾；取不到使用者設定目錄時為 `None`。
 pub fn macros_dir() -> Option<PathBuf> {
-    crate::settings::Settings::default_path()
-        .and_then(|p| p.parent().map(|d| d.join("macros")))
+    crate::settings::Settings::default_path().and_then(|p| p.parent().map(|d| d.join("macros")))
 }
 
 /// 讀檔案開頭的註解，取出 `@name` 與 `@shortcut`。
@@ -86,7 +92,9 @@ pub fn parse_header(source: &str) -> (Option<String>, Option<String>) {
         if t.is_empty() {
             continue;
         }
-        let Some(rest) = t.strip_prefix("//") else { break };
+        let Some(rest) = t.strip_prefix("//") else {
+            break;
+        };
         let rest = rest.trim();
         if let Some(v) = rest.strip_prefix("@name") {
             if name.is_none() && !v.trim().is_empty() {
@@ -130,7 +138,14 @@ pub fn is_modifier_key(key: Key) -> bool {
     use Key::*;
     matches!(
         key,
-        ShiftLeft | ShiftRight | ControlLeft | ControlRight | AltLeft | AltRight | SuperLeft | SuperRight
+        ShiftLeft
+            | ShiftRight
+            | ControlLeft
+            | ControlRight
+            | AltLeft
+            | AltRight
+            | SuperLeft
+            | SuperRight
     )
 }
 
@@ -194,8 +209,16 @@ pub fn set_header_shortcut(source: &str, shortcut: Option<&str>) -> String {
 
 /// 把原始碼開頭的 `@lang` 換成 `langs`（空的表示拿掉，也就是適用於所有檔案）。
 pub fn set_header_langs(source: &str, langs: &[String]) -> String {
-    let joined = langs.iter().map(|l| l.replace(['\r', '\n', ','], " ")).collect::<Vec<_>>().join(", ");
-    set_header_tag(source, "@lang", (!joined.trim().is_empty()).then_some(joined.as_str()))
+    let joined = langs
+        .iter()
+        .map(|l| l.replace(['\r', '\n', ','], " "))
+        .collect::<Vec<_>>()
+        .join(", ");
+    set_header_tag(
+        source,
+        "@lang",
+        (!joined.trim().is_empty()).then_some(joined.as_str()),
+    )
 }
 
 /// 把原始碼開頭的 `@name` 換成 `name`（換行會變成空白）。
@@ -219,7 +242,10 @@ fn set_header_tag(source: &str, tag: &str, value: Option<&str>) -> String {
             } else if let Some(rest) = t.strip_prefix("//") {
                 let rest = rest.trim();
                 // 只認「標記後面接空白或結尾」，免得 @name 把 @namespace 也吃掉
-                if rest.strip_prefix(tag).is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace)) {
+                if rest
+                    .strip_prefix(tag)
+                    .is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace))
+                {
                     continue; // 舊的拿掉
                 }
             } else {
@@ -236,9 +262,20 @@ fn set_header_tag(source: &str, tag: &str, value: Option<&str>) -> String {
 pub fn file_stem_for(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_control() || "\\/:*?\"<>|".contains(c) { '_' } else { c })
+        .map(|c| {
+            if c.is_control() || "\\/:*?\"<>|".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
-    let cleaned: String = cleaned.trim().trim_end_matches(['.', ' ']).chars().take(60).collect();
+    let cleaned: String = cleaned
+        .trim()
+        .trim_end_matches(['.', ' '])
+        .chars()
+        .take(60)
+        .collect();
     let upper = cleaned.to_ascii_uppercase();
     let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (upper.len() == 4
@@ -268,11 +305,19 @@ pub fn unique_path(dir: &Path, base: &str) -> PathBuf {
 /// 把錄好的巨集以 `name` 為名存進資料夾（必要時建立），回傳檔案路徑。
 /// 檔案開頭寫入 `// @name`，所以巨集面板顯示的就是 `name` 原樣（含空白與中文）；檔名則用安全的版本，
 /// 重複時自動加 `-2`、`-3`。`langs` 不是空的就同時寫入 `// @lang`（只適用於那些檔案類型）。
-pub fn save_named(dir: &Path, name: &str, source: &str, langs: &[String]) -> std::io::Result<PathBuf> {
+pub fn save_named(
+    dir: &Path,
+    name: &str,
+    source: &str,
+    langs: &[String],
+) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let path = unique_path(dir, &file_stem_for(name));
     // 先寫 @lang 再寫 @name：新的標記放在最前面，所以名稱在最上面、適用範圍在它下面
-    std::fs::write(&path, set_header_name(&set_header_langs(source, langs), name))?;
+    std::fs::write(
+        &path,
+        set_header_name(&set_header_langs(source, langs), name),
+    )?;
     Ok(path)
 }
 
@@ -288,13 +333,17 @@ mod tests {
 
     #[test]
     fn header_reads_name_and_shortcut_from_leading_comments_only() {
-        let src = "// @name 轉大寫\n// 其他說明\n// @shortcut Ctrl+Alt+U\nconst x = 1;\n// @name 不算\n";
+        let src =
+            "// @name 轉大寫\n// 其他說明\n// @shortcut Ctrl+Alt+U\nconst x = 1;\n// @name 不算\n";
         assert_eq!(
             parse_header(src),
             (Some("轉大寫".to_owned()), Some("Ctrl+Alt+U".to_owned()))
         );
         assert_eq!(parse_header("editor.insert(0,'x');"), (None, None));
-        assert_eq!(parse_header("\n\n// @name  A \n"), (Some("A".to_owned()), None));
+        assert_eq!(
+            parse_header("\n\n// @name  A \n"),
+            (Some("A".to_owned()), None)
+        );
         assert_eq!(parse_header("// @name\n"), (None, None), "空的標記忽略");
     }
 
@@ -308,7 +357,16 @@ mod tests {
         assert_eq!(format_shortcut(&s), "Ctrl+Shift+1");
         let s = parse_shortcut("F6").unwrap();
         assert_eq!(format_shortcut(&s), "F6");
-        for t in ["U", "Shift+U", "Ctrl+", "Ctrl+Alt", "Ctrl+Foo", "Ctrl+A+B", "", "Ctrl+ControlLeft"] {
+        for t in [
+            "U",
+            "Shift+U",
+            "Ctrl+",
+            "Ctrl+Alt",
+            "Ctrl+Foo",
+            "Ctrl+A+B",
+            "",
+            "Ctrl+ControlLeft",
+        ] {
             assert!(parse_shortcut(t).is_none(), "{t:?}");
         }
     }
@@ -321,7 +379,10 @@ mod tests {
             "// @shortcut Ctrl+2\n// @name A\nbody();\n"
         );
         assert_eq!(set_header_shortcut(src, None), "// @name A\nbody();\n");
-        assert_eq!(set_header_shortcut("body();\n", Some("F6")), "// @shortcut F6\nbody();\n");
+        assert_eq!(
+            set_header_shortcut("body();\n", Some("F6")),
+            "// @shortcut F6\nbody();\n"
+        );
         // 程式碼裡面的同樣文字不能被動到
         let tricky = "run();\n// @shortcut Ctrl+9\n";
         assert_eq!(set_header_shortcut(tricky, None), tricky);
@@ -349,9 +410,15 @@ mod tests {
         let a = save_named(&sub, "轉換: 大寫/小寫?", "1;", &[]).unwrap();
         let b = save_named(&sub, "轉換: 大寫/小寫?", "2;", &[]).unwrap();
         assert_ne!(a, b);
-        assert_eq!(a.file_name().unwrap().to_string_lossy(), "轉換_ 大寫_小寫_.js");
+        assert_eq!(
+            a.file_name().unwrap().to_string_lossy(),
+            "轉換_ 大寫_小寫_.js"
+        );
         assert!(b.file_name().unwrap().to_string_lossy().contains("-2"));
-        assert_eq!(std::fs::read_to_string(&a).unwrap(), "// @name 轉換: 大寫/小寫?\n1;");
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "// @name 轉換: 大寫/小寫?\n1;"
+        );
         // 面板顯示的是原樣的名稱，不是被清理過的檔名
         let list = scan(&sub);
         assert!(list.iter().all(|m| m.name == "轉換: 大寫/小寫?"));
@@ -361,10 +428,17 @@ mod tests {
     fn rename_rewrites_only_the_name_tag_and_keeps_the_shortcut() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("m.js");
-        std::fs::write(&p, "// @name 舊名\n// @shortcut Ctrl+Alt+K\n// @namespace x\nrun();\n").unwrap();
+        std::fs::write(
+            &p,
+            "// @name 舊名\n// @shortcut Ctrl+Alt+K\n// @namespace x\nrun();\n",
+        )
+        .unwrap();
         rename(&p, "新名\n稱").unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
-        assert_eq!(text, "// @name 新名 稱\n// @shortcut Ctrl+Alt+K\n// @namespace x\nrun();\n");
+        assert_eq!(
+            text,
+            "// @name 新名 稱\n// @shortcut Ctrl+Alt+K\n// @namespace x\nrun();\n"
+        );
         let list = scan(dir.path());
         assert_eq!(list[0].name, "新名 稱");
         assert!(list[0].shortcut.is_some());
@@ -381,46 +455,110 @@ mod tests {
 
     #[test]
     fn lang_tag_is_read_from_the_header_only_and_split_on_commas() {
-        assert_eq!(parse_langs("// @name A\n// @lang Rust, python ,  Go\nbody();\n"), langs(&["Rust", "python", "Go"]));
-        assert_eq!(parse_langs("// @lang Rust\n// @lang rust，Go、Lua\n1;"), langs(&["Rust", "Go", "Lua"]), "多行合併、全形逗號與頓號、不分大小寫去重複");
-        assert!(parse_langs("1;\n// @lang Rust\n").is_empty(), "程式碼後面的不算");
-        assert!(parse_langs("// @lang\n// @language Rust\n// @langs Rust\n1;").is_empty(), "空的、別的標記都不算");
-        assert!(parse_langs("// @name A\n").is_empty(), "沒有標記就是所有檔案");
+        assert_eq!(
+            parse_langs("// @name A\n// @lang Rust, python ,  Go\nbody();\n"),
+            langs(&["Rust", "python", "Go"])
+        );
+        assert_eq!(
+            parse_langs("// @lang Rust\n// @lang rust，Go、Lua\n1;"),
+            langs(&["Rust", "Go", "Lua"]),
+            "多行合併、全形逗號與頓號、不分大小寫去重複"
+        );
+        assert!(
+            parse_langs("1;\n// @lang Rust\n").is_empty(),
+            "程式碼後面的不算"
+        );
+        assert!(
+            parse_langs("// @lang\n// @language Rust\n// @langs Rust\n1;").is_empty(),
+            "空的、別的標記都不算"
+        );
+        assert!(
+            parse_langs("// @name A\n").is_empty(),
+            "沒有標記就是所有檔案"
+        );
     }
 
     #[test]
     fn a_macro_without_lang_applies_everywhere_and_one_with_lang_only_to_those_types() {
-        let entry = |l: &[&str]| MacroEntry { path: PathBuf::new(), name: String::new(), shortcut: None, langs: langs(l) };
-        assert!(entry(&[]).applies_to(Some("Rust")) && entry(&[]).applies_to(None), "通用的：什麼檔案都適用，包含純文字");
+        let entry = |l: &[&str]| MacroEntry {
+            path: PathBuf::new(),
+            name: String::new(),
+            shortcut: None,
+            langs: langs(l),
+        };
+        assert!(
+            entry(&[]).applies_to(Some("Rust")) && entry(&[]).applies_to(None),
+            "通用的：什麼檔案都適用，包含純文字"
+        );
         let rust = entry(&["Rust", "Python"]);
-        assert!(rust.applies_to(Some("rust")) && rust.applies_to(Some("Python")), "不分大小寫");
-        assert!(!rust.applies_to(Some("Go")) && !rust.applies_to(None), "別的類型與純文字不適用");
+        assert!(
+            rust.applies_to(Some("rust")) && rust.applies_to(Some("Python")),
+            "不分大小寫"
+        );
+        assert!(
+            !rust.applies_to(Some("Go")) && !rust.applies_to(None),
+            "別的類型與純文字不適用"
+        );
     }
 
     #[test]
     fn scopes_overlap_when_either_is_universal_or_they_share_a_type() {
-        assert!(scopes_overlap(&[], &[]) && scopes_overlap(&[], &langs(&["Rust"])) && scopes_overlap(&langs(&["Go"]), &[]));
+        assert!(
+            scopes_overlap(&[], &[])
+                && scopes_overlap(&[], &langs(&["Rust"]))
+                && scopes_overlap(&langs(&["Go"]), &[])
+        );
         assert!(scopes_overlap(&langs(&["Rust", "Go"]), &langs(&["go"])));
-        assert!(!scopes_overlap(&langs(&["Rust"]), &langs(&["Python", "Go"])), "沒有共同的類型：可以共用快捷鍵");
+        assert!(
+            !scopes_overlap(&langs(&["Rust"]), &langs(&["Python", "Go"])),
+            "沒有共同的類型：可以共用快捷鍵"
+        );
     }
 
     #[test]
     fn set_header_langs_replaces_adds_and_removes_and_save_named_writes_it_under_the_name() {
         let src = "// @name A\n// @lang Rust\nbody();\n";
-        assert_eq!(set_header_langs(src, &langs(&["Go", "Lua"])), "// @lang Go, Lua\n// @name A\nbody();\n");
-        assert_eq!(set_header_langs(src, &[]), "// @name A\nbody();\n", "空的就拿掉，回到所有檔案");
-        assert_eq!(set_header_langs("body();\n", &langs(&["Rust"])), "// @lang Rust\nbody();\n");
-        assert_eq!(set_header_langs("body();\n", &langs(&["a,b\nc"])), "// @lang a b c\nbody();\n", "名稱裡的逗號與換行不能破壞格式");
+        assert_eq!(
+            set_header_langs(src, &langs(&["Go", "Lua"])),
+            "// @lang Go, Lua\n// @name A\nbody();\n"
+        );
+        assert_eq!(
+            set_header_langs(src, &[]),
+            "// @name A\nbody();\n",
+            "空的就拿掉，回到所有檔案"
+        );
+        assert_eq!(
+            set_header_langs("body();\n", &langs(&["Rust"])),
+            "// @lang Rust\nbody();\n"
+        );
+        assert_eq!(
+            set_header_langs("body();\n", &langs(&["a,b\nc"])),
+            "// @lang a b c\nbody();\n",
+            "名稱裡的逗號與換行不能破壞格式"
+        );
         let dir = tempfile::tempdir().unwrap();
         let path = save_named(dir.path(), "加註解", "1;", &langs(&["Rust"])).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "// @name 加註解\n// @lang Rust\n1;");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "// @name 加註解\n// @lang Rust\n1;"
+        );
         let entry = &scan(dir.path())[0];
-        assert_eq!((entry.name.as_str(), entry.langs.as_slice()), ("加註解", langs(&["Rust"]).as_slice()));
+        assert_eq!(
+            (entry.name.as_str(), entry.langs.as_slice()),
+            ("加註解", langs(&["Rust"]).as_slice())
+        );
         // 改名、設快捷鍵都保留適用範圍
         rename(&path, "新名").unwrap();
-        std::fs::write(&path, set_header_shortcut(&std::fs::read_to_string(&path).unwrap(), Some("Ctrl+Alt+K"))).unwrap();
+        std::fs::write(
+            &path,
+            set_header_shortcut(&std::fs::read_to_string(&path).unwrap(), Some("Ctrl+Alt+K")),
+        )
+        .unwrap();
         let entry = &scan(dir.path())[0];
-        assert_eq!((entry.name.as_str(), entry.langs.as_slice()), ("新名", langs(&["Rust"]).as_slice()));
+        assert_eq!(
+            (entry.name.as_str(), entry.langs.as_slice()),
+            ("新名", langs(&["Rust"]).as_slice())
+        );
         assert!(entry.shortcut.is_some());
     }
 

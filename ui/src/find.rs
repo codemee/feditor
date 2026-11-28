@@ -414,7 +414,11 @@ mod tests {
         assert!(f.find(text, 7, false));
         assert_eq!(f.current, Some(8..11));
         assert!(f.find(text, 11, false));
-        assert_eq!(f.current, Some(4..7), "範圍裡沒有了：繞回範圍開頭，不是整份文件的開頭");
+        assert_eq!(
+            f.current,
+            Some(4..7),
+            "範圍裡沒有了：繞回範圍開頭，不是整份文件的開頭"
+        );
         assert!(f.wrapped);
         assert!(f.find(text, 4, true));
         assert_eq!(f.current, Some(8..11), "向後找也繞在範圍裡");
@@ -426,7 +430,11 @@ mod tests {
         assert_eq!(f.replace_current(&mut b, sel), Some(4..8));
         assert_eq!(b.text(), "cat bird cat cat");
         assert_eq!(f.scope, Some(4..12), "範圍的結尾跟著新文字");
-        assert_eq!(f.replace_current(&mut b, 0..3), None, "範圍外的選取不能取代");
+        assert_eq!(
+            f.replace_current(&mut b, 0..3),
+            None,
+            "範圍外的選取不能取代"
+        );
         assert_eq!(f.replace_all(&mut b).unwrap(), 1);
         assert_eq!(b.text(), "cat bird bird cat");
         assert_eq!(f.scope, Some(4..13));

@@ -181,7 +181,9 @@ pub fn report_to_path(raw: &str, computer: Option<&str>) -> Option<String> {
         Some(rest) => {
             let slash = rest.find('/')?;
             let host = &rest[..slash];
-            let local = host.is_empty() || host.eq_ignore_ascii_case("localhost") || computer.is_some_and(|c| host.eq_ignore_ascii_case(c));
+            let local = host.is_empty()
+                || host.eq_ignore_ascii_case("localhost")
+                || computer.is_some_and(|c| host.eq_ignore_ascii_case(c));
             if !local {
                 return None;
             }
@@ -190,7 +192,9 @@ pub fn report_to_path(raw: &str, computer: Option<&str>) -> Option<String> {
             let bytes = p.as_bytes();
             if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
                 p.to_owned() // /C:/Users/me
-            } else if bytes.first().is_some_and(u8::is_ascii_alphabetic) && (bytes.len() == 1 || bytes[1] == b'/') {
+            } else if bytes.first().is_some_and(u8::is_ascii_alphabetic)
+                && (bytes.len() == 1 || bytes[1] == b'/')
+            {
                 format!("{}:/{}", bytes[0] as char, p.get(2..).unwrap_or("")) // /c/Users/me（MSYS）
             } else {
                 return None;
@@ -246,10 +250,21 @@ impl DumpLog {
 pub fn open_dump() -> Option<(std::fs::File, Arc<DumpLog>)> {
     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let base = std::env::var_os("FEDITOR_PTY_DUMP").filter(|b| !b.is_empty())?;
-    let name = format!("{}-{}-{}", base.to_string_lossy(), std::process::id(), COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let name = format!(
+        "{}-{}-{}",
+        base.to_string_lossy(),
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let bin = std::fs::File::create(format!("{name}.bin")).ok()?;
     let log = std::fs::File::create(format!("{name}.log")).ok()?;
-    Some((bin, Arc::new(DumpLog { file: std::sync::Mutex::new(log), start: std::time::Instant::now() })))
+    Some((
+        bin,
+        Arc::new(DumpLog {
+            file: std::sync::Mutex::new(log),
+            start: std::time::Instant::now(),
+        }),
+    ))
 }
 
 /// 讀的時候順便把資料給 [`Scanner`] 看的 PTY 讀取端。
@@ -276,7 +291,9 @@ impl<R> TapReader<R> {
         if let Some((poller, _)) = self.wake.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             use polling::os::iocp::{CompletionPacket, PollerIocpExt};
             // 事件迴圈只認 `PTY_READ_WRITE_TOKEN` 這個鍵（Windows 的 PTY 登記時把迴圈給的鍵換成它），用別的鍵會被忽略
-            let _ = poller.post(CompletionPacket::new(Event::readable(alacritty_terminal::tty::PTY_READ_WRITE_TOKEN)));
+            let _ = poller.post(CompletionPacket::new(Event::readable(
+                alacritty_terminal::tty::PTY_READ_WRITE_TOKEN,
+            )));
         }
     }
 }
@@ -318,7 +335,18 @@ impl<P: EventedReadWrite> Tapped<P> {
         // 讀取端在 `Box` 裡，位置不會因為 `Tapped` 被搬動而改變
         let inner: *mut P::Reader = pty.reader();
         let wake = Arc::new(std::sync::Mutex::new(None));
-        Self { pty, reader: TapReader { inner, scanner: Scanner::default(), found: Vec::new(), on_found: Box::new(on_found), dump: None, wake: wake.clone() }, wake }
+        Self {
+            pty,
+            reader: TapReader {
+                inner,
+                scanner: Scanner::default(),
+                found: Vec::new(),
+                on_found: Box::new(on_found),
+                dump: None,
+                wake: wake.clone(),
+            },
+            wake,
+        }
     }
 
     fn remember(&self, poller: &Arc<Poller>, event: Event) {
@@ -336,7 +364,12 @@ impl<P: EventedReadWrite> EventedReadWrite for Tapped<P> {
     type Reader = TapReader<P::Reader>;
     type Writer = P::Writer;
 
-    unsafe fn register(&mut self, poller: &Arc<Poller>, event: Event, mode: PollMode) -> io::Result<()> {
+    unsafe fn register(
+        &mut self,
+        poller: &Arc<Poller>,
+        event: Event,
+        mode: PollMode,
+    ) -> io::Result<()> {
         self.remember(poller, event);
         unsafe { self.pty.register(poller, event, mode) }
     }
@@ -384,13 +417,29 @@ mod tests {
 
     #[test]
     fn cwd_reports_and_notifications_are_found_with_either_terminator() {
-        assert_eq!(scan(&[b"\x1b]7;file:///C:/a\x07"]), vec![Osc::Cwd("file:///C:/a".into())]);
-        assert_eq!(scan(&[b"x\x1b]7;file:///C:/a\x1b\\y"]), vec![Osc::Cwd("file:///C:/a".into())]);
-        assert_eq!(scan(&[b"\x1b]9;9;\"C:\\Users\\me\"\x07"]), vec![Osc::Cwd("C:\\Users\\me".into())]);
+        assert_eq!(
+            scan(&[b"\x1b]7;file:///C:/a\x07"]),
+            vec![Osc::Cwd("file:///C:/a".into())]
+        );
+        assert_eq!(
+            scan(&[b"x\x1b]7;file:///C:/a\x1b\\y"]),
+            vec![Osc::Cwd("file:///C:/a".into())]
+        );
+        assert_eq!(
+            scan(&[b"\x1b]9;9;\"C:\\Users\\me\"\x07"]),
+            vec![Osc::Cwd("C:\\Users\\me".into())]
+        );
         assert_eq!(scan(&[b"\x1b]9;build done\x07"]), vec![Osc::Notify]);
-        assert_eq!(scan(&[b"\x1b]777;notify;Title;Body\x07"]), vec![Osc::Notify]);
+        assert_eq!(
+            scan(&[b"\x1b]777;notify;Title;Body\x07"]),
+            vec![Osc::Notify]
+        );
         assert_eq!(scan(&[b"\x1b]99;i=1:d=1;Hello\x1b\\"]), vec![Osc::Notify]);
-        assert_eq!(scan(&[b"\x1b]99;;Hello\x1b\\"]), vec![Osc::Notify], "沒有參數也算");
+        assert_eq!(
+            scan(&[b"\x1b]99;;Hello\x1b\\"]),
+            vec![Osc::Notify],
+            "沒有參數也算"
+        );
     }
 
     #[test]
@@ -398,8 +447,14 @@ mod tests {
         assert_eq!(scan(&[b"\x1b[>q"]), vec![Osc::XtVersion]);
         assert_eq!(scan(&[b"\x1b[>0q"]), vec![Osc::XtVersion]);
         // Claude Code 啟動時的一串查詢：只有 XTVERSION 是我們的
-        assert_eq!(scan(&[b"\x1b[>0q\x1b[?u\x1b]7501;?\x1b\\\x1b[c"]), vec![Osc::XtVersion]);
-        assert_eq!(scan(&[b"\x1b[>1u\x1b[?25h\x1b[1;2q\x1b[>5q\x1b[q\x1b[0q\x1b[>0c"]), vec![]);
+        assert_eq!(
+            scan(&[b"\x1b[>0q\x1b[?u\x1b]7501;?\x1b\\\x1b[c"]),
+            vec![Osc::XtVersion]
+        );
+        assert_eq!(
+            scan(&[b"\x1b[>1u\x1b[?25h\x1b[1;2q\x1b[>5q\x1b[q\x1b[0q\x1b[>0c"]),
+            vec![]
+        );
         // 被切在兩次讀取之間
         assert_eq!(scan(&[b"abc\x1b[", b">0", b"q"]), vec![Osc::XtVersion]);
         // 被 CAN 取消、或夾在文字裡
@@ -409,18 +464,33 @@ mod tests {
         assert_eq!(scan(&[b"\x1b[>000000000000000q"]), vec![]);
         // CSI 之後緊接著 OSC 仍然正常
         assert_eq!(scan(&[b"\x1b[0m\x1b]9;done\x07"]), vec![Osc::Notify]);
-        assert_eq!(xtversion_reply(), format!("\x1bP>|feditor {}\x1b\\", env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            xtversion_reply(),
+            format!("\x1bP>|feditor {}\x1b\\", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]
     fn things_that_are_not_notifications_are_left_alone() {
         // 標題、剪貼簿、超連結：別的地方處理
-        assert_eq!(scan(&[b"\x1b]0;title\x07\x1b]52;c;aGk=\x07\x1b]8;;https://a.b\x07"]), vec![]);
+        assert_eq!(
+            scan(&[b"\x1b]0;title\x07\x1b]52;c;aGk=\x07\x1b]8;;https://a.b\x07"]),
+            vec![]
+        );
         // ConEmu 的進度條與其他指令
         assert_eq!(scan(&[b"\x1b]9;4;1;50\x07\x1b]9;1;100\x07"]), vec![]);
         // rxvt 的其他子指令；kitty 的分段（d=0）、關閉、查詢
-        assert_eq!(scan(&[b"\x1b]777;preexec\x07\x1b]99;i=1:d=0;Hel\x07\x1b]99;p=close;\x07\x1b]99;p=?;\x07"]), vec![]);
-        assert_eq!(scan(&[b"\x1b]99;i=1:d=0:p=title;Hel\x07\x1b]99;i=1:p=body;lo\x07"]), vec![Osc::Notify], "分段的通知，只在最後一段響一次");
+        assert_eq!(
+            scan(&[
+                b"\x1b]777;preexec\x07\x1b]99;i=1:d=0;Hel\x07\x1b]99;p=close;\x07\x1b]99;p=?;\x07"
+            ]),
+            vec![]
+        );
+        assert_eq!(
+            scan(&[b"\x1b]99;i=1:d=0:p=title;Hel\x07\x1b]99;i=1:p=body;lo\x07"]),
+            vec![Osc::Notify],
+            "分段的通知，只在最後一段響一次"
+        );
         // 沒有結尾就被 CAN 取消
         assert_eq!(scan(&[b"\x1b]9;hello\x18 \x07"]), vec![]);
     }
@@ -430,7 +500,11 @@ mod tests {
         let whole: &[u8] = b"abc\x1b]7;file:///C:/Users/me\x1b\\def";
         for cut in 1..whole.len() {
             let found = scan(&[&whole[..cut], &whole[cut..]]);
-            assert_eq!(found, vec![Osc::Cwd("file:///C:/Users/me".into())], "切在第 {cut} 個位元組");
+            assert_eq!(
+                found,
+                vec![Osc::Cwd("file:///C:/Users/me".into())],
+                "切在第 {cut} 個位元組"
+            );
         }
     }
 
@@ -439,21 +513,55 @@ mod tests {
         let mut big = b"\x1b]9;".to_vec();
         big.extend(std::iter::repeat(b'x').take(MAX_PAYLOAD * 3));
         big.extend_from_slice(b"\x07\x1b]9;ok\x07");
-        assert_eq!(scan(&[&big]), vec![Osc::Notify], "太長的整段忽略，後面正常的照收");
+        assert_eq!(
+            scan(&[&big]),
+            vec![Osc::Notify],
+            "太長的整段忽略，後面正常的照收"
+        );
     }
 
     #[test]
     fn reported_folders_become_windows_paths_only_when_they_are_local() {
         let me = Some("MY-PC");
-        assert_eq!(report_to_path("file:///C:/Users/me", me).as_deref(), Some("C:/Users/me"));
-        assert_eq!(report_to_path("file://MY-PC/C:/My%20Docs", me).as_deref(), Some("C:/My Docs"));
-        assert_eq!(report_to_path("file://localhost/d/work", me).as_deref(), Some("d:/work"));
-        assert_eq!(report_to_path("file://my-pc/c/Users/me", me).as_deref(), Some("c:/Users/me"));
-        assert_eq!(report_to_path("file://other-host/C:/x", me), None, "別台電腦的路徑");
-        assert_eq!(report_to_path("file:///home/me", me), None, "WSL 的路徑在 Windows 上不是路徑");
-        assert_eq!(report_to_path("file://MY-PC/%ZZ", me), None, "壞掉的百分比編碼");
-        assert_eq!(report_to_path(r"C:\Users\me", me).as_deref(), Some(r"C:\Users\me"));
-        assert_eq!(report_to_path(r"\\server\share", me).as_deref(), Some(r"\\server\share"));
+        assert_eq!(
+            report_to_path("file:///C:/Users/me", me).as_deref(),
+            Some("C:/Users/me")
+        );
+        assert_eq!(
+            report_to_path("file://MY-PC/C:/My%20Docs", me).as_deref(),
+            Some("C:/My Docs")
+        );
+        assert_eq!(
+            report_to_path("file://localhost/d/work", me).as_deref(),
+            Some("d:/work")
+        );
+        assert_eq!(
+            report_to_path("file://my-pc/c/Users/me", me).as_deref(),
+            Some("c:/Users/me")
+        );
+        assert_eq!(
+            report_to_path("file://other-host/C:/x", me),
+            None,
+            "別台電腦的路徑"
+        );
+        assert_eq!(
+            report_to_path("file:///home/me", me),
+            None,
+            "WSL 的路徑在 Windows 上不是路徑"
+        );
+        assert_eq!(
+            report_to_path("file://MY-PC/%ZZ", me),
+            None,
+            "壞掉的百分比編碼"
+        );
+        assert_eq!(
+            report_to_path(r"C:\Users\me", me).as_deref(),
+            Some(r"C:\Users\me")
+        );
+        assert_eq!(
+            report_to_path(r"\\server\share", me).as_deref(),
+            Some(r"\\server\share")
+        );
         assert_eq!(report_to_path("/home/me", me), None);
     }
 
@@ -484,7 +592,10 @@ mod tests {
         let data = b"hello \x1b]9;done\x07 world \x1b]7;file:///C:/x\x07".to_vec();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
-        let mut tapped = Tapped::new(Box::new(Fake(io::Cursor::new(data.clone()), Vec::new())), move |o| sink.lock().unwrap().push(o));
+        let mut tapped = Tapped::new(
+            Box::new(Fake(io::Cursor::new(data.clone()), Vec::new())),
+            move |o| sink.lock().unwrap().push(o),
+        );
         // 搬動 `Tapped`（像交給事件迴圈那樣）之後，讀取端的位置也要還是對的
         let mut moved = Box::new(tapped);
         tapped = *moved;
@@ -499,7 +610,10 @@ mod tests {
             got.extend_from_slice(&chunk[..n]);
         }
         assert_eq!(got, data, "資料原封不動");
-        assert_eq!(*seen.lock().unwrap(), vec![Osc::Notify, Osc::Cwd("file:///C:/x".into())]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![Osc::Notify, Osc::Cwd("file:///C:/x".into())]
+        );
     }
 
     /// 事件迴圈每次只處理一部分就讓出，管線裡可能還剩資料；讀到資料之後要替它補投一個「可讀」事件，
@@ -508,22 +622,39 @@ mod tests {
     #[test]
     fn reading_data_posts_a_readable_event_so_leftover_output_is_not_stranded() {
         let poller = Arc::new(Poller::new().unwrap());
-        let mut tapped = Tapped::new(Box::new(Fake(io::Cursor::new(b"abc".to_vec()), Vec::new())), |_| {});
+        let mut tapped = Tapped::new(
+            Box::new(Fake(io::Cursor::new(b"abc".to_vec()), Vec::new())),
+            |_| {},
+        );
         // 事件迴圈登記讀取（假的 PTY 自己什麼事件也不會送）
-        unsafe { tapped.register(&poller, Event::readable(0), PollMode::Level).unwrap() };
+        unsafe {
+            tapped
+                .register(&poller, Event::readable(0), PollMode::Level)
+                .unwrap()
+        };
         let mut events = polling::Events::new();
-        poller.wait(&mut events, Some(std::time::Duration::from_millis(50))).unwrap();
+        poller
+            .wait(&mut events, Some(std::time::Duration::from_millis(50)))
+            .unwrap();
         assert!(events.iter().next().is_none(), "還沒讀到資料之前沒有事件");
         let mut buf = [0u8; 8];
         assert_eq!(tapped.reader().read(&mut buf).unwrap(), 3);
         events.clear();
-        poller.wait(&mut events, Some(std::time::Duration::from_secs(2))).unwrap();
+        poller
+            .wait(&mut events, Some(std::time::Duration::from_secs(2)))
+            .unwrap();
         let event = events.iter().next().expect("讀到資料之後要補投事件");
-        assert!(event.readable && event.key == alacritty_terminal::tty::PTY_READ_WRITE_TOKEN, "事件迴圈只認這個鍵：{}", event.key);
+        assert!(
+            event.readable && event.key == alacritty_terminal::tty::PTY_READ_WRITE_TOKEN,
+            "事件迴圈只認這個鍵：{}",
+            event.key
+        );
         // 讀到空（資料讀完了）就不再補投，迴圈不會空轉
         events.clear();
         assert_eq!(tapped.reader().read(&mut buf).unwrap(), 0);
-        poller.wait(&mut events, Some(std::time::Duration::from_millis(100))).unwrap();
+        poller
+            .wait(&mut events, Some(std::time::Duration::from_millis(100)))
+            .unwrap();
         assert!(events.iter().next().is_none(), "讀到空不補投");
     }
 }

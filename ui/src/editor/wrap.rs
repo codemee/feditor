@@ -159,7 +159,11 @@ mod tab_width_tests {
         assert_eq!(map.total_rows(), 2);
         motion::set_tab_width(2);
         map.ensure(&buf, 10);
-        assert_eq!(map.total_rows(), 1, "Tab 欄寬變了，同一份文字、同樣的寬度也要重算");
+        assert_eq!(
+            map.total_rows(),
+            1,
+            "Tab 欄寬變了，同一份文字、同樣的寬度也要重算"
+        );
         motion::set_tab_width(before);
     }
 }

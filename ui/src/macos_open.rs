@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use objc2::ffi::class_addMethod;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, NSObject, Sel};
-use objc2::{class, define_class, msg_send, sel, MainThreadOnly};
+use objc2::{MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_foundation::{MainThreadMarker, NSString};
 
 /// 收到、還沒被主畫面取走的路徑，以及收到時要叫醒畫面的函式。
@@ -32,7 +32,12 @@ pub fn set_wake(wake: impl Fn() + Send + 'static) {
 }
 
 /// delegate 上補的 `application:openFiles:`。
-extern "C" fn open_files(_this: *mut AnyObject, _cmd: Sel, app: *mut AnyObject, files: *mut AnyObject) {
+extern "C" fn open_files(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    app: *mut AnyObject,
+    files: *mut AnyObject,
+) {
     // SAFETY: files 是 NSArray<NSString *>；app 是 NSApplication。
     unsafe {
         let n: usize = msg_send![files, count];
@@ -44,7 +49,10 @@ extern "C" fn open_files(_this: *mut AnyObject, _cmd: Sel, app: *mut AnyObject, 
             }
         }
         if !paths.is_empty() {
-            PENDING.lock().unwrap_or_else(|e| e.into_inner()).extend(paths);
+            PENDING
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(paths);
             if let Some(wake) = WAKE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 wake();
             }
@@ -92,7 +100,9 @@ define_class!(
 
 /// 安裝。要在主執行緒、事件迴圈開始之前呼叫。
 pub fn install() {
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     let observer: Retained<Observer> = unsafe { msg_send![Observer::alloc(mtm), init] };
     // SAFETY: 通知中心不持有觀察者，所以下面讓它活到程式結束；選擇器與方法相符。
     unsafe {

@@ -102,7 +102,9 @@ impl Node {
                 true
             }
             Node::Leaf(_) => false,
-            Node::Split { first, second, .. } => first.split(target, side, new_id) || second.split(target, side, new_id),
+            Node::Split { first, second, .. } => {
+                first.split(target, side, new_id) || second.split(target, side, new_id)
+            }
         }
     }
 
@@ -132,7 +134,11 @@ impl Node {
         match self {
             Node::Leaf(id) => *id,
             Node::Split { first, second, .. } => {
-                if from_start { first.nearest_leaf(true) } else { second.nearest_leaf(false) }
+                if from_start {
+                    first.nearest_leaf(true)
+                } else {
+                    second.nearest_leaf(false)
+                }
             }
         }
     }
@@ -144,9 +150,18 @@ impl Node {
                 Axis::Horizontal => min.x,
                 Axis::Vertical => min.y,
             },
-            Node::Split { axis: a, first, second, .. } => {
+            Node::Split {
+                axis: a,
+                first,
+                second,
+                ..
+            } => {
                 let (x, y) = (first.min_extent(axis, min), second.min_extent(axis, min));
-                if *a == axis { x + y + DIVIDER } else { x.max(y) }
+                if *a == axis {
+                    x + y + DIVIDER
+                } else {
+                    x.max(y)
+                }
             }
         }
     }
@@ -161,7 +176,12 @@ impl Node {
     fn arrange_into(&self, area: Rect, min: Vec2, path: &mut Vec<bool>, out: &mut Arranged) {
         match self {
             Node::Leaf(id) => out.panes.push((*id, area)),
-            Node::Split { axis, ratio, first, second } => {
+            Node::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            } => {
                 let extent = match axis {
                     Axis::Horizontal => area.width(),
                     Axis::Vertical => area.height(),
@@ -176,16 +196,27 @@ impl Node {
                 let (rect_a, bar, rect_b) = match axis {
                     Axis::Horizontal => (
                         Rect::from_min_max(area.min, pos2(area.min.x + a, area.max.y)),
-                        Rect::from_min_max(pos2(area.min.x + a, area.min.y), pos2(area.min.x + a + DIVIDER, area.max.y)),
+                        Rect::from_min_max(
+                            pos2(area.min.x + a, area.min.y),
+                            pos2(area.min.x + a + DIVIDER, area.max.y),
+                        ),
                         Rect::from_min_max(pos2(area.min.x + a + DIVIDER, area.min.y), area.max),
                     ),
                     Axis::Vertical => (
                         Rect::from_min_max(area.min, pos2(area.max.x, area.min.y + a)),
-                        Rect::from_min_max(pos2(area.min.x, area.min.y + a), pos2(area.max.x, area.min.y + a + DIVIDER)),
+                        Rect::from_min_max(
+                            pos2(area.min.x, area.min.y + a),
+                            pos2(area.max.x, area.min.y + a + DIVIDER),
+                        ),
                         Rect::from_min_max(pos2(area.min.x, area.min.y + a + DIVIDER), area.max),
                     ),
                 };
-                out.dividers.push(Divider { path: path.clone(), axis: *axis, rect: bar, area });
+                out.dividers.push(Divider {
+                    path: path.clone(),
+                    axis: *axis,
+                    rect: bar,
+                    area,
+                });
                 path.push(false);
                 first.arrange_into(rect_a, min, path, out);
                 path.pop();
@@ -201,7 +232,12 @@ impl Node {
     pub fn to_spec(&self, is_preview: &dyn Fn(PaneId) -> bool) -> String {
         match self {
             Node::Leaf(id) => format!("{}{id}", if is_preview(*id) { 'W' } else { 'P' }),
-            Node::Split { axis, ratio, first, second } => format!(
+            Node::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            } => format!(
                 "{}{ratio:.3}[{},{}]",
                 if *axis == Axis::Horizontal { 'H' } else { 'V' },
                 first.to_spec(is_preview),
@@ -224,7 +260,13 @@ impl Node {
 
     /// 設定 `path` 指到的分割節點的比例。
     pub fn set_ratio(&mut self, path: &[bool], value: f32) {
-        if let Node::Split { ratio, first, second, .. } = self {
+        if let Node::Split {
+            ratio,
+            first,
+            second,
+            ..
+        } = self
+        {
             match path.split_first() {
                 None => *ratio = value.clamp(0.05, 0.95),
                 Some((false, rest)) => first.set_ratio(rest, value),
@@ -274,7 +316,11 @@ fn parse_spec_node(
                 return None;
             }
             Some(Node::Split {
-                axis: if c == 'H' { Axis::Horizontal } else { Axis::Vertical },
+                axis: if c == 'H' {
+                    Axis::Horizontal
+                } else {
+                    Axis::Vertical
+                },
                 ratio: ratio.clamp(0.05, 0.95),
                 first: Box::new(first),
                 second: Box::new(second),
@@ -335,7 +381,9 @@ pub fn preview_rect(rect: Rect, zone: Zone) -> Rect {
         Zone::Into => rect,
         Zone::Split(Side::Left) => Rect::from_min_max(rect.min, pos2(rect.center().x, rect.max.y)),
         Zone::Split(Side::Right) => Rect::from_min_max(pos2(rect.center().x, rect.min.y), rect.max),
-        Zone::Split(Side::Bottom) => Rect::from_min_max(pos2(rect.min.x, rect.center().y), rect.max),
+        Zone::Split(Side::Bottom) => {
+            Rect::from_min_max(pos2(rect.min.x, rect.center().y), rect.max)
+        }
     }
 }
 
@@ -356,10 +404,26 @@ pub fn neighbor(rects: &[(PaneId, Rect)], from: PaneId, dir: Dir) -> Option<Pane
     // 單位：像素取整，避免浮點誤差讓「一樣遠」的窗格分出高下
     let key = |r: Rect| -> (bool, i32, i32) {
         let (gap, overlap, start) = match dir {
-            Dir::Right => (r.min.x - me.max.x, r.min.y < me.max.y && r.max.y > me.min.y, r.min.y),
-            Dir::Left => (me.min.x - r.max.x, r.min.y < me.max.y && r.max.y > me.min.y, r.min.y),
-            Dir::Down => (r.min.y - me.max.y, r.min.x < me.max.x && r.max.x > me.min.x, r.min.x),
-            Dir::Up => (me.min.y - r.max.y, r.min.x < me.max.x && r.max.x > me.min.x, r.min.x),
+            Dir::Right => (
+                r.min.x - me.max.x,
+                r.min.y < me.max.y && r.max.y > me.min.y,
+                r.min.y,
+            ),
+            Dir::Left => (
+                me.min.x - r.max.x,
+                r.min.y < me.max.y && r.max.y > me.min.y,
+                r.min.y,
+            ),
+            Dir::Down => (
+                r.min.y - me.max.y,
+                r.min.x < me.max.x && r.max.x > me.min.x,
+                r.min.x,
+            ),
+            Dir::Up => (
+                me.min.y - r.max.y,
+                r.min.x < me.max.x && r.max.x > me.min.x,
+                r.min.x,
+            ),
         };
         // 沒有重疊的排後面（用 bool 的 false < true 反過來）
         (!overlap, gap.round() as i32, start.round() as i32)
@@ -390,7 +454,12 @@ pub struct Layout<T> {
 
 impl<T> Default for Layout<T> {
     fn default() -> Self {
-        Self { root: Node::Leaf(0), others: HashMap::new(), focus: 0, next_id: 1 }
+        Self {
+            root: Node::Leaf(0),
+            others: HashMap::new(),
+            focus: 0,
+            next_id: 1,
+        }
     }
 }
 
@@ -489,7 +558,10 @@ mod tests {
         for (i, (_, r)) in a.panes.iter().enumerate() {
             assert!(area(1000.0, 600.0).contains_rect(*r));
             for (_, other) in &a.panes[i + 1..] {
-                assert!(!r.shrink(0.5).intersects(other.shrink(0.5)), "{r:?} 與 {other:?} 重疊");
+                assert!(
+                    !r.shrink(0.5).intersects(other.shrink(0.5)),
+                    "{r:?} 與 {other:?} 重疊"
+                );
             }
         }
     }
@@ -514,7 +586,11 @@ mod tests {
         let mut root = Node::Leaf(0);
         root.split(0, Side::Right, 1); // [0 | 1]
         root.split(0, Side::Bottom, 2); // [(0 / 2) | 1]
-        assert_eq!(root.remove(1), Some(2), "左邊子樹裡離它最近的是最右／最下的 2");
+        assert_eq!(
+            root.remove(1),
+            Some(2),
+            "左邊子樹裡離它最近的是最右／最下的 2"
+        );
     }
 
     #[test]
@@ -526,7 +602,11 @@ mod tests {
             root.set_ratio(&[], ratio);
             let a = root.arrange(area(800.0, 500.0), MIN_PANE);
             for (_, r) in &a.panes {
-                assert!(r.width() >= MIN_PANE.x - 0.01, "比例 {ratio}：寬 {}", r.width());
+                assert!(
+                    r.width() >= MIN_PANE.x - 0.01,
+                    "比例 {ratio}：寬 {}",
+                    r.width()
+                );
             }
             let total: f32 = a.panes.iter().map(|(_, r)| r.width()).sum::<f32>() + DIVIDER;
             assert!((total - 800.0).abs() < 0.01, "窗格加分隔線要剛好填滿");
@@ -549,9 +629,15 @@ mod tests {
         let mut root = Node::Leaf(0);
         root.split(0, Side::Right, 1);
         root.split(1, Side::Bottom, 2);
-        let a = root.arrange(area(2.0 * MIN_PANE.x + DIVIDER, 2.0 * MIN_PANE.y + DIVIDER), MIN_PANE);
+        let a = root.arrange(
+            area(2.0 * MIN_PANE.x + DIVIDER, 2.0 * MIN_PANE.y + DIVIDER),
+            MIN_PANE,
+        );
         for (_, r) in &a.panes {
-            assert!(r.width() >= MIN_PANE.x - 0.01 && r.height() >= MIN_PANE.y - 0.01, "{r:?}");
+            assert!(
+                r.width() >= MIN_PANE.x - 0.01 && r.height() >= MIN_PANE.y - 0.01,
+                "{r:?}"
+            );
         }
     }
 
@@ -579,7 +665,12 @@ mod tests {
         root.split(0, Side::Right, 1);
         root.split(1, Side::Bottom, 2);
         let a = root.arrange(area(1000.0, 800.0), MIN_PANE);
-        let inner = a.dividers.iter().find(|d| d.axis == Axis::Vertical).unwrap().clone();
+        let inner = a
+            .dividers
+            .iter()
+            .find(|d| d.axis == Axis::Vertical)
+            .unwrap()
+            .clone();
         assert_eq!(inner.path, vec![true]);
         root.set_ratio(&inner.path, 0.25);
         let b = root.arrange(area(1000.0, 800.0), MIN_PANE);
@@ -590,7 +681,11 @@ mod tests {
     #[test]
     fn small_panes_cannot_be_split_further() {
         let big = area(2.0 * MIN_PANE.x + DIVIDER, 2.0 * MIN_PANE.y + DIVIDER);
-        assert!(can_split(big, Side::Left) && can_split(big, Side::Right) && can_split(big, Side::Bottom));
+        assert!(
+            can_split(big, Side::Left)
+                && can_split(big, Side::Right)
+                && can_split(big, Side::Bottom)
+        );
         let narrow = area(2.0 * MIN_PANE.x, 1000.0);
         assert!(!can_split(narrow, Side::Left) && !can_split(narrow, Side::Right));
         assert!(can_split(narrow, Side::Bottom));
@@ -618,7 +713,10 @@ mod tests {
     fn drop_zones_disappear_when_the_pane_is_too_small_to_split() {
         let narrow = area(2.0 * MIN_PANE.x, 600.0);
         assert_eq!(drop_zone(narrow, 28.0, pos2(5.0, 300.0)), Zone::Into);
-        assert_eq!(drop_zone(narrow, 28.0, pos2(narrow.width() / 2.0, 590.0)), Zone::Split(Side::Bottom));
+        assert_eq!(
+            drop_zone(narrow, 28.0, pos2(narrow.width() / 2.0, 590.0)),
+            Zone::Split(Side::Bottom)
+        );
     }
 
     #[test]
@@ -652,7 +750,20 @@ mod tests {
 
     #[test]
     fn broken_layout_text_is_rejected() {
-        for bad in ["", "X1", "P", "Pabc", "H0.5[P0]", "H0.5[P0,P1", "H0.5[P0,P1]x", "H[P0,P1]", "H0.5(P0,P1)", "P1P2", "H0.5[P1,P1]", "H0.5[P0,H0.5[P1,P0]]"] {
+        for bad in [
+            "",
+            "X1",
+            "P",
+            "Pabc",
+            "H0.5[P0]",
+            "H0.5[P0,P1",
+            "H0.5[P0,P1]x",
+            "H[P0,P1]",
+            "H0.5(P0,P1)",
+            "P1P2",
+            "H0.5[P1,P1]",
+            "H0.5[P0,H0.5[P1,P0]]",
+        ] {
             assert!(Node::from_spec(bad).is_none(), "{bad:?} 應該被拒絕");
         }
         // 巢狀太深不會讓程式當掉

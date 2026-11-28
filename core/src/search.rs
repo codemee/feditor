@@ -30,7 +30,9 @@ impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SearchError::Empty => f.write_str(t("搜尋字串是空的")),
-            SearchError::InvalidRegex(msg) => f.write_str(&crate::tf!("規則表達式錯誤：{msg}", msg = msg)),
+            SearchError::InvalidRegex(msg) => {
+                f.write_str(&crate::tf!("規則表達式錯誤：{msg}", msg = msg))
+            }
         }
     }
 }
@@ -216,7 +218,8 @@ fn is_whole_word(text: &str, r: &Range<usize>) -> bool {
     let last = text[..r.end].chars().next_back();
     let before = text[..r.start].chars().next_back();
     let after = text[r.end..].chars().next();
-    let start_ok = !matches!((first, before), (Some(f), Some(b)) if is_word_char(f) && is_word_char(b));
+    let start_ok =
+        !matches!((first, before), (Some(f), Some(b)) if is_word_char(f) && is_word_char(b));
     let end_ok = !matches!((last, after), (Some(l), Some(a)) if is_word_char(l) && is_word_char(a));
     start_ok && end_ok
 }
@@ -325,7 +328,9 @@ mod tests {
         )
         .err();
         match e {
-            Some(SearchError::InvalidRegex(m)) => assert!(!m.contains('\n') && !m.is_empty(), "{m}"),
+            Some(SearchError::InvalidRegex(m)) => {
+                assert!(!m.contains('\n') && !m.is_empty(), "{m}")
+            }
             other => panic!("預期 InvalidRegex，得到 {other:?}"),
         }
     }

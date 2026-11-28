@@ -55,12 +55,24 @@ pub fn ensure_installed() {
 #[cfg(all(windows, target_arch = "x86_64"))]
 fn install() {
     use std::os::windows::ffi::OsStrExt;
-    let Some(base) = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from) else { return };
+    let Some(base) = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from) else {
+        return;
+    };
     let dir = base.join("feditor").join("conpty").join(VERSION);
-    if !unpack(&dir, &[("conpty.dll", CONPTY_DLL), ("OpenConsole.exe", OPEN_CONSOLE)]) {
+    if !unpack(
+        &dir,
+        &[
+            ("conpty.dll", CONPTY_DLL),
+            ("OpenConsole.exe", OPEN_CONSOLE),
+        ],
+    ) {
         return;
     }
-    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     // SAFETY: `wide` 是以 0 結尾的路徑字串，呼叫期間一直有效
     unsafe { windows_sys::Win32::System::LibraryLoader::SetDllDirectoryW(wide.as_ptr()) };
 }
@@ -86,11 +98,26 @@ mod tests {
         assert!(unpack(&dir, &files));
         assert_eq!(std::fs::read(dir.join("x.dll")).unwrap(), b"dll-bytes");
         // 內容正確：不重寫（修改時間不變）
-        let before = std::fs::metadata(dir.join("y.exe")).unwrap().modified().unwrap();
+        let before = std::fs::metadata(dir.join("y.exe"))
+            .unwrap()
+            .modified()
+            .unwrap();
         assert!(unpack(&dir, &files));
-        assert_eq!(std::fs::metadata(dir.join("y.exe")).unwrap().modified().unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(dir.join("y.exe"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            before
+        );
         // 沒有留下暫存檔
-        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+        assert!(
+            std::fs::read_dir(&dir).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp"))
+        );
     }
 
     #[test]
@@ -98,7 +125,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let blocker = root.path().join("file");
         std::fs::write(&blocker, "").unwrap();
-        assert!(!unpack(&blocker.join("sub"), &[("x", b"1")]), "資料夾建不起來：回傳失敗，不當機");
+        assert!(
+            !unpack(&blocker.join("sub"), &[("x", b"1")]),
+            "資料夾建不起來：回傳失敗，不當機"
+        );
     }
 
     /// 隨附的檔案真的是微軟的 ConPTY（簡單的完整性檢查：檔頭 `MZ`、大小合理）。

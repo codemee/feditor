@@ -68,9 +68,21 @@ pub fn registry_values(exe: &Path, labels: &Labels) -> Vec<RegValue> {
     ];
     let mut values = Vec::new();
     for (key, label, arg) in items {
-        values.push(RegValue { key: key.to_owned(), name: "", data: label.clone() });
-        values.push(RegValue { key: key.to_owned(), name: "Icon", data: icon.clone() });
-        values.push(RegValue { key: format!(r"{key}\command"), name: "", data: format!("\"{exe}\" \"{arg}\"") });
+        values.push(RegValue {
+            key: key.to_owned(),
+            name: "",
+            data: label.clone(),
+        });
+        values.push(RegValue {
+            key: key.to_owned(),
+            name: "Icon",
+            data: icon.clone(),
+        });
+        values.push(RegValue {
+            key: format!(r"{key}\command"),
+            name: "",
+            data: format!("\"{exe}\" \"{arg}\""),
+        });
     }
     values
 }
@@ -78,10 +90,16 @@ pub fn registry_values(exe: &Path, labels: &Labels) -> Vec<RegValue> {
 // ───────── macOS 快速動作的內容（同樣是純文字邏輯） ─────────
 
 /// 快速動作的資料夾名稱與要處理的檔案類型（`public.data` 是檔案，`public.folder` 是資料夾）。
-pub const SERVICE_NAMES: [(&str, &str); 2] = [("FEditor-Open.workflow", "public.data"), ("FEditor-Pick.workflow", "public.folder")];
+pub const SERVICE_NAMES: [(&str, &str); 2] = [
+    ("FEditor-Open.workflow", "public.data"),
+    ("FEditor-Pick.workflow", "public.folder"),
+];
 
 fn xml_escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// 包成 shell 的單引號字串（字串裡的單引號寫成 `'\''`）。
@@ -128,7 +146,10 @@ pub fn service_info_plist(label: &str, file_type: &str) -> String {
 /// 快速動作的 `Contents/document.wflow`：只有一個「執行 Shell 描述檔」，把選到的項目當參數交給 FEditor。
 pub fn service_workflow(exe: &Path) -> String {
     // 放到背景、斷開輸出：快速動作結束時不會把 FEditor 一起帶走
-    let script = format!("nohup {} \"$@\" >/dev/null 2>&1 &", shell_quote(&exe.display().to_string()));
+    let script = format!(
+        "nohup {} \"$@\" >/dev/null 2>&1 &",
+        shell_quote(&exe.display().to_string())
+    );
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -266,10 +287,17 @@ pub fn service_workflow(exe: &Path) -> String {
 /// 在 `dir`（通常是 `~/Library/Services`）寫入兩個快速動作。
 pub fn write_services(dir: &Path, exe: &Path, labels: &Labels) -> std::io::Result<()> {
     for (name, file_type) in SERVICE_NAMES {
-        let label = if file_type == "public.folder" { &labels.pick } else { &labels.open };
+        let label = if file_type == "public.folder" {
+            &labels.pick
+        } else {
+            &labels.open
+        };
         let contents = dir.join(name).join("Contents");
         std::fs::create_dir_all(&contents)?;
-        std::fs::write(contents.join("Info.plist"), service_info_plist(label, file_type))?;
+        std::fs::write(
+            contents.join("Info.plist"),
+            service_info_plist(label, file_type),
+        )?;
         std::fs::write(contents.join("document.wflow"), service_workflow(exe))?;
     }
     Ok(())
@@ -295,8 +323,8 @@ mod imp {
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW,
-        RegDeleteTreeW, RegGetValueW, RegSetValueExW,
+        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ,
+        RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegGetValueW, RegSetValueExW,
     };
 
     pub const CLASSES: &str = r"Software\Classes";
@@ -306,7 +334,11 @@ mod imp {
     }
 
     fn check(code: u32, what: &str) -> Result<(), String> {
-        if code == ERROR_SUCCESS { Ok(()) } else { Err(format!("{what}（錯誤碼 {code}）")) }
+        if code == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!("{what}（錯誤碼 {code}）"))
+        }
     }
 
     /// 把 `values` 寫到 `HKCU\<classes>` 底下。
@@ -316,13 +348,32 @@ mod imp {
             let mut key: HKEY = null_mut();
             // SAFETY: 參數都是以 0 結尾的 UTF-16 字串或有效的輸出指標
             let created = unsafe {
-                RegCreateKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, null(), &mut key, null_mut())
+                RegCreateKeyExW(
+                    HKEY_CURRENT_USER,
+                    path.as_ptr(),
+                    0,
+                    null(),
+                    REG_OPTION_NON_VOLATILE,
+                    KEY_WRITE,
+                    null(),
+                    &mut key,
+                    null_mut(),
+                )
             };
             check(created, "無法建立登錄機碼")?;
             let name = wide(v.name);
             let data = wide(&v.data);
             // SAFETY: key 剛建立成功；資料長度以位元組計，含結尾的 0
-            let set = unsafe { RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, data.as_ptr().cast(), (data.len() * 2) as u32) };
+            let set = unsafe {
+                RegSetValueExW(
+                    key,
+                    name.as_ptr(),
+                    0,
+                    REG_SZ,
+                    data.as_ptr().cast(),
+                    (data.len() * 2) as u32,
+                )
+            };
             // SAFETY: 關閉剛開啟的 key
             unsafe { RegCloseKey(key) };
             check(set, "無法寫入登錄值")?;
@@ -351,7 +402,15 @@ mod imp {
         let mut bytes = (buf.len() * 2) as u32;
         // SAFETY: buf 夠大，bytes 是它的位元組數；函式會回報實際長度
         let code = unsafe {
-            RegGetValueW(HKEY_CURRENT_USER, path.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, null_mut(), buf.as_mut_ptr().cast(), &mut bytes)
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                path.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
         };
         if code != ERROR_SUCCESS {
             return None;
@@ -382,7 +441,9 @@ mod imp {
 
     /// 請系統重新讀取服務清單（不然要登出再登入才看得到）；失敗也沒關係。
     fn refresh() {
-        let _ = std::process::Command::new("/System/Library/CoreServices/pbs").arg("-update").status();
+        let _ = std::process::Command::new("/System/Library/CoreServices/pbs")
+            .arg("-update")
+            .status();
     }
 
     pub fn enable(exe: &Path, labels: &Labels) -> Result<(), String> {
@@ -416,35 +477,71 @@ mod tests {
     use super::*;
 
     fn labels() -> Labels {
-        Labels { open: "用 FEditor 開啟".to_owned(), pick: "用 FEditor 選取檔案開啟…".to_owned() }
+        Labels {
+            open: "用 FEditor 開啟".to_owned(),
+            pick: "用 FEditor 選取檔案開啟…".to_owned(),
+        }
     }
 
     #[test]
     fn registry_values_cover_files_folders_and_folder_backgrounds() {
         let values = registry_values(Path::new(r"C:\Apps\FEditor\feditor.exe"), &labels());
-        let get = |key: &str, name: &str| values.iter().find(|v| v.key == key && v.name == name).map(|v| v.data.clone());
+        let get = |key: &str, name: &str| {
+            values
+                .iter()
+                .find(|v| v.key == key && v.name == name)
+                .map(|v| v.data.clone())
+        };
         // 檔案：開啟
-        assert_eq!(get(r"*\shell\FEditor", "").as_deref(), Some("用 FEditor 開啟"));
-        assert_eq!(get(r"*\shell\FEditor\command", "").as_deref(), Some(r#""C:\Apps\FEditor\feditor.exe" "%1""#));
+        assert_eq!(
+            get(r"*\shell\FEditor", "").as_deref(),
+            Some("用 FEditor 開啟")
+        );
+        assert_eq!(
+            get(r"*\shell\FEditor\command", "").as_deref(),
+            Some(r#""C:\Apps\FEditor\feditor.exe" "%1""#)
+        );
         // 資料夾：選取檔案開啟；資料夾空白處用 %V
-        assert_eq!(get(r"Directory\shell\FEditor", "").as_deref(), Some("用 FEditor 選取檔案開啟…"));
-        assert_eq!(get(r"Directory\shell\FEditor\command", "").as_deref(), Some(r#""C:\Apps\FEditor\feditor.exe" "%1""#));
-        assert_eq!(get(r"Directory\Background\shell\FEditor\command", "").as_deref(), Some(r#""C:\Apps\FEditor\feditor.exe" "%V""#));
+        assert_eq!(
+            get(r"Directory\shell\FEditor", "").as_deref(),
+            Some("用 FEditor 選取檔案開啟…")
+        );
+        assert_eq!(
+            get(r"Directory\shell\FEditor\command", "").as_deref(),
+            Some(r#""C:\Apps\FEditor\feditor.exe" "%1""#)
+        );
+        assert_eq!(
+            get(r"Directory\Background\shell\FEditor\command", "").as_deref(),
+            Some(r#""C:\Apps\FEditor\feditor.exe" "%V""#)
+        );
         // 每個項目都有圖示；全部都在我們自己的三個機碼底下（移除時才刪得乾淨）
-        assert_eq!(get(r"*\shell\FEditor", "Icon").as_deref(), Some(r#""C:\Apps\FEditor\feditor.exe",0"#));
+        assert_eq!(
+            get(r"*\shell\FEditor", "Icon").as_deref(),
+            Some(r#""C:\Apps\FEditor\feditor.exe",0"#)
+        );
         assert_eq!(values.len(), 9);
-        assert!(values.iter().all(|v| REGISTRY_KEYS.iter().any(|k| v.key == *k || v.key.starts_with(&format!(r"{k}\")))));
+        assert!(values.iter().all(|v| {
+            REGISTRY_KEYS
+                .iter()
+                .any(|k| v.key == *k || v.key.starts_with(&format!(r"{k}\")))
+        }));
     }
 
     #[test]
     fn shell_quote_and_xml_escape_keep_special_characters_safe() {
-        assert_eq!(shell_quote("/Applications/FEditor.app/Contents/MacOS/feditor"), "'/Applications/FEditor.app/Contents/MacOS/feditor'");
+        assert_eq!(
+            shell_quote("/Applications/FEditor.app/Contents/MacOS/feditor"),
+            "'/Applications/FEditor.app/Contents/MacOS/feditor'"
+        );
         assert_eq!(shell_quote("/a b/it's"), r"'/a b/it'\''s'");
         assert_eq!(xml_escape(r#"a&b<c>"d""#), "a&amp;b&lt;c&gt;&quot;d&quot;");
         let wflow = service_workflow(Path::new("/Users/me/My Apps/it's & <ok>/feditor"));
         assert!(wflow.contains("nohup '/Users/me/My Apps/it'\\''s &amp; &lt;ok&gt;/feditor' &quot;$@&quot; &gt;/dev/null 2&gt;&amp;1 &amp;"), "{wflow}");
         let info = service_info_plist("用 FEditor 選取檔案開啟…", "public.folder");
-        assert!(info.contains("<string>用 FEditor 選取檔案開啟…</string>") && info.contains("<string>public.folder</string>"));
+        assert!(
+            info.contains("<string>用 FEditor 選取檔案開啟…</string>")
+                && info.contains("<string>public.folder</string>")
+        );
         assert!(info.contains("com.apple.finder") && info.contains("runWorkflowAsService"));
     }
 
@@ -453,19 +550,41 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let services = dir.path().join("Library/Services");
         write_services(&services, Path::new("/x/feditor"), &labels()).unwrap();
-        let info = |name: &str| std::fs::read_to_string(services.join(name).join("Contents/Info.plist")).unwrap();
-        assert!(info("FEditor-Open.workflow").contains("用 FEditor 開啟") && info("FEditor-Open.workflow").contains("public.data"));
-        assert!(info("FEditor-Pick.workflow").contains("用 FEditor 選取檔案開啟…") && info("FEditor-Pick.workflow").contains("public.folder"));
-        assert!(services.join("FEditor-Pick.workflow/Contents/document.wflow").is_file());
+        let info = |name: &str| {
+            std::fs::read_to_string(services.join(name).join("Contents/Info.plist")).unwrap()
+        };
+        assert!(
+            info("FEditor-Open.workflow").contains("用 FEditor 開啟")
+                && info("FEditor-Open.workflow").contains("public.data")
+        );
+        assert!(
+            info("FEditor-Pick.workflow").contains("用 FEditor 選取檔案開啟…")
+                && info("FEditor-Pick.workflow").contains("public.folder")
+        );
+        assert!(
+            services
+                .join("FEditor-Pick.workflow/Contents/document.wflow")
+                .is_file()
+        );
         // 換語言、換位置：重寫一次就更新
-        let english = Labels { open: "Open with FEditor".to_owned(), pick: "Pick files with FEditor...".to_owned() };
+        let english = Labels {
+            open: "Open with FEditor".to_owned(),
+            pick: "Pick files with FEditor...".to_owned(),
+        };
         write_services(&services, Path::new("/y/feditor"), &english).unwrap();
         assert!(info("FEditor-Open.workflow").contains("Open with FEditor"));
-        assert!(std::fs::read_to_string(services.join("FEditor-Open.workflow/Contents/document.wflow")).unwrap().contains("/y/feditor"));
+        assert!(
+            std::fs::read_to_string(services.join("FEditor-Open.workflow/Contents/document.wflow"))
+                .unwrap()
+                .contains("/y/feditor")
+        );
         // 別人的快速動作不會被動到
         std::fs::create_dir_all(services.join("Other.workflow")).unwrap();
         remove_services(&services).unwrap();
-        assert!(!services.join("FEditor-Open.workflow").exists() && !services.join("FEditor-Pick.workflow").exists());
+        assert!(
+            !services.join("FEditor-Open.workflow").exists()
+                && !services.join("FEditor-Pick.workflow").exists()
+        );
         assert!(services.join("Other.workflow").exists());
         remove_services(&services).unwrap(); // 沒有也算成功
     }
@@ -477,13 +596,30 @@ mod tests {
         let classes = format!(r"Software\feditor-test-{}\Classes", std::process::id());
         let values = registry_values(Path::new(r"C:\Apps\feditor.exe"), &labels());
         imp::write(&classes, &values).unwrap();
-        assert_eq!(imp::read(&classes, r"*\shell\FEditor", "").as_deref(), Some("用 FEditor 開啟"));
-        assert_eq!(imp::read(&classes, r"Directory\Background\shell\FEditor\command", "").as_deref(), Some(r#""C:\Apps\feditor.exe" "%V""#));
-        imp::write(&classes, &registry_values(Path::new(r"D:\feditor.exe"), &labels())).unwrap(); // 更新
-        assert_eq!(imp::read(&classes, r"*\shell\FEditor\command", "").as_deref(), Some(r#""D:\feditor.exe" "%1""#));
+        assert_eq!(
+            imp::read(&classes, r"*\shell\FEditor", "").as_deref(),
+            Some("用 FEditor 開啟")
+        );
+        assert_eq!(
+            imp::read(&classes, r"Directory\Background\shell\FEditor\command", "").as_deref(),
+            Some(r#""C:\Apps\feditor.exe" "%V""#)
+        );
+        imp::write(
+            &classes,
+            &registry_values(Path::new(r"D:\feditor.exe"), &labels()),
+        )
+        .unwrap(); // 更新
+        assert_eq!(
+            imp::read(&classes, r"*\shell\FEditor\command", "").as_deref(),
+            Some(r#""D:\feditor.exe" "%1""#)
+        );
         imp::delete(&classes, &REGISTRY_KEYS).unwrap();
         assert_eq!(imp::read(&classes, r"*\shell\FEditor", ""), None);
         imp::delete(&classes, &REGISTRY_KEYS).unwrap(); // 沒有也算成功
-        imp::delete("Software", &[&format!("feditor-test-{}", std::process::id())]).unwrap(); // 連測試用的機碼一起清掉
+        imp::delete(
+            "Software",
+            &[&format!("feditor-test-{}", std::process::id())],
+        )
+        .unwrap(); // 連測試用的機碼一起清掉
     }
 }

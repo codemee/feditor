@@ -166,7 +166,13 @@ pub enum PaneNav {
 }
 
 impl PaneNav {
-    pub const ALL: [PaneNav; 5] = [PaneNav::Alt, PaneNav::CtrlAlt, PaneNav::CtrlShift, PaneNav::AltShift, PaneNav::Off];
+    pub const ALL: [PaneNav; 5] = [
+        PaneNav::Alt,
+        PaneNav::CtrlAlt,
+        PaneNav::CtrlShift,
+        PaneNav::AltShift,
+        PaneNav::Off,
+    ];
 
     /// 設定檔裡的寫法，也是顯示給使用者看的按鍵名稱（`Off` 除外）。
     pub fn name(self) -> &'static str {
@@ -181,7 +187,9 @@ impl PaneNav {
 
     pub fn parse(text: &str) -> Option<PaneNav> {
         let text = text.trim().trim_matches('"');
-        Self::ALL.into_iter().find(|p| p.name().eq_ignore_ascii_case(text))
+        Self::ALL
+            .into_iter()
+            .find(|p| p.name().eq_ignore_ascii_case(text))
     }
 }
 
@@ -307,17 +315,27 @@ impl Default for Settings {
 impl Settings {
     /// 這個主題目前選的配色名稱（空字串表示預設）。
     pub fn scheme_name(&self, dark: bool) -> &str {
-        if dark { &self.dark_scheme } else { &self.light_scheme }
+        if dark {
+            &self.dark_scheme
+        } else {
+            &self.light_scheme
+        }
     }
 
     /// 這個檔案類型（語法上色的語言名稱；純文字等沒有語言的是 `None`）的 Tab 欄數：有個別設定就用它，否則用預設的。
     pub fn tab_width_for(&self, language: Option<&str>) -> usize {
-        language.and_then(|name| self.tab_widths.get(name)).copied().unwrap_or(self.tab_width) as usize
+        language
+            .and_then(|name| self.tab_widths.get(name))
+            .copied()
+            .unwrap_or(self.tab_width) as usize
     }
 
     /// 這個檔案類型（`None` 是純文字或認不出來的）要不要自動換行：有個別設定就用它，否則用預設值 `view.word_wrap`。
     pub fn word_wrap_for(&self, language: Option<&str>) -> bool {
-        self.wrap_langs.get(language.unwrap_or(PLAIN_TEXT_KEY)).copied().unwrap_or(self.view.word_wrap)
+        self.wrap_langs
+            .get(language.unwrap_or(PLAIN_TEXT_KEY))
+            .copied()
+            .unwrap_or(self.view.word_wrap)
     }
 
     /// 設定這個檔案類型的自動換行；`None` 移除個別設定（改用預設值）。
@@ -335,7 +353,11 @@ impl Settings {
     }
 
     pub fn set_scheme_name(&mut self, dark: bool, name: &str) {
-        let slot = if dark { &mut self.dark_scheme } else { &mut self.light_scheme };
+        let slot = if dark {
+            &mut self.dark_scheme
+        } else {
+            &mut self.light_scheme
+        };
         *slot = name.to_owned();
     }
 }
@@ -382,14 +404,18 @@ impl Settings {
                 }
                 "tab_width" => {
                     if let Ok(n) = value.parse::<u32>() {
-                        settings.tab_width = n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8;
+                        settings.tab_width =
+                            n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8;
                     }
                 }
                 // tab_width.語言名稱 = 欄數：這個檔案類型自己的 Tab 欄數
                 key if key.starts_with("tab_width.") => {
                     let name = key["tab_width.".len()..].trim();
                     if let (false, Ok(n)) = (name.is_empty(), value.parse::<u32>()) {
-                        settings.tab_widths.insert(name.to_owned(), n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8);
+                        settings.tab_widths.insert(
+                            name.to_owned(),
+                            n.clamp(MIN_TAB_COLUMNS as u32, MAX_TAB_COLUMNS as u32) as u8,
+                        );
                     }
                 }
                 // run_args.檔案路徑 = 參數：這個檔案「執行」時的命令列參數
@@ -410,7 +436,9 @@ impl Settings {
                     let project = key["runtime.".len()..].trim();
                     let value = value.trim_matches('"').trim();
                     if !project.is_empty() && !value.is_empty() {
-                        settings.runtime_choices.insert(project.to_owned(), value.to_owned());
+                        settings
+                            .runtime_choices
+                            .insert(project.to_owned(), value.to_owned());
                     }
                 }
                 // word_wrap.語言名稱 = on|off：這個檔案類型自己的「自動換行」
@@ -423,7 +451,9 @@ impl Settings {
                 // wrap_style.語言名稱 = align|hang：這個檔案類型括號內斷行的風格
                 key if key.starts_with("wrap_style.") => {
                     let name = key["wrap_style.".len()..].trim();
-                    if let (false, Some(style)) = (name.is_empty(), crate::syntax::WrapStyle::parse(value)) {
+                    if let (false, Some(style)) =
+                        (name.is_empty(), crate::syntax::WrapStyle::parse(value))
+                    {
                         settings.wrap_styles.insert(name.to_owned(), style);
                     }
                 }
@@ -463,7 +493,8 @@ impl Settings {
                 }
                 "search_dock_height" => {
                     if let Ok(v) = value.parse::<f32>() {
-                        settings.search_dock_height = v.clamp(crate::search_dock::MIN_HEIGHT, 4000.0);
+                        settings.search_dock_height =
+                            v.clamp(crate::search_dock::MIN_HEIGHT, 4000.0);
                     }
                 }
                 "search_split" => {
@@ -483,8 +514,11 @@ impl Settings {
                 }
                 "terminal_font_size" => {
                     if let Ok(size) = value.parse::<f32>() {
-                        settings.terminal_font_size =
-                            if size.is_finite() { size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE) } else { DEFAULT_TERMINAL_FONT_SIZE };
+                        settings.terminal_font_size = if size.is_finite() {
+                            size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+                        } else {
+                            DEFAULT_TERMINAL_FONT_SIZE
+                        };
                     }
                 }
                 "terminal_font_family" => {
@@ -500,7 +534,9 @@ impl Settings {
                         };
                     }
                 }
-                "terminal_shell" => settings.terminal_shell = value.trim_matches('"').trim().to_owned(),
+                "terminal_shell" => {
+                    settings.terminal_shell = value.trim_matches('"').trim().to_owned()
+                }
                 "terminal_ctrl_w_closes" => {
                     if let Some(on) = parse_bool(value) {
                         settings.terminal_ctrl_w_closes = on;
@@ -517,7 +553,8 @@ impl Settings {
                         if n == 0 {
                             settings.view.ruler = false;
                         } else {
-                            settings.view.ruler_column = n.clamp(MIN_RULER_COLUMN as u32, MAX_RULER_COLUMN as u32) as u16;
+                            settings.view.ruler_column =
+                                n.clamp(MIN_RULER_COLUMN as u32, MAX_RULER_COLUMN as u32) as u16;
                         }
                     }
                 }
@@ -553,8 +590,11 @@ impl Settings {
                         settings.preview_sync_scroll = on;
                     }
                 }
-                key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap" | "syntax" | "ruler") => {
-                    let Some(on) = parse_bool(value) else { continue };
+                key @ ("show_whitespace" | "show_line_numbers" | "highlight_line" | "word_wrap"
+                | "syntax" | "ruler") => {
+                    let Some(on) = parse_bool(value) else {
+                        continue;
+                    };
                     match key {
                         "show_whitespace" => settings.view.show_whitespace = on,
                         "show_line_numbers" => settings.view.show_line_numbers = on,
@@ -579,14 +619,22 @@ impl Settings {
         }
         text.push_str(&format!("font_size = {}\n", self.font_size));
         text.push_str(&format!("preview_font_size = {}\n", self.preview_font_size));
-        text.push_str(&format!("tab_width = {}\ntab_spaces = {}\n", self.tab_width, self.tab_spaces));
+        text.push_str(&format!(
+            "tab_width = {}\ntab_spaces = {}\n",
+            self.tab_width, self.tab_spaces
+        ));
         text.push_str(&format!("auto_indent = {}\n", self.auto_indent));
         text.push_str(&format!("shell_menu = {}\n", self.shell_menu));
         text.push_str(&format!("cli_command = {}\n", self.cli_command));
         text.push_str(&format!("file_assoc = {}\n", self.file_assoc));
         let groups: Vec<&str> = self.file_assoc_groups.iter().map(String::as_str).collect();
         text.push_str(&format!("file_assoc_groups = {}\n", groups.join(",")));
-        text.push_str(&format!("search_dock = {}\nsearch_dock_width = {}\nsearch_dock_height = {}\n", self.search_dock_edge.name(), self.search_dock_width.round(), self.search_dock_height.round()));
+        text.push_str(&format!(
+            "search_dock = {}\nsearch_dock_width = {}\nsearch_dock_height = {}\n",
+            self.search_dock_edge.name(),
+            self.search_dock_width.round(),
+            self.search_dock_height.round()
+        ));
         if let Some(split) = self.search_split {
             text.push_str(&format!("search_split = {split:.3}\n"));
         }
@@ -598,7 +646,10 @@ impl Settings {
         }
         for (project, program) in &self.runtime_choices {
             // 專案資料夾與直譯器都是單行文字；資料夾含等號會被當成鍵值的分隔，那種就不記
-            if !project.is_empty() && !project.contains(['\r', '\n', '=']) && !program.contains(['\r', '\n']) {
+            if !project.is_empty()
+                && !project.contains(['\r', '\n', '='])
+                && !program.contains(['\r', '\n'])
+            {
                 text.push_str(&format!("runtime.{project} = {program}\n"));
             }
         }
@@ -606,7 +657,11 @@ impl Settings {
             text.push_str(&format!("recent = {path}\n"));
         }
         for (file, args) in &self.run_args {
-            if !file.is_empty() && !file.contains(['\r', '\n', '=']) && !args.contains(['\r', '\n']) && !args.trim().is_empty() {
+            if !file.is_empty()
+                && !file.contains(['\r', '\n', '='])
+                && !args.contains(['\r', '\n'])
+                && !args.trim().is_empty()
+            {
                 text.push_str(&format!("run_args.{file} = {}\n", args.trim()));
             }
         }
@@ -620,30 +675,57 @@ impl Settings {
                 text.push_str(&format!("wrap_style.{name} = {}\n", style.name()));
             }
         }
-        text.push_str(&format!("terminal_font_size = {}\n", self.terminal_font_size));
+        text.push_str(&format!(
+            "terminal_font_size = {}\n",
+            self.terminal_font_size
+        ));
         if let Some(name) = &self.terminal_font_family {
-            text.push_str(&format!("terminal_font_family = {}\n", name.replace(['\r', '\n'], " ")));
+            text.push_str(&format!(
+                "terminal_font_family = {}\n",
+                name.replace(['\r', '\n'], " ")
+            ));
         }
-        text.push_str(&format!("terminal_min_contrast = {}\n", self.terminal_min_contrast));
+        text.push_str(&format!(
+            "terminal_min_contrast = {}\n",
+            self.terminal_min_contrast
+        ));
         if !self.terminal_shell.is_empty() {
-            text.push_str(&format!("terminal_shell = {}\n", self.terminal_shell.replace(['\r', '\n'], " ")));
+            text.push_str(&format!(
+                "terminal_shell = {}\n",
+                self.terminal_shell.replace(['\r', '\n'], " ")
+            ));
         }
-        text.push_str(&format!("terminal_title_spinner = {}\n", self.terminal_title_spinner));
-        text.push_str(&format!("terminal_ctrl_w_closes = {}\n", self.terminal_ctrl_w_closes));
+        text.push_str(&format!(
+            "terminal_title_spinner = {}\n",
+            self.terminal_title_spinner
+        ));
+        text.push_str(&format!(
+            "terminal_ctrl_w_closes = {}\n",
+            self.terminal_ctrl_w_closes
+        ));
         let v = self.view;
         text.push_str(&format!(
             "show_whitespace = {}\nshow_line_numbers = {}\nhighlight_line = {}\nword_wrap = {}\nsyntax = {}\n",
             v.show_whitespace, v.show_line_numbers, v.highlight_line, v.word_wrap, v.syntax
         ));
-        text.push_str(&format!("ruler = {}\nruler_column = {}\n", v.ruler, v.ruler_column));
+        text.push_str(&format!(
+            "ruler = {}\nruler_column = {}\n",
+            v.ruler, v.ruler_column
+        ));
         text.push_str(&format!("show_output = {}\n", self.show_output));
         text.push_str(&format!("output_pane = {}\n", self.output_pane));
-        text.push_str(&format!("preview_sync_scroll = {}\n", self.preview_sync_scroll));
+        text.push_str(&format!(
+            "preview_sync_scroll = {}\n",
+            self.preview_sync_scroll
+        ));
         text.push_str(&format!("wide_cols = {}\n", self.wide_cols));
         text.push_str(&format!("pane_nav = {}\n", self.pane_nav.name()));
         text.push_str(&format!("language = {}\n", self.language.key()));
         // 名稱是單行文字；有換行的話會破壞設定檔，所以換成空白（正常情況不會有）
-        for (key, name) in [("light_scheme", &self.light_scheme), ("dark_scheme", &self.dark_scheme)] {
+        for (key, name) in [
+            ("light_scheme", &self.light_scheme),
+            ("dark_scheme", &self.dark_scheme),
+        ] {
             if !name.is_empty() {
                 text.push_str(&format!("{key} = {}\n", name.replace(['\r', '\n'], " ")));
             }
@@ -738,7 +820,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn font_settings_roundtrip_including_spaces_and_cjk() {
         for family in ["Courier New", "細明體", "Cascadia Mono", "Source Code Pro"] {
@@ -759,7 +840,9 @@ mod tests {
         assert_eq!(Settings::parse(&s.to_text()).font_family, None);
         assert_eq!(Settings::parse("font_family =   ").font_family, None);
         assert_eq!(
-            Settings::parse("font_family = \"Consolas\"").font_family.as_deref(),
+            Settings::parse("font_family = \"Consolas\"")
+                .font_family
+                .as_deref(),
             Some("Consolas")
         );
     }
@@ -770,9 +853,18 @@ mod tests {
         assert_eq!(Settings::parse("font_size = 1").font_size, MIN_FONT_SIZE);
         assert_eq!(Settings::parse("font_size = 9999").font_size, MAX_FONT_SIZE);
         // 讀不懂、不是數字、無限大：維持預設，不會把先前有效的值洗掉
-        assert_eq!(Settings::parse("font_size = big").font_size, DEFAULT_FONT_SIZE);
-        assert_eq!(Settings::parse("font_size = NaN").font_size, DEFAULT_FONT_SIZE);
-        assert_eq!(Settings::parse("font_size = inf").font_size, DEFAULT_FONT_SIZE);
+        assert_eq!(
+            Settings::parse("font_size = big").font_size,
+            DEFAULT_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("font_size = NaN").font_size,
+            DEFAULT_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("font_size = inf").font_size,
+            DEFAULT_FONT_SIZE
+        );
         assert_eq!(
             Settings::parse("font_size = 18\nfont_size = oops").font_size,
             18.0
@@ -814,23 +906,49 @@ mod tests {
     }
 
     #[test]
-    fn the_margin_guide_is_on_by_default_with_80_columns_the_column_is_clamped_and_both_round_trip() {
+    fn the_margin_guide_is_on_by_default_with_80_columns_the_column_is_clamped_and_both_round_trip()
+    {
         let d = Settings::default().view;
         assert_eq!((d.ruler, d.ruler_column), (true, DEFAULT_RULER_COLUMN));
         let s = Settings::parse("ruler = false\nruler_column = 100\n").view;
-        assert_eq!((s.ruler, s.ruler_column), (false, 100), "沒啟用時欄數也記著");
-        assert_eq!(Settings::parse("ruler_column = 99999").view.ruler_column, MAX_RULER_COLUMN);
-        assert_eq!(Settings::parse("ruler_column = -3").view.ruler_column, DEFAULT_RULER_COLUMN, "讀不懂就忽略");
-        assert_eq!(Settings::parse("ruler_column = wide").view.ruler_column, DEFAULT_RULER_COLUMN);
-        assert_eq!(Settings::parse("ruler = maybe").view.ruler, true, "讀不懂就用預設");
+        assert_eq!(
+            (s.ruler, s.ruler_column),
+            (false, 100),
+            "沒啟用時欄數也記著"
+        );
+        assert_eq!(
+            Settings::parse("ruler_column = 99999").view.ruler_column,
+            MAX_RULER_COLUMN
+        );
+        assert_eq!(
+            Settings::parse("ruler_column = -3").view.ruler_column,
+            DEFAULT_RULER_COLUMN,
+            "讀不懂就忽略"
+        );
+        assert_eq!(
+            Settings::parse("ruler_column = wide").view.ruler_column,
+            DEFAULT_RULER_COLUMN
+        );
+        assert_eq!(
+            Settings::parse("ruler = maybe").view.ruler,
+            true,
+            "讀不懂就用預設"
+        );
         // 舊版用 0 表示不畫：視為沒啟用，欄數留預設
         let legacy = Settings::parse("ruler_column = 0").view;
-        assert_eq!((legacy.ruler, legacy.ruler_column), (false, DEFAULT_RULER_COLUMN));
+        assert_eq!(
+            (legacy.ruler, legacy.ruler_column),
+            (false, DEFAULT_RULER_COLUMN)
+        );
         let mut s = Settings::default();
         s.view.ruler = false;
         s.view.ruler_column = 72;
         let back = Settings::parse(&s.to_text()).view;
-        assert_eq!((back.ruler, back.ruler_column), (false, 72), "關閉也會記住，欄數也留著");
+        assert_eq!(
+            (back.ruler, back.ruler_column),
+            (false, 72),
+            "關閉也會記住，欄數也留著"
+        );
         s.view.ruler = true;
         assert_eq!(Settings::parse(&s.to_text()).view.ruler, true);
     }
@@ -849,7 +967,9 @@ mod tests {
         // 舊的設定檔只有一個全域的 word_wrap：它成為所有類型的預設值
         let old = Settings::parse("word_wrap = true\n");
         assert!(old.word_wrap_for(Some("Rust")) && old.word_wrap_for(None));
-        let s = Settings::parse("word_wrap = false\nword_wrap.Markdown = on\nword_wrap.Plain text = true\nword_wrap.Rust = off\nword_wrap. = on\nword_wrap.Go = maybe\n");
+        let s = Settings::parse(
+            "word_wrap = false\nword_wrap.Markdown = on\nword_wrap.Plain text = true\nword_wrap.Rust = off\nword_wrap. = on\nword_wrap.Go = maybe\n",
+        );
         assert!(s.word_wrap_for(Some("Markdown")));
         assert!(s.word_wrap_for(None), "純文字有自己的設定");
         assert!(!s.word_wrap_for(Some("Rust")));
@@ -862,7 +982,10 @@ mod tests {
         custom.set_word_wrap_for(Some("bad=name"), Some(true));
         let back = Settings::parse(&custom.to_text());
         assert!(back.word_wrap_for(Some("Python")) && back.word_wrap_for(None));
-        assert!(!back.wrap_langs.contains_key("bad=name"), "含等號的名稱不寫進設定檔");
+        assert!(
+            !back.wrap_langs.contains_key("bad=name"),
+            "含等號的名稱不寫進設定檔"
+        );
         // 移除個別設定：回到預設
         custom.set_word_wrap_for(Some("Python"), None);
         assert!(!custom.word_wrap_for(Some("Python")));
@@ -871,8 +994,13 @@ mod tests {
     #[test]
     fn tab_settings_have_a_default_per_file_type_overrides_and_a_global_spaces_switch() {
         let d = Settings::default();
-        assert_eq!((d.tab_width, d.tab_spaces, d.tab_widths.len()), (4, false, 0));
-        let s = Settings::parse("tab_width = 8\ntab_spaces = true\ntab_width.Python = 4\ntab_width.C/C++ = 2\n");
+        assert_eq!(
+            (d.tab_width, d.tab_spaces, d.tab_widths.len()),
+            (4, false, 0)
+        );
+        let s = Settings::parse(
+            "tab_width = 8\ntab_spaces = true\ntab_width.Python = 4\ntab_width.C/C++ = 2\n",
+        );
         assert_eq!((s.tab_width, s.tab_spaces), (8, true));
         assert_eq!(s.tab_width_for(Some("Python")), 4);
         assert_eq!(s.tab_width_for(Some("C/C++")), 2);
@@ -881,9 +1009,19 @@ mod tests {
         // 範圍與壞值
         assert_eq!(Settings::parse("tab_width = 0").tab_width, MIN_TAB_COLUMNS);
         assert_eq!(Settings::parse("tab_width = 99").tab_width, MAX_TAB_COLUMNS);
-        assert_eq!(Settings::parse("tab_width = wide").tab_width, DEFAULT_TAB_COLUMNS);
-        assert_eq!(Settings::parse("tab_width.Rust = 99").tab_widths["Rust"], MAX_TAB_COLUMNS);
-        assert!(Settings::parse("tab_width.Rust = x\ntab_width. = 3").tab_widths.is_empty());
+        assert_eq!(
+            Settings::parse("tab_width = wide").tab_width,
+            DEFAULT_TAB_COLUMNS
+        );
+        assert_eq!(
+            Settings::parse("tab_width.Rust = 99").tab_widths["Rust"],
+            MAX_TAB_COLUMNS
+        );
+        assert!(
+            Settings::parse("tab_width.Rust = x\ntab_width. = 3")
+                .tab_widths
+                .is_empty()
+        );
         // 存檔再讀回來（含名稱裡有空白、符號的語言）
         let mut custom = Settings::default();
         custom.tab_width = 2;
@@ -895,19 +1033,44 @@ mod tests {
         assert_eq!((back.tab_width, back.tab_spaces), (2, true));
         assert_eq!(back.tab_widths.get("Shell"), Some(&8));
         assert_eq!(back.tab_widths.get("My Lang+"), Some(&3));
-        assert!(!back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"), "含等號的名稱不寫進設定檔");
+        assert!(
+            !back.tab_widths.contains_key("bad=name") && !back.tab_widths.contains_key("bad"),
+            "含等號的名稱不寫進設定檔"
+        );
     }
 
     #[test]
     fn file_association_is_off_by_default_picks_code_and_config_and_round_trips() {
         let d = Settings::default();
         assert!(!d.file_assoc);
-        assert_eq!(d.file_assoc_groups.iter().map(String::as_str).collect::<Vec<_>>(), ["code", "config"]);
+        assert_eq!(
+            d.file_assoc_groups
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["code", "config"]
+        );
         let s = Settings::parse("file_assoc = true\nfile_assoc_groups = text, markup , nonsense\n");
         assert!(s.file_assoc);
-        assert_eq!(s.file_assoc_groups.iter().map(String::as_str).collect::<Vec<_>>(), ["markup", "text"], "不認得的名稱略過");
-        assert!(Settings::parse("file_assoc_groups =\n").file_assoc_groups.is_empty(), "寫了空的就是一類都不接手");
-        assert_eq!(Settings::parse("file_assoc = maybe").file_assoc_groups, d.file_assoc_groups, "沒寫就用預設");
+        assert_eq!(
+            s.file_assoc_groups
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["markup", "text"],
+            "不認得的名稱略過"
+        );
+        assert!(
+            Settings::parse("file_assoc_groups =\n")
+                .file_assoc_groups
+                .is_empty(),
+            "寫了空的就是一類都不接手"
+        );
+        assert_eq!(
+            Settings::parse("file_assoc = maybe").file_assoc_groups,
+            d.file_assoc_groups,
+            "沒寫就用預設"
+        );
         let mut custom = Settings::default();
         custom.file_assoc = true;
         custom.file_assoc_groups = ["text".to_owned()].into();
@@ -915,14 +1078,22 @@ mod tests {
         assert!(back.file_assoc);
         assert_eq!(back.file_assoc_groups, custom.file_assoc_groups);
         custom.file_assoc_groups.clear();
-        assert!(Settings::parse(&custom.to_text()).file_assoc_groups.is_empty(), "全部取消勾選也會記住");
+        assert!(
+            Settings::parse(&custom.to_text())
+                .file_assoc_groups
+                .is_empty(),
+            "全部取消勾選也會記住"
+        );
     }
 
     #[test]
     fn the_search_panel_layout_is_remembered() {
         use crate::search_dock::DockEdge;
         let d = Settings::default();
-        assert_eq!((d.search_dock_edge, d.search_split), (DockEdge::Right, None));
+        assert_eq!(
+            (d.search_dock_edge, d.search_split),
+            (DockEdge::Right, None)
+        );
         let mut s = Settings::default();
         s.search_dock_edge = DockEdge::Bottom;
         s.search_dock_width = 412.0;
@@ -930,57 +1101,105 @@ mod tests {
         s.search_split = Some(0.35);
         let back = Settings::parse(&s.to_text());
         assert_eq!(back.search_dock_edge, DockEdge::Bottom);
-        assert_eq!((back.search_dock_width, back.search_dock_height), (412.0, 301.0));
+        assert_eq!(
+            (back.search_dock_width, back.search_dock_height),
+            (412.0, 301.0)
+        );
         assert_eq!(back.search_split, Some(0.35));
-        let odd = Settings::parse("search_dock = middle\nsearch_dock_width = 5\nsearch_dock_height = abc\nsearch_split = 7\n");
+        let odd = Settings::parse(
+            "search_dock = middle\nsearch_dock_width = 5\nsearch_dock_height = abc\nsearch_split = 7\n",
+        );
         assert_eq!(odd.search_dock_edge, DockEdge::Right, "不認得的邊用預設");
-        assert_eq!(odd.search_dock_width, crate::search_dock::MIN_WIDTH, "太小的寬度調回最小值");
-        assert_eq!(odd.search_dock_height, crate::search_dock::DEFAULT_HEIGHT, "不是數字就用預設");
+        assert_eq!(
+            odd.search_dock_width,
+            crate::search_dock::MIN_WIDTH,
+            "太小的寬度調回最小值"
+        );
+        assert_eq!(
+            odd.search_dock_height,
+            crate::search_dock::DEFAULT_HEIGHT,
+            "不是數字就用預設"
+        );
         assert_eq!(odd.search_split, Some(0.9));
     }
 
     #[test]
     fn run_arguments_are_remembered_per_file() {
         assert!(Settings::default().run_args.is_empty());
-        let s = Settings::parse("run_args.C:\\code\\app.py = --port=8080 \"a b\"\nrun_args. = x\nrun_args.empty.py =\n");
+        let s = Settings::parse(
+            "run_args.C:\\code\\app.py = --port=8080 \"a b\"\nrun_args. = x\nrun_args.empty.py =\n",
+        );
         assert_eq!(s.run_args.len(), 1);
-        assert_eq!(s.run_args["C:\\code\\app.py"], "--port=8080 \"a b\"", "值裡面的等號與引號原樣保留");
+        assert_eq!(
+            s.run_args["C:\\code\\app.py"], "--port=8080 \"a b\"",
+            "值裡面的等號與引號原樣保留"
+        );
         let mut t = Settings::default();
-        t.run_args.insert("/home/me/a.py".to_owned(), "  -v  ".to_owned());
+        t.run_args
+            .insert("/home/me/a.py".to_owned(), "  -v  ".to_owned());
         t.run_args.insert("blank.py".to_owned(), "   ".to_owned());
         t.run_args.insert("bad=name.py".to_owned(), "x".to_owned());
         let back = Settings::parse(&t.to_text());
-        assert_eq!(back.run_args.get("/home/me/a.py").map(String::as_str), Some("-v"));
+        assert_eq!(
+            back.run_args.get("/home/me/a.py").map(String::as_str),
+            Some("-v")
+        );
         assert_eq!(back.run_args.len(), 1, "空白與含等號的路徑不寫進設定檔");
     }
 
     #[test]
     fn recent_files_round_trip_in_order_and_are_capped_and_deduplicated() {
         assert!(Settings::default().recent_files.is_empty());
-        let s = Settings::parse("recent = C:\\a b\\x=1.txt\nrecent = /home/me/y.md\nrecent =\nrecent = /home/me/y.md\n");
-        assert_eq!(s.recent_files, ["C:\\a b\\x=1.txt", "/home/me/y.md"], "順序保留（最近的在前面），路徑裡的等號與空白原樣，空的、重複的去掉");
+        let s = Settings::parse(
+            "recent = C:\\a b\\x=1.txt\nrecent = /home/me/y.md\nrecent =\nrecent = /home/me/y.md\n",
+        );
+        assert_eq!(
+            s.recent_files,
+            ["C:\\a b\\x=1.txt", "/home/me/y.md"],
+            "順序保留（最近的在前面），路徑裡的等號與空白原樣，空的、重複的去掉"
+        );
         let text = s.to_text();
         assert!(text.contains("recent = C:\\a b\\x=1.txt\nrecent = /home/me/y.md\n"));
         assert_eq!(Settings::parse(&text).recent_files, s.recent_files);
         let many: String = (0..25).map(|i| format!("recent = /f/{i}.txt\n")).collect();
-        assert_eq!(Settings::parse(&many).recent_files.len(), crate::recent::MAX_RECENT);
+        assert_eq!(
+            Settings::parse(&many).recent_files.len(),
+            crate::recent::MAX_RECENT
+        );
         let mut t = Settings::default();
         t.recent_files = vec!["/ok.txt".to_owned(), "bad\nname".to_owned()];
-        assert_eq!(Settings::parse(&t.to_text()).recent_files, ["/ok.txt"], "含換行的路徑不寫進設定檔");
+        assert_eq!(
+            Settings::parse(&t.to_text()).recent_files,
+            ["/ok.txt"],
+            "含換行的路徑不寫進設定檔"
+        );
     }
 
     #[test]
     fn manual_runtime_choices_are_remembered_per_project() {
         assert!(Settings::default().runtime_choices.is_empty());
-        let s = Settings::parse("runtime.C:\\code\\app = C:\\code\\app\\.venv\\Scripts\\python.exe\nruntime. = x\nruntime.empty =\n");
+        let s = Settings::parse(
+            "runtime.C:\\code\\app = C:\\code\\app\\.venv\\Scripts\\python.exe\nruntime. = x\nruntime.empty =\n",
+        );
         assert_eq!(s.runtime_choices.len(), 1);
-        assert_eq!(s.runtime_choices["C:\\code\\app"], "C:\\code\\app\\.venv\\Scripts\\python.exe");
+        assert_eq!(
+            s.runtime_choices["C:\\code\\app"],
+            "C:\\code\\app\\.venv\\Scripts\\python.exe"
+        );
         let mut t = Settings::default();
-        t.runtime_choices.insert("/home/me/app".to_owned(), "/usr/bin/python3".to_owned());
-        t.runtime_choices.insert("bad=name".to_owned(), "x".to_owned());
+        t.runtime_choices
+            .insert("/home/me/app".to_owned(), "/usr/bin/python3".to_owned());
+        t.runtime_choices
+            .insert("bad=name".to_owned(), "x".to_owned());
         let back = Settings::parse(&t.to_text());
-        assert_eq!(back.runtime_choices.get("/home/me/app").map(String::as_str), Some("/usr/bin/python3"));
-        assert!(back.runtime_choices.len() == 1, "含等號的資料夾不寫進設定檔");
+        assert_eq!(
+            back.runtime_choices.get("/home/me/app").map(String::as_str),
+            Some("/usr/bin/python3")
+        );
+        assert!(
+            back.runtime_choices.len() == 1,
+            "含等號的資料夾不寫進設定檔"
+        );
     }
 
     #[test]
@@ -997,7 +1216,9 @@ mod tests {
     fn wrap_styles_are_per_language_and_round_trip() {
         use crate::syntax::WrapStyle;
         assert!(Settings::default().wrap_styles.is_empty());
-        let s = Settings::parse("wrap_style.Rust = align\nwrap_style.Python = HANG\nwrap_style.Go = zigzag\nwrap_style. = hang\n");
+        let s = Settings::parse(
+            "wrap_style.Rust = align\nwrap_style.Python = HANG\nwrap_style.Go = zigzag\nwrap_style. = hang\n",
+        );
         assert_eq!(s.wrap_style_for("Rust"), Some(WrapStyle::Align));
         assert_eq!(s.wrap_style_for("Python"), Some(WrapStyle::Hang));
         assert_eq!(s.wrap_style_for("Go"), None, "看不懂的值忽略");
@@ -1010,7 +1231,10 @@ mod tests {
     fn auto_indent_is_on_by_default_and_round_trips() {
         assert!(Settings::default().auto_indent);
         assert!(!Settings::parse("auto_indent = false").auto_indent);
-        assert!(Settings::parse("auto_indent = maybe").auto_indent, "看不懂就維持預設");
+        assert!(
+            Settings::parse("auto_indent = maybe").auto_indent,
+            "看不懂就維持預設"
+        );
         let mut s = Settings::default();
         s.auto_indent = false;
         assert!(!Settings::parse(&s.to_text()).auto_indent);
@@ -1019,41 +1243,110 @@ mod tests {
     #[test]
     fn terminal_settings_are_validated_and_round_trip() {
         let d = Settings::default();
-        assert_eq!((d.terminal_font_size, d.terminal_min_contrast, d.terminal_shell.as_str()), (DEFAULT_TERMINAL_FONT_SIZE, 3.0, ""));
-        let s = Settings::parse("terminal_font_size = 18\nterminal_min_contrast = 4.5\nterminal_shell = \"pwsh -NoLogo\"\n");
-        assert_eq!((s.terminal_font_size, s.terminal_min_contrast, s.terminal_shell.as_str()), (18.0, 4.5, "pwsh -NoLogo"));
+        assert_eq!(
+            (
+                d.terminal_font_size,
+                d.terminal_min_contrast,
+                d.terminal_shell.as_str()
+            ),
+            (DEFAULT_TERMINAL_FONT_SIZE, 3.0, "")
+        );
+        let s = Settings::parse(
+            "terminal_font_size = 18\nterminal_min_contrast = 4.5\nterminal_shell = \"pwsh -NoLogo\"\n",
+        );
+        assert_eq!(
+            (
+                s.terminal_font_size,
+                s.terminal_min_contrast,
+                s.terminal_shell.as_str()
+            ),
+            (18.0, 4.5, "pwsh -NoLogo")
+        );
         // 超出範圍的拉回範圍；不是數字就用預設；對比度 1 是關閉
-        assert_eq!(Settings::parse("terminal_font_size = 999").terminal_font_size, MAX_FONT_SIZE);
-        assert_eq!(Settings::parse("terminal_font_size = nan").terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE);
-        assert_eq!(Settings::parse("terminal_min_contrast = 0").terminal_min_contrast, MIN_TERMINAL_CONTRAST);
-        assert_eq!(Settings::parse("terminal_min_contrast = 99").terminal_min_contrast, MAX_TERMINAL_CONTRAST);
-        assert_eq!(Settings::parse("terminal_min_contrast = inf").terminal_min_contrast, DEFAULT_TERMINAL_MIN_CONTRAST);
-        assert_eq!(Settings::parse("terminal_min_contrast = 1").terminal_min_contrast, 1.0);
+        assert_eq!(
+            Settings::parse("terminal_font_size = 999").terminal_font_size,
+            MAX_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("terminal_font_size = nan").terminal_font_size,
+            DEFAULT_TERMINAL_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("terminal_min_contrast = 0").terminal_min_contrast,
+            MIN_TERMINAL_CONTRAST
+        );
+        assert_eq!(
+            Settings::parse("terminal_min_contrast = 99").terminal_min_contrast,
+            MAX_TERMINAL_CONTRAST
+        );
+        assert_eq!(
+            Settings::parse("terminal_min_contrast = inf").terminal_min_contrast,
+            DEFAULT_TERMINAL_MIN_CONTRAST
+        );
+        assert_eq!(
+            Settings::parse("terminal_min_contrast = 1").terminal_min_contrast,
+            1.0
+        );
         // 存檔再讀回來（shell 是空的就不寫）
         let mut custom = Settings::default();
         custom.terminal_font_size = 11.5;
         custom.terminal_min_contrast = 1.0;
         custom.terminal_shell = "bash\n--login".to_owned();
         let text = custom.to_text();
-        assert_eq!(text.lines().filter(|l| l.starts_with("terminal_shell")).count(), 1, "換行不會破壞設定檔");
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.starts_with("terminal_shell"))
+                .count(),
+            1,
+            "換行不會破壞設定檔"
+        );
         let back = Settings::parse(&text);
-        assert_eq!((back.terminal_font_size, back.terminal_min_contrast, back.terminal_shell.as_str()), (11.5, 1.0, "bash --login"));
+        assert_eq!(
+            (
+                back.terminal_font_size,
+                back.terminal_min_contrast,
+                back.terminal_shell.as_str()
+            ),
+            (11.5, 1.0, "bash --login")
+        );
         assert!(!Settings::default().to_text().contains("terminal_shell"));
     }
 
     #[test]
     fn preview_font_size_is_separate_validated_and_round_trips() {
-        assert_eq!(Settings::default().preview_font_size, DEFAULT_PREVIEW_FONT_SIZE);
-        assert_eq!(Settings::parse("preview_font_size = 19.5").preview_font_size, 19.5);
-        assert_eq!(Settings::parse("preview_font_size = 1").preview_font_size, MIN_FONT_SIZE);
-        assert_eq!(Settings::parse("preview_font_size = 999").preview_font_size, MAX_FONT_SIZE);
-        assert_eq!(Settings::parse("preview_font_size = inf").preview_font_size, DEFAULT_PREVIEW_FONT_SIZE);
-        assert_eq!(Settings::parse("preview_font_size = big").preview_font_size, DEFAULT_PREVIEW_FONT_SIZE);
+        assert_eq!(
+            Settings::default().preview_font_size,
+            DEFAULT_PREVIEW_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("preview_font_size = 19.5").preview_font_size,
+            19.5
+        );
+        assert_eq!(
+            Settings::parse("preview_font_size = 1").preview_font_size,
+            MIN_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("preview_font_size = 999").preview_font_size,
+            MAX_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("preview_font_size = inf").preview_font_size,
+            DEFAULT_PREVIEW_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("preview_font_size = big").preview_font_size,
+            DEFAULT_PREVIEW_FONT_SIZE
+        );
         let mut s = Settings::default();
         s.preview_font_size = 17.0;
         s.font_size = 12.0;
         let back = Settings::parse(&s.to_text());
-        assert_eq!((back.preview_font_size, back.font_size), (17.0, 12.0), "和編輯區的字級各自獨立");
+        assert_eq!(
+            (back.preview_font_size, back.font_size),
+            (17.0, 12.0),
+            "和編輯區的字級各自獨立"
+        );
     }
 
     #[test]
@@ -1070,7 +1363,10 @@ mod tests {
         let text = "# 註解\n\n  unknown = 1  \nno equals sign\n  theme =  \"Dark\"  \n";
         assert_eq!(Settings::parse(text).theme, ThemeChoice::Dark);
         // CRLF 也能讀
-        assert_eq!(Settings::parse("theme = light\r\n").theme, ThemeChoice::Light);
+        assert_eq!(
+            Settings::parse("theme = light\r\n").theme,
+            ThemeChoice::Light
+        );
         // 值不認得就維持預設
         assert_eq!(Settings::parse("theme = purple").theme, ThemeChoice::System);
         // 後面的有效設定覆蓋前面的；無效的不會洗掉先前有效的
@@ -1110,7 +1406,10 @@ mod tests {
         };
         s2.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s2);
-        assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1
+        );
     }
 
     #[test]
@@ -1148,7 +1447,10 @@ mod tests {
             s.language = l;
             assert_eq!(Settings::parse(&s.to_text()).language, l);
         }
-        assert_eq!(Settings::parse("language = klingon\n").language, LangChoice::System);
+        assert_eq!(
+            Settings::parse("language = klingon\n").language,
+            LangChoice::System
+        );
     }
 
     #[test]
@@ -1160,14 +1462,24 @@ mod tests {
         s.terminal_font_family = Some("Cascadia Mono".to_owned());
         let back = Settings::parse(&s.to_text());
         assert_eq!(back.terminal_font_family.as_deref(), Some("Cascadia Mono"));
-        assert_eq!(back.font_family.as_deref(), Some("Consolas"), "兩者各自獨立");
-        assert_eq!(Settings::parse("terminal_font_family =  \n").terminal_font_family, None);
+        assert_eq!(
+            back.font_family.as_deref(),
+            Some("Consolas"),
+            "兩者各自獨立"
+        );
+        assert_eq!(
+            Settings::parse("terminal_font_family =  \n").terminal_font_family,
+            None
+        );
     }
 
     #[test]
     fn ctrl_w_closes_the_terminal_by_default_and_can_be_turned_off() {
         assert!(Settings::default().terminal_ctrl_w_closes);
-        assert!(Settings::parse("").terminal_ctrl_w_closes, "舊的設定檔沒有這行");
+        assert!(
+            Settings::parse("").terminal_ctrl_w_closes,
+            "舊的設定檔沒有這行"
+        );
         let mut s = Settings::default();
         s.terminal_ctrl_w_closes = false;
         assert!(!Settings::parse(&s.to_text()).terminal_ctrl_w_closes);
@@ -1177,7 +1489,11 @@ mod tests {
     #[test]
     fn pane_nav_defaults_to_alt_round_trips_and_ignores_unknown_values() {
         assert_eq!(Settings::default().pane_nav, PaneNav::Alt);
-        assert_eq!(Settings::parse("").pane_nav, PaneNav::Alt, "舊的設定檔沒有這行");
+        assert_eq!(
+            Settings::parse("").pane_nav,
+            PaneNav::Alt,
+            "舊的設定檔沒有這行"
+        );
         for p in PaneNav::ALL {
             let mut s = Settings::default();
             s.pane_nav = p;
@@ -1192,19 +1508,31 @@ mod tests {
         let mut s = Settings::default();
         s.wide_cols = 2;
         assert_eq!(Settings::parse(&s.to_text()).wide_cols, 2);
-        assert_eq!(Settings::parse("wide_cols = 3\n").wide_cols, 1, "只接受 1 或 2");
+        assert_eq!(
+            Settings::parse("wide_cols = 3\n").wide_cols,
+            1,
+            "只接受 1 或 2"
+        );
         assert_eq!(Settings::parse("wide_cols = abc\n").wide_cols, 1);
     }
 
     #[test]
     fn color_scheme_names_are_chosen_per_theme_and_round_trip() {
         let s = Settings::default();
-        assert_eq!((s.scheme_name(true), s.scheme_name(false)), ("", ""), "預設是空字串＝該主題的預設配色");
+        assert_eq!(
+            (s.scheme_name(true), s.scheme_name(false)),
+            ("", ""),
+            "預設是空字串＝該主題的預設配色"
+        );
         assert!(!s.to_text().contains("_scheme"), "預設值不寫進檔案");
         let mut s = Settings::default();
         s.set_scheme_name(true, "Dracula");
         s.set_scheme_name(false, "我的 淺色 配色");
-        assert_eq!(Settings::parse(&s.to_text()), s, "名稱含空白與中文也要讀得回來");
+        assert_eq!(
+            Settings::parse(&s.to_text()),
+            s,
+            "名稱含空白與中文也要讀得回來"
+        );
         assert_eq!(s.scheme_name(true), "Dracula");
         assert_eq!(s.scheme_name(false), "我的 淺色 配色");
         // 只設一邊，另一邊維持預設
@@ -1220,7 +1548,10 @@ mod tests {
         st.show_output = true;
         assert_eq!(Settings::parse(&st.to_text()), st);
         assert!(Settings::parse("show_output = on\n").show_output);
-        assert!(!Settings::parse("show_output = maybe\n").show_output, "不認得的值忽略");
+        assert!(
+            !Settings::parse("show_output = maybe\n").show_output,
+            "不認得的值忽略"
+        );
     }
 
     #[test]
@@ -1229,8 +1560,14 @@ mod tests {
         let mut st = Settings::default();
         st.terminal_title_spinner = false;
         assert!(!Settings::parse(&st.to_text()).terminal_title_spinner);
-        assert!(Settings::parse("terminal_title_spinner = maybe\n").terminal_title_spinner, "不認得的值忽略，維持預設");
-        assert!(Settings::parse("").terminal_title_spinner, "舊的設定檔沒有這行，照常顯示");
+        assert!(
+            Settings::parse("terminal_title_spinner = maybe\n").terminal_title_spinner,
+            "不認得的值忽略，維持預設"
+        );
+        assert!(
+            Settings::parse("").terminal_title_spinner,
+            "舊的設定檔沒有這行，照常顯示"
+        );
     }
 
     #[test]
@@ -1239,8 +1576,14 @@ mod tests {
         let mut st = Settings::default();
         st.preview_sync_scroll = false;
         assert!(!Settings::parse(&st.to_text()).preview_sync_scroll);
-        assert!(Settings::parse("preview_sync_scroll = maybe\n").preview_sync_scroll, "不認得的值忽略，維持預設");
-        assert!(Settings::parse("").preview_sync_scroll, "舊的設定檔沒有這行，照常同步");
+        assert!(
+            Settings::parse("preview_sync_scroll = maybe\n").preview_sync_scroll,
+            "不認得的值忽略，維持預設"
+        );
+        assert!(
+            Settings::parse("").preview_sync_scroll,
+            "舊的設定檔沒有這行，照常同步"
+        );
     }
 
     #[test]
@@ -1250,7 +1593,13 @@ mod tests {
         st.output_pane = false;
         assert_eq!(Settings::parse(&st.to_text()), st);
         assert!(!Settings::parse("output_pane = false\n").output_pane);
-        assert!(Settings::parse("output_pane = maybe\n").output_pane, "不認得的值忽略，維持預設");
-        assert!(Settings::parse("").output_pane, "舊的設定檔沒有這行，照常有輸出面板");
+        assert!(
+            Settings::parse("output_pane = maybe\n").output_pane,
+            "不認得的值忽略，維持預設"
+        );
+        assert!(
+            Settings::parse("").output_pane,
+            "舊的設定檔沒有這行，照常有輸出面板"
+        );
     }
 }

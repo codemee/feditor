@@ -60,7 +60,9 @@ pub fn load_family(name: Option<&str>) -> Option<LoadedFont> {
             load_face(&family, &mut cache)
         }
         None => {
-            let ids: Vec<_> = collection.generic_families(GenericFamily::Monospace).collect();
+            let ids: Vec<_> = collection
+                .generic_families(GenericFamily::Monospace)
+                .collect();
             ids.into_iter().find_map(|id| {
                 let family = collection.family(id)?;
                 load_face(&family, &mut cache)
@@ -225,7 +227,11 @@ pub fn terminal_family() -> egui::FontFamily {
 /// 終端機畫面用的字型。這個 `ctx` 還沒裝過終端機字型家族時（例如測試用的空白 context）退回一般等寬字型。
 pub fn terminal_font(ctx: &egui::Context, size: f32) -> egui::FontId {
     let installed = ctx.fonts_mut(|f| f.definitions().families.contains_key(&terminal_family()));
-    if installed { egui::FontId::new(size, terminal_family()) } else { egui::FontId::monospace(size) }
+    if installed {
+        egui::FontId::new(size, terminal_family())
+    } else {
+        egui::FontId::monospace(size)
+    }
 }
 
 /// 同 [`build_fonts`]，另外建立終端機專用的字型家族 [`terminal_family`]：
@@ -233,14 +239,20 @@ pub fn terminal_font(ctx: &egui::Context, size: f32) -> egui::FontId {
 /// `None` 時終端機直接跟著編輯區。
 pub fn build_fonts_with(family: Option<&str>, terminal: Option<&str>) -> egui::FontDefinitions {
     let mut fonts = build_editor_fonts(family);
-    let mut chain = fonts.families.get(&egui::FontFamily::Monospace).cloned().unwrap_or_default();
+    let mut chain = fonts
+        .families
+        .get(&egui::FontFamily::Monospace)
+        .cloned()
+        .unwrap_or_default();
     let chosen = terminal
         .and_then(|name| load_family(Some(name)))
         .filter(|font| renders_latin(font.bytes.clone(), font.index));
     if let Some(font) = chosen {
         let mut data = egui::FontData::from_owned(font.bytes);
         data.index = font.index;
-        fonts.font_data.insert("terminal-mono".into(), Arc::new(data.clone()));
+        fonts
+            .font_data
+            .insert("terminal-mono".into(), Arc::new(data.clone()));
         chain.insert(0, "terminal-mono".into());
         fonts.families.insert(terminal_family(), chain);
         // 和編輯區一樣，把拉丁字母與中文字的基準線對齊
@@ -248,7 +260,9 @@ pub fn build_fonts_with(family: Option<&str>, terminal: Option<&str>) -> egui::F
             let gap = latin_cjk_offset(fonts.clone(), terminal_family());
             if gap.abs() < 0.5 {
                 data.tweak.y_offset_factor = gap;
-                fonts.font_data.insert("terminal-mono".into(), Arc::new(data));
+                fonts
+                    .font_data
+                    .insert("terminal-mono".into(), Arc::new(data));
             }
         }
     } else {
@@ -277,9 +291,16 @@ fn build_editor_fonts(family: Option<&str>) -> egui::FontDefinitions {
     // 符號後備：⏵ ⏸ 這類媒體／技術符號，等寬字型和 egui 內建字型都沒有，Windows Terminal 會退到 Segoe UI Symbol，
     // 這邊照做，不然 Claude Code 的「⏵⏵ auto mode」會變成兩個缺字方框。放在最後，只補缺的字。
     if let Some(bytes) = symbol_font_bytes() {
-        fonts.font_data.insert("symbols".into(), Arc::new(egui::FontData::from_static(bytes)));
+        fonts.font_data.insert(
+            "symbols".into(),
+            Arc::new(egui::FontData::from_static(bytes)),
+        );
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push("symbols".into());
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .push("symbols".into());
         }
     }
 
@@ -294,7 +315,9 @@ fn build_editor_fonts(family: Option<&str>) -> egui::FontDefinitions {
     if let Some(font) = chosen {
         let mut data = egui::FontData::from_owned(font.bytes);
         data.index = font.index;
-        fonts.font_data.insert("system-mono".into(), Arc::new(data.clone()));
+        fonts
+            .font_data
+            .insert("system-mono".into(), Arc::new(data.clone()));
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
@@ -333,7 +356,9 @@ fn lift_ui_cjk(fonts: &mut egui::FontDefinitions) {
     if gap.abs() >= 0.5 {
         return;
     }
-    let Some(base) = fonts.font_data.get("cjk").cloned() else { return };
+    let Some(base) = fonts.font_data.get("cjk").cloned() else {
+        return;
+    };
     let mut data = (*base).clone(); // 資料是靜態借用的，複製的只有設定
     data.tweak.y_offset_factor = -gap;
     fonts.font_data.insert(UI_CJK.into(), Arc::new(data));
@@ -423,7 +448,11 @@ mod tests {
     fn family_list_contains_only_monospace_fonts() {
         let start = std::time::Instant::now();
         let list = list_monospace_families();
-        eprintln!("等寬字型 {} 個，耗時 {:?}：{list:?}", list.len(), start.elapsed());
+        eprintln!(
+            "等寬字型 {} 個，耗時 {:?}：{list:?}",
+            list.len(),
+            start.elapsed()
+        );
 
         assert!(!list.is_empty());
         assert!(contains(&list, "Consolas"));
@@ -435,7 +464,10 @@ mod tests {
             "Microsoft JhengHei",
             "Verdana",
         ] {
-            assert!(!contains(&list, proportional), "{proportional} 不是等寬字型");
+            assert!(
+                !contains(&list, proportional),
+                "{proportional} 不是等寬字型"
+            );
         }
         // 排序、去重、沒有直書變體
         let mut sorted = list.clone();
@@ -451,9 +483,6 @@ mod tests {
             assert!(is_monospace(&font.bytes, font.index), "{name} 不是等寬字型");
         }
     }
-
-
-
 
     /// 能正常畫出拉丁字母的字型要通過；拉丁字母是內嵌彩色點陣的老字型要被擋下。
     #[cfg(windows)]
@@ -477,7 +506,10 @@ mod tests {
     fn every_listed_family_draws_visible_text() {
         let list = list_monospace_families();
         for bad in ["MingLiU", "細明體", "MS Gothic", "ＭＳ ゴシック"] {
-            assert!(!contains(&list, bad), "{bad} 畫不出拉丁字母，不該出現在清單裡");
+            assert!(
+                !contains(&list, bad),
+                "{bad} 畫不出拉丁字母，不該出現在清單裡"
+            );
         }
         for name in &list {
             let ctx = egui::Context::default();
@@ -536,7 +568,10 @@ mod tests {
             assert_ne!(c, k, "兩個字型的檔案不該一樣大，否則測不出有沒有換");
         }
         // 找不到的家族退回系統預設，不能讓編輯區沒有字型
-        assert_eq!(size_of(&build_fonts(Some("NoSuchFont 12345"))), size_of(&default));
+        assert_eq!(
+            size_of(&build_fonts(Some("NoSuchFont 12345"))),
+            size_of(&default)
+        );
         assert!(size_of(&default).is_some());
     }
 
@@ -678,16 +713,27 @@ mod tests {
         let lift = fonts.font_data[UI_CJK].tweak.y_offset_factor;
         assert!(lift < -0.02, "中文字應該被往上抬（量到 {lift}）");
         let proportional = &fonts.families[&egui::FontFamily::Proportional];
-        assert!(proportional.iter().any(|n| n == UI_CJK) && !proportional.iter().any(|n| n == "cjk"));
+        assert!(
+            proportional.iter().any(|n| n == UI_CJK) && !proportional.iter().any(|n| n == "cjk")
+        );
         let mono = &fonts.families[&egui::FontFamily::Monospace];
-        assert!(mono.iter().any(|n| n == "cjk"), "編輯區仍用原本的中文字型項目");
+        assert!(
+            mono.iter().any(|n| n == "cjk"),
+            "編輯區仍用原本的中文字型項目"
+        );
         assert_eq!(fonts.font_data["cjk"].tweak.y_offset_factor, 0.0);
         for size in [12.0_f32, 14.0, 20.0] {
             let with = ui_residual(&fonts, size, true);
             let without = ui_residual(&fonts, size, false);
             eprintln!("字級 {size}：抬之後殘差 {with}，沒抬 {without}");
-            assert!(with.abs() <= 1.0, "字級 {size}：抬了之後基準線還差 {with} 點");
-            assert!(without.abs() > with.abs() + 0.5, "字級 {size}：沒抬時落差應該更大（{without}）");
+            assert!(
+                with.abs() <= 1.0,
+                "字級 {size}：抬了之後基準線還差 {with} 點"
+            );
+            assert!(
+                without.abs() > with.abs() + 0.5,
+                "字級 {size}：沒抬時落差應該更大（{without}）"
+            );
         }
     }
 
@@ -701,10 +747,16 @@ mod tests {
         }
         let fonts = build_fonts(Some("Consolas"));
         let compensation = fonts.font_data["system-mono"].tweak.y_offset_factor;
-        assert!(compensation.abs() > 0.05, "build_fonts 應該已經量出並套用補償");
+        assert!(
+            compensation.abs() > 0.05,
+            "build_fonts 應該已經量出並套用補償"
+        );
         let uncompensated = without_compensation(&fonts);
         let residual = baseline_residual(&uncompensated, 14.0);
         eprintln!("沒有補償時的基準線殘差：{residual}（補償比例 {compensation}）");
-        assert!(residual.abs() >= 2.0, "沒有補償時落差應該明顯（量到 {residual}）");
+        assert!(
+            residual.abs() >= 2.0,
+            "沒有補償時落差應該明顯（量到 {residual}）"
+        );
     }
 }

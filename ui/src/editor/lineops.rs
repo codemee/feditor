@@ -157,7 +157,11 @@ impl EditorState {
     /// 游標與選取位置依「那個位置之前的文字轉換後有多長」搬到對應的位置。
     fn convert_whitespace(&mut self, buf: &mut Buffer, edit: impl Fn(&str) -> String) -> bool {
         self.interrupt_composition();
-        let (a, b) = if self.sel.is_empty() { (0, buf.line_count() - 1) } else { self.selected_lines(buf) };
+        let (a, b) = if self.sel.is_empty() {
+            (0, buf.line_count() - 1)
+        } else {
+            self.selected_lines(buf)
+        };
         let old = Self::lines_text(buf, a, b);
         let new: Vec<String> = old.iter().map(|l| edit(l)).collect();
         if new == old {
@@ -194,7 +198,11 @@ impl EditorState {
             let cols = motion::display_col(line, lead);
             let width = motion::tab_width();
             let rest: String = line.chars().skip(lead).collect();
-            format!("{}{}{rest}", "\t".repeat(cols / width), " ".repeat(cols % width))
+            format!(
+                "{}{}{rest}",
+                "\t".repeat(cols / width),
+                " ".repeat(cols % width)
+            )
         })
     }
 
@@ -209,16 +217,23 @@ impl EditorState {
     pub fn reformat(&mut self, buf: &mut Buffer) -> bool {
         self.interrupt_composition();
         let last_line = buf.line_count() - 1;
-        let (a, b) = if self.sel.is_empty() { (0, last_line) } else { self.selected_lines(buf) };
+        let (a, b) = if self.sel.is_empty() {
+            (0, last_line)
+        } else {
+            self.selected_lines(buf)
+        };
         let all = Self::lines_text(buf, 0, last_line);
         let old: Vec<String> = all[a..=b].to_vec();
         let unit = super::indent::indent_unit();
         let json = self.language.is_some_and(|l| l.name == "JSON");
-        let pretty = json.then(|| super::indent::json_pretty(&old.join("\n"), &unit)).flatten();
+        let pretty = json
+            .then(|| super::indent::json_pretty(&old.join("\n"), &unit))
+            .flatten();
         let new: Vec<String> = match pretty {
             Some(text) => {
                 let base = super::indent::leading_ws(&old[0]);
-                let mut lines: Vec<String> = text.split('\n').map(|l| format!("{base}{l}")).collect();
+                let mut lines: Vec<String> =
+                    text.split('\n').map(|l| format!("{base}{l}")).collect();
                 if old.last().is_some_and(|l| l.is_empty()) && b == last_line && old.len() > 1 {
                     lines.push(String::new()); // 檔尾原本的換行保留
                 }
@@ -228,7 +243,9 @@ impl EditorState {
                 let how = super::indent::scan(self.language, &all);
                 match (self.language, motion::wrap_margin()) {
                     // 有安全界線、而且語言有縮排規則：括號內多餘的斷行接回去，太長的在括號內斷開
-                    (Some(lang), Some(margin)) if lang.indent != crate::syntax::IndentStyle::None => {
+                    (Some(lang), Some(margin))
+                        if lang.indent != crate::syntax::IndentStyle::None =>
+                    {
                         let opts = super::rewrap::Opts {
                             margin,
                             style: self.wrap_style.unwrap_or(lang.wrap),
@@ -237,7 +254,9 @@ impl EditorState {
                         };
                         super::rewrap::reformat_lines(lang, &all, &how, a, b, &opts)
                     }
-                    _ => (a..=b).map(|i| super::indent::format_line(&all[i], how[i], &unit)).collect(),
+                    _ => (a..=b)
+                        .map(|i| super::indent::format_line(&all[i], how[i], &unit))
+                        .collect(),
                 }
             }
         };
@@ -278,7 +297,11 @@ impl EditorState {
 
     /// 縮排一層（每個非空行行首加一個 Tab；設定成用空白取代 Tab 時，加一個 Tab 欄寬的空白）。
     pub fn indent_lines(&mut self, buf: &mut Buffer) -> bool {
-        let indent = if motion::tab_uses_spaces() { " ".repeat(motion::tab_width()) } else { "\t".to_owned() };
+        let indent = if motion::tab_uses_spaces() {
+            " ".repeat(motion::tab_width())
+        } else {
+            "\t".to_owned()
+        };
         let added = indent.chars().count() as isize;
         self.reindent(buf, move |l| {
             if l.is_empty() {
@@ -295,7 +318,10 @@ impl EditorState {
             let n = if l.starts_with('\t') {
                 1
             } else {
-                l.chars().take(motion::tab_width()).take_while(|c| *c == ' ').count()
+                l.chars()
+                    .take(motion::tab_width())
+                    .take_while(|c| *c == ' ')
+                    .count()
             };
             (l.chars().skip(n).collect(), -(n as isize))
         })
@@ -314,9 +340,12 @@ impl EditorState {
         if non_blank.is_empty() {
             return false;
         }
-        let all_commented = non_blank
-            .iter()
-            .all(|l| l.chars().skip(indent_of(l)).collect::<String>().starts_with(prefix));
+        let all_commented = non_blank.iter().all(|l| {
+            l.chars()
+                .skip(indent_of(l))
+                .collect::<String>()
+                .starts_with(prefix)
+        });
         let min_indent = non_blank.iter().map(|l| indent_of(l)).min().unwrap_or(0);
         let plen = prefix.chars().count() as isize;
         let spaced = format!("{prefix} ");
@@ -327,9 +356,20 @@ impl EditorState {
             if all_commented {
                 let ind = indent_of(l);
                 let rest: String = l.chars().skip(ind).collect();
-                let cut = if rest.starts_with(&spaced) { plen + 1 } else { plen };
+                let cut = if rest.starts_with(&spaced) {
+                    plen + 1
+                } else {
+                    plen
+                };
                 let head: String = l.chars().take(ind).collect();
-                (format!("{head}{}", rest.chars().skip(cut as usize).collect::<String>()), ind, -cut)
+                (
+                    format!(
+                        "{head}{}",
+                        rest.chars().skip(cut as usize).collect::<String>()
+                    ),
+                    ind,
+                    -cut,
+                )
             } else {
                 let head: String = l.chars().take(min_indent).collect();
                 let tail: String = l.chars().skip(min_indent).collect();
@@ -499,13 +539,21 @@ mod tests {
         motion::set_tab_width(2);
         let (mut b, mut s) = setup("    a\n \tb", 0, 0);
         assert!(s.spaces_to_tabs(&mut b));
-        assert_eq!(b.text(), "\t\ta\n\tb", "一個空白加一個 Tab 只到第 2 欄（Tab 補到下一個 Tab 位置），所以是一個 Tab");
+        assert_eq!(
+            b.text(),
+            "\t\ta\n\tb",
+            "一個空白加一個 Tab 只到第 2 欄（Tab 補到下一個 Tab 位置），所以是一個 Tab"
+        );
         // 有選取：只轉選到的行，游標跟著文字走
         motion::set_tab_width(4);
         let (mut b, mut s) = setup("\ta\n\tb\n\tc", 4, 5);
         assert!(s.tabs_to_spaces(&mut b));
         assert_eq!(b.text(), "\ta\n    b\n\tc");
-        assert_eq!(s.sel, Selection { anchor: 7, head: 8 }, "選取原本在第二行的 b 前後，現在還是 b 的前後");
+        assert_eq!(
+            s.sel,
+            Selection { anchor: 7, head: 8 },
+            "選取原本在第二行的 b 前後，現在還是 b 的前後"
+        );
         motion::set_tab_width(width);
     }
 
@@ -538,7 +586,11 @@ mod tests {
     struct Tabs(usize, bool, bool);
     impl Tabs {
         fn set(width: usize, spaces: bool) -> Self {
-            Tabs(motion::set_tab_width(width), motion::set_tab_uses_spaces(spaces), motion::auto_indent())
+            Tabs(
+                motion::set_tab_width(width),
+                motion::set_tab_uses_spaces(spaces),
+                motion::auto_indent(),
+            )
         }
     }
     impl Drop for Tabs {
@@ -556,7 +608,11 @@ mod tests {
         s.language = crate::syntax::language_for_name("a.rs");
         assert!(s.reformat(&mut b));
         assert_eq!(b.text(), "fn a() {\n    x();\n}\n");
-        assert_eq!(s.sel, Selection::collapsed(14), "游標還在 x 的後面（縮排多了兩格）");
+        assert_eq!(
+            s.sel,
+            Selection::collapsed(14),
+            "游標還在 x 的後面（縮排多了兩格）"
+        );
         assert!(!s.reformat(&mut b), "已經排好了：沒有變化");
         b.undo();
         assert_eq!(b.text(), "fn a() {\n  x();   \n      }\n", "一個復原步驟");
@@ -573,7 +629,14 @@ mod tests {
         s.language = crate::syntax::language_for_name("a.rs");
         assert!(s.reformat(&mut b));
         assert_eq!(b.text(), "fn a() {\n   if x {\n        y;\n    }\n   z;\n}");
-        assert_eq!(s.sel, Selection { anchor: start, head: end + 6 }, "選取跟著文字走（結束仍在下一行行首）");
+        assert_eq!(
+            s.sel,
+            Selection {
+                anchor: start,
+                head: end + 6
+            },
+            "選取跟著文字走（結束仍在下一行行首）"
+        );
     }
 
     #[test]
@@ -582,7 +645,10 @@ mod tests {
         let (mut b, mut s) = setup("{\"a\":[1,2],\"b\":{}}\n", 0, 0);
         s.language = crate::syntax::language_for_name("a.json");
         assert!(s.reformat(&mut b));
-        assert_eq!(b.text(), "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n");
+        assert_eq!(
+            b.text(),
+            "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n"
+        );
         // 有註解的 JSONC 解析不了：改用括號深度重排
         let (mut b, mut s) = setup("{\n// c\n\"a\": 1\n}", 0, 0);
         s.language = crate::syntax::language_for_name("a.json");
@@ -615,7 +681,10 @@ mod tests {
         // 沒有安全界線：只重排縮排，不接合也不斷行
         b.undo();
         motion::set_wrap_margin(None);
-        assert!(!s.reformat(&mut b), "原本的縮排就是對的：不接合也不斷行，所以沒有變化");
+        assert!(
+            !s.reformat(&mut b),
+            "原本的縮排就是對的：不接合也不斷行，所以沒有變化"
+        );
         assert_eq!(b.text(), text);
         motion::set_wrap_margin(margin);
     }

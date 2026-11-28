@@ -11,8 +11,8 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, ICON_BIG, ICON_SMALL, IMAGE_ICON, IsWindowVisible,
-    LR_SHARED, LoadImageW, SendMessageW, WM_SETICON,
+    EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, ICON_BIG, ICON_SMALL, IMAGE_ICON,
+    IsWindowVisible, LR_SHARED, LoadImageW, SendMessageW, WM_SETICON,
 };
 
 /// `build.rs` 內嵌的圖示資源編號。
@@ -26,7 +26,10 @@ unsafe extern "system" fn find_own_window(hwnd: HWND, found: LPARAM) -> i32 {
     // SAFETY: hwnd 是系統列舉出來的有效視窗；found 是呼叫端傳進來的 HWND 指標
     unsafe {
         GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == GetCurrentProcessId() && IsWindowVisible(hwnd) != 0 && GetWindow(hwnd, GW_OWNER).is_null() {
+        if pid == GetCurrentProcessId()
+            && IsWindowVisible(hwnd) != 0
+            && GetWindow(hwnd, GW_OWNER).is_null()
+        {
             *(found as *mut HWND) = hwnd;
             return 0; // 找到了，停止列舉
         }
@@ -51,7 +54,14 @@ pub fn apply_once() {
         let instance = GetModuleHandleW(null());
         for (kind, base) in [(ICON_BIG, 32), (ICON_SMALL, 16)] {
             let size = base * dpi / 96;
-            let icon = LoadImageW(instance, ICON_RESOURCE_ID as *const u16, IMAGE_ICON, size, size, LR_SHARED);
+            let icon = LoadImageW(
+                instance,
+                ICON_RESOURCE_ID as *const u16,
+                IMAGE_ICON,
+                size,
+                size,
+                LR_SHARED,
+            );
             if !icon.is_null() {
                 SendMessageW(hwnd, WM_SETICON, kind as usize, icon as LPARAM);
             }

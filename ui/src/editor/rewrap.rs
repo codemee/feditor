@@ -151,7 +151,12 @@ fn strip_trailing_commas(lang: &Language, s: &str) -> String {
             last_sig = Some(j);
         }
     }
-    chars.iter().enumerate().filter(|(j, _)| !remove.contains(j)).map(|(_, c)| *c).collect()
+    chars
+        .iter()
+        .enumerate()
+        .filter(|(j, _)| !remove.contains(j))
+        .map(|(_, c)| *c)
+        .collect()
 }
 
 /// 把一行程式（`text`，沒有縮排）排成幾行：裝得下就是一行 `prefix + text`；
@@ -178,7 +183,10 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
     // `{ }` 在 Python 一定是資料；其他語言只有在括號裡面才當成資料（頂層的 `{` 多半是程式區塊）
     let (mut from, mut to, mut curly) = (0, chars.len(), lang.indent == IndentStyle::Python);
     let (open, close, args) = loop {
-        let Some((open, close)) = outer_groups(&chars, &kinds, from, to, curly).into_iter().find(|&(op, cl)| op < k && cl >= k) else {
+        let Some((open, close)) = outer_groups(&chars, &kinds, from, to, curly)
+            .into_iter()
+            .find(|&(op, cl)| op < k && cl >= k)
+        else {
             return one();
         };
         let args = split_args(&chars, &kinds, open, close);
@@ -197,11 +205,21 @@ pub fn layout(lang: &Language, text: &str, prefix: &str, o: &Opts) -> Vec<String
     // 對齊風格要第一個參數接在開括號後面還裝得下；對齊的位置太靠右、或第一個參數就超過界線時，這組改用 hang
     let first_fits = head_w + width(&args[0]) + 1 <= o.margin;
     let align = o.style == WrapStyle::Align && head_w + 12 <= o.margin && first_fits;
-    if align { layout_align(lang, &args, &head, &tail, prefix, head_w, o) } else { layout_hang(lang, &args, &head, &tail, prefix, o) }
+    if align {
+        layout_align(lang, &args, &head, &tail, prefix, head_w, o)
+    } else {
+        layout_hang(lang, &args, &head, &tail, prefix, o)
+    }
 }
 
 /// `chars[from..to]` 裡最外層的圓／方括號群組（開、關括號的位置）。
-fn outer_groups(chars: &[char], kinds: &[Kind], from: usize, to: usize, curly: bool) -> Vec<(usize, usize)> {
+fn outer_groups(
+    chars: &[char],
+    kinds: &[Kind],
+    from: usize,
+    to: usize,
+    curly: bool,
+) -> Vec<(usize, usize)> {
     let mut groups = Vec::new();
     let (mut depth, mut open_at) = (0usize, 0usize);
     for j in from..to {
@@ -265,20 +283,40 @@ fn split_args(chars: &[char], kinds: &[Kind], open: usize, close: usize) -> Vec<
 }
 
 /// 每個參數一行，縮排一層，閉括號獨立一行。
-fn layout_hang(lang: &Language, args: &[String], head: &str, tail: &str, prefix: &str, o: &Opts) -> Vec<String> {
+fn layout_hang(
+    lang: &Language,
+    args: &[String],
+    head: &str,
+    tail: &str,
+    prefix: &str,
+    o: &Opts,
+) -> Vec<String> {
     let mut lines = vec![format!("{prefix}{head}")];
     let inner = format!("{prefix}{}", o.unit);
     for (n, arg) in args.iter().enumerate() {
         // 只有一個參數時不加逗號：`(a + b)` 加了逗號會變成元組
         let comma = n + 1 < args.len() || (o.trailing_comma && args.len() > 1);
-        lines.extend(layout(lang, &format!("{arg}{}", if comma { "," } else { "" }), &inner, o));
+        lines.extend(layout(
+            lang,
+            &format!("{arg}{}", if comma { "," } else { "" }),
+            &inner,
+            o,
+        ));
     }
     lines.extend(layout(lang, tail, prefix, o));
     lines
 }
 
 /// 對齊第一個參數；參數盡量排滿一行，閉括號接在最後一個參數後面。
-fn layout_align(lang: &Language, args: &[String], head: &str, tail: &str, prefix: &str, head_w: usize, o: &Opts) -> Vec<String> {
+fn layout_align(
+    lang: &Language,
+    args: &[String],
+    head: &str,
+    tail: &str,
+    prefix: &str,
+    head_w: usize,
+    o: &Opts,
+) -> Vec<String> {
     let cont = format!("{prefix}{}", " ".repeat(head_w - width(prefix)));
     let mut lines = Vec::new();
     let mut cur = format!("{prefix}{head}");
@@ -296,7 +334,11 @@ fn layout_align(lang: &Language, args: &[String], head: &str, tail: &str, prefix
             lines.push(std::mem::take(&mut cur));
             if width(&cont) + width(&piece) + tail_w > o.margin {
                 // 這個參數自己一行也放不下：它自己再斷
-                let t = if last { format!("{piece}{tail}") } else { piece.clone() };
+                let t = if last {
+                    format!("{piece}{tail}")
+                } else {
+                    piece.clone()
+                };
                 lines.extend(layout(lang, &t, &cont, o));
                 if last {
                     return lines;
@@ -316,7 +358,14 @@ fn layout_align(lang: &Language, args: &[String], head: &str, tail: &str, prefix
 
 /// 排列 `a..=b` 這幾行（`all` 是整份文件，`how` 是 [`indent::scan`](super::indent::scan) 的結果）：
 /// 縮排照 `how`；多行括號能接就接成一行，超過安全界線的再依風格斷開。
-pub fn reformat_lines(lang: &Language, all: &[String], how: &[LineIndent], a: usize, b: usize, o: &Opts) -> Vec<String> {
+pub fn reformat_lines(
+    lang: &Language,
+    all: &[String],
+    how: &[LineIndent],
+    a: usize,
+    b: usize,
+    o: &Opts,
+) -> Vec<String> {
     let mut out = Vec::new();
     for (first, last) in plan(lang, all, a, b) {
         let prefix = match how[first] {
@@ -329,7 +378,11 @@ pub fn reformat_lines(lang: &Language, all: &[String], how: &[LineIndent], a: us
                 continue;
             }
         };
-        let text = if first == last { all[first].trim().to_owned() } else { join_group(lang, &all[first..=last]) };
+        let text = if first == last {
+            all[first].trim().to_owned()
+        } else {
+            join_group(lang, &all[first..=last])
+        };
         out.extend(layout(lang, &text, &prefix, o));
     }
     out
@@ -351,7 +404,12 @@ mod tests {
     }
 
     fn opts(margin: usize, style: WrapStyle, trailing_comma: bool) -> Opts<'static> {
-        Opts { margin, style, trailing_comma, unit: "    " }
+        Opts {
+            margin,
+            style,
+            trailing_comma,
+            unit: "    ",
+        }
     }
 
     fn run(file: &str, text: &str, o: &Opts) -> String {
@@ -365,11 +423,36 @@ mod tests {
     #[test]
     fn a_multi_line_group_that_fits_is_joined_back() {
         let text = "fn f() {\n    let x = foo(\n        a,\n        b,\n    );\n}";
-        assert_eq!(run("a.rs", text, &opts(60, WrapStyle::Hang, true)), "fn f() {\n    let x = foo(a, b);\n}");
+        assert_eq!(
+            run("a.rs", text, &opts(60, WrapStyle::Hang, true)),
+            "fn f() {\n    let x = foo(a, b);\n}"
+        );
         // 只有一個元素的元組保留逗號
-        assert_eq!(run("a.rs", "let t = (\n    a,\n);", &opts(60, WrapStyle::Hang, true)), "let t = (a,);");
-        assert_eq!(run("a.py", "x = foo(\n    a,\n    b,\n)", &opts(60, WrapStyle::Align, true)), "x = foo(a, b)");
-        assert_eq!(run("a.py", "x = (\n    a,\n)", &opts(60, WrapStyle::Align, true)), "x = (a,)", "Python 的單元素元組也保留逗號");
+        assert_eq!(
+            run(
+                "a.rs",
+                "let t = (\n    a,\n);",
+                &opts(60, WrapStyle::Hang, true)
+            ),
+            "let t = (a,);"
+        );
+        assert_eq!(
+            run(
+                "a.py",
+                "x = foo(\n    a,\n    b,\n)",
+                &opts(60, WrapStyle::Align, true)
+            ),
+            "x = foo(a, b)"
+        );
+        assert_eq!(
+            run(
+                "a.py",
+                "x = (\n    a,\n)",
+                &opts(60, WrapStyle::Align, true)
+            ),
+            "x = (a,)",
+            "Python 的單元素元組也保留逗號"
+        );
     }
 
     #[test]
@@ -387,10 +470,24 @@ mod tests {
     fn a_long_call_is_broken_by_the_wrap_style() {
         let text = "result = compute(first_argument, second_argument, third_argument)";
         let align = run("a.py", text, &opts(40, WrapStyle::Align, false));
-        assert_eq!(align, "result = compute(first_argument,\n                 second_argument,\n                 third_argument)");
-        let hang = run("a.rs", "let r = compute(first_argument, second_argument, third_argument);", &opts(40, WrapStyle::Hang, true));
-        assert_eq!(hang, "let r = compute(\n    first_argument,\n    second_argument,\n    third_argument,\n);");
-        let no_comma = run("a.rs", "let r = compute(first_argument, second_argument, third_argument);", &opts(40, WrapStyle::Hang, false));
+        assert_eq!(
+            align,
+            "result = compute(first_argument,\n                 second_argument,\n                 third_argument)"
+        );
+        let hang = run(
+            "a.rs",
+            "let r = compute(first_argument, second_argument, third_argument);",
+            &opts(40, WrapStyle::Hang, true),
+        );
+        assert_eq!(
+            hang,
+            "let r = compute(\n    first_argument,\n    second_argument,\n    third_argument,\n);"
+        );
+        let no_comma = run(
+            "a.rs",
+            "let r = compute(first_argument, second_argument, third_argument);",
+            &opts(40, WrapStyle::Hang, false),
+        );
         assert!(no_comma.contains("third_argument\n);"), "{no_comma}");
     }
 
@@ -398,18 +495,39 @@ mod tests {
     fn align_fills_each_line_and_hang_keeps_the_indent_of_the_statement() {
         let text = "    x = foo(aaaa, bbbb, cccc, dddd, eeee, ffff)";
         let got = run("a.py", text, &opts(30, WrapStyle::Align, false));
-        assert_eq!(got, "    x = foo(aaaa, bbbb, cccc,\n            dddd, eeee, ffff)");
-        let got = run("a.rs", "fn f() {\nlet v = foo(aaaa, bbbb, cccc, dddd);\n}", &opts(24, WrapStyle::Hang, true));
-        assert_eq!(got, "fn f() {\n    let v = foo(\n        aaaa,\n        bbbb,\n        cccc,\n        dddd,\n    );\n}");
+        assert_eq!(
+            got,
+            "    x = foo(aaaa, bbbb, cccc,\n            dddd, eeee, ffff)"
+        );
+        let got = run(
+            "a.rs",
+            "fn f() {\nlet v = foo(aaaa, bbbb, cccc, dddd);\n}",
+            &opts(24, WrapStyle::Hang, true),
+        );
+        assert_eq!(
+            got,
+            "fn f() {\n    let v = foo(\n        aaaa,\n        bbbb,\n        cccc,\n        dddd,\n    );\n}"
+        );
     }
 
     #[test]
     fn single_arguments_and_strings_are_not_broken_badly() {
         let o = opts(20, WrapStyle::Align, false);
         let s = "x = foo(\"a, b, c, d, e, f, g\")";
-        assert_eq!(run("a.py", s, &o), s, "對齊風格下單一參數斷不開，字串也不會被切");
-        let hang = run("a.rs", "let x = (aaaa + bbbb + cccc + dddd);", &opts(20, WrapStyle::Hang, true));
-        assert!(!hang.contains("dddd,"), "單一參數不加逗號（不然 (a + b) 會變成元組）：{hang}");
+        assert_eq!(
+            run("a.py", s, &o),
+            s,
+            "對齊風格下單一參數斷不開，字串也不會被切"
+        );
+        let hang = run(
+            "a.rs",
+            "let x = (aaaa + bbbb + cccc + dddd);",
+            &opts(20, WrapStyle::Hang, true),
+        );
+        assert!(
+            !hang.contains("dddd,"),
+            "單一參數不加逗號（不然 (a + b) 會變成元組）：{hang}"
+        );
         // 沒有括號的長行維持原樣
         let plain = "let x = aaaa + bbbb + cccc + dddd + eeee;";
         assert_eq!(run("a.rs", plain, &opts(20, WrapStyle::Hang, true)), plain);
@@ -429,19 +547,30 @@ mod tests {
         );
         // 界線 67：第一個參數接在開括號後面就超過界線，這組改成換行縮排
         let got = run("a.py", text, &opts(67, WrapStyle::Align, true));
-        assert_eq!(got, "    reply_task = asyncio.create_task(process_voice(\n        bytes(pcm_buffer),\n        writer,\n    ))");
+        assert_eq!(
+            got,
+            "    reply_task = asyncio.create_task(process_voice(\n        bytes(pcm_buffer),\n        writer,\n    ))"
+        );
     }
 
     #[test]
     fn dict_literals_in_python_and_braces_inside_brackets_can_be_broken() {
-        let line = "        history.append({\"role\": \"assistant\", \"content\": full_reply.strip()})";
+        let line =
+            "        history.append({\"role\": \"assistant\", \"content\": full_reply.strip()})";
         let got = run("a.py", line, &opts(67, WrapStyle::Align, true));
         assert_eq!(
             got,
             "        history.append({\"role\": \"assistant\",\n                        \"content\": full_reply.strip()})"
         );
         // 多行的字典能接回一行
-        assert_eq!(run("a.py", "d = {\n    \"a\": 1,\n    \"b\": 2,\n}", &opts(60, WrapStyle::Align, true)), "d = {\"a\": 1, \"b\": 2}");
+        assert_eq!(
+            run(
+                "a.py",
+                "d = {\n    \"a\": 1,\n    \"b\": 2,\n}",
+                &opts(60, WrapStyle::Align, true)
+            ),
+            "d = {\"a\": 1, \"b\": 2}"
+        );
         // 其他語言：頂層的 { 是程式區塊，不動
         let block = "if aaaaaaaa && bbbbbbbbbbb && cccccccccccc && dddddddddddd { x = 1, 2 }";
         assert_eq!(run("a.rs", block, &opts(30, WrapStyle::Hang, true)), block);
@@ -451,15 +580,25 @@ mod tests {
     fn a_nested_long_argument_breaks_again() {
         let text = "x = outer(inner_function(aaaa, bbbb, cccc), second)";
         let got = run("a.rs", text, &opts(30, WrapStyle::Hang, false));
-        assert_eq!(got, "x = outer(\n    inner_function(\n        aaaa,\n        bbbb,\n        cccc\n    ),\n    second\n)");
+        assert_eq!(
+            got,
+            "x = outer(\n    inner_function(\n        aaaa,\n        bbbb,\n        cccc\n    ),\n    second\n)"
+        );
     }
 
     #[test]
     fn only_groups_inside_the_selected_lines_are_touched() {
         let lang = language_for_name("a.rs").unwrap();
-        let all: Vec<String> = "foo(\n    a,\n);\nbar(\n    b,\n);".split('\n').map(str::to_owned).collect();
+        let all: Vec<String> = "foo(\n    a,\n);\nbar(\n    b,\n);"
+            .split('\n')
+            .map(str::to_owned)
+            .collect();
         assert_eq!(plan(lang, &all, 0, 5), vec![(0, 2), (3, 5)]);
-        assert_eq!(plan(lang, &all, 0, 1), vec![(0, 0), (1, 1)], "選取切到一組括號中間：不接合");
+        assert_eq!(
+            plan(lang, &all, 0, 1),
+            vec![(0, 0), (1, 1)],
+            "選取切到一組括號中間：不接合"
+        );
         assert_eq!(plan(lang, &all, 3, 5), vec![(3, 5)]);
     }
 }

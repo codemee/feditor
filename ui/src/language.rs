@@ -20,9 +20,9 @@ pub fn comment_prefix(path: Option<&Path>) -> &'static str {
         "rs" | "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "cs" | "java" | "js" | "mjs" | "cjs"
         | "jsx" | "ts" | "tsx" | "go" | "swift" | "kt" | "kts" | "scala" | "php" | "dart"
         | "css" | "scss" | "less" | "jsonc" | "proto" | "zig" | "v" | "glsl" | "slint" => "//",
-        "py" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "psm1" | "rb" | "pl" | "pm" | "r" | "yml"
-        | "yaml" | "toml" | "conf" | "ini" | "cfg" | "properties" | "mk" | "cmake" | "gitignore"
-        | "dockerfile" | "tf" | "nim" | "cr" | "ex" | "exs" | "jl" => "#",
+        "py" | "sh" | "bash" | "zsh" | "fish" | "ps1" | "psm1" | "rb" | "pl" | "pm" | "r"
+        | "yml" | "yaml" | "toml" | "conf" | "ini" | "cfg" | "properties" | "mk" | "cmake"
+        | "gitignore" | "dockerfile" | "tf" | "nim" | "cr" | "ex" | "exs" | "jl" => "#",
         "sql" | "lua" | "hs" | "elm" | "ada" => "--",
         "vim" => "\"",
         "bat" | "cmd" => "REM",
@@ -45,7 +45,14 @@ mod tests {
         assert_eq!(comment_prefix(Some(Path::new("notes.txt"))), "");
         assert_eq!(comment_prefix(Some(Path::new("noext"))), "");
         assert_eq!(comment_prefix(None), "");
-        for n in [".env", ".env.local", ".env.example", "prod.env", ".npmrc", ".editorconfig"] {
+        for n in [
+            ".env",
+            ".env.local",
+            ".env.example",
+            "prod.env",
+            ".npmrc",
+            ".editorconfig",
+        ] {
             assert_eq!(comment_prefix(Some(Path::new(n))), "#", "{n}");
         }
     }

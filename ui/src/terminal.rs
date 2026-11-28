@@ -18,7 +18,7 @@ use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::Rgb;
 use eframe::egui;
 
-use crate::pty_tap::{report_to_path, Osc, Tapped};
+use crate::pty_tap::{Osc, Tapped, report_to_path};
 
 /// 終端機大小（格數）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,7 +86,10 @@ impl Shared {
             Osc::Cwd(raw) => {
                 if cfg!(windows) {
                     let computer = std::env::var("COMPUTERNAME").ok();
-                    if let Some(dir) = report_to_path(&raw, computer.as_deref()).map(PathBuf::from).filter(|p| p.is_dir()) {
+                    if let Some(dir) = report_to_path(&raw, computer.as_deref())
+                        .map(PathBuf::from)
+                        .filter(|p| p.is_dir())
+                    {
                         *self.cwd.lock() = Some(dir);
                     }
                 }
@@ -113,7 +116,11 @@ impl ThemeColors {
             16..=231 => {
                 let n = index - 16;
                 let level = |v: usize| [0u8, 95, 135, 175, 215, 255][v];
-                Rgb { r: level(n / 36), g: level(n / 6 % 6), b: level(n % 6) }
+                Rgb {
+                    r: level(n / 36),
+                    g: level(n / 6 % 6),
+                    b: level(n % 6),
+                }
             }
             232..=255 => {
                 let v = (8 + 10 * (index - 232)) as u8;
@@ -150,14 +157,21 @@ pub fn clean_program_title(title: &str, keep_spinner: bool) -> Option<String> {
     let is_spinner = |c: char| ('\u{2800}'..='\u{28FF}').contains(&c);
     let stripped = title.trim().trim_start_matches(is_spinner).trim();
     let lower = stripped.to_ascii_lowercase();
-    let drive_path = stripped.len() > 2 && stripped.as_bytes()[1] == b':' && stripped.as_bytes()[0].is_ascii_alphabetic() && matches!(stripped.as_bytes()[2], b'\\' | b'/');
+    let drive_path = stripped.len() > 2
+        && stripped.as_bytes()[1] == b':'
+        && stripped.as_bytes()[0].is_ascii_alphabetic()
+        && matches!(stripped.as_bytes()[2], b'\\' | b'/');
     if stripped.is_empty() || lower.ends_with(".exe") || drive_path {
         return None;
     }
     let title = if keep_spinner { title.trim() } else { stripped };
     let mut chars = title.chars();
     let head: String = chars.by_ref().take(MAX_CHARS).collect();
-    Some(if chars.next().is_some() { format!("{head}…") } else { head })
+    Some(if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    })
 }
 
 /// shell 用標題序列（OSC 2）回報目前資料夾時，標題的開頭。
@@ -190,7 +204,9 @@ fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
-        let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | *chunk.get(2).unwrap_or(&0) as u32;
         for i in 0..4 {
             if i <= chunk.len() {
                 out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
@@ -206,7 +222,19 @@ fn base64(bytes: &[u8]) -> String {
 fn has_command_arg(args: &[String]) -> bool {
     args.iter().any(|a| {
         let name = a.trim_start_matches(['-', '/']).to_ascii_lowercase();
-        a.starts_with(['-', '/']) && ["c", "command", "f", "file", "e", "ec", "encodedcommand", "cwa", "commandwithargs"].contains(&name.as_str())
+        a.starts_with(['-', '/'])
+            && [
+                "c",
+                "command",
+                "f",
+                "file",
+                "e",
+                "ec",
+                "encodedcommand",
+                "cwa",
+                "commandwithargs",
+            ]
+            .contains(&name.as_str())
     })
 }
 
@@ -215,8 +243,16 @@ fn powershell_cwd_args(args: &[String]) -> Vec<String> {
     if has_command_arg(args) {
         return Vec::new();
     }
-    let utf16: Vec<u8> = POWERSHELL_CWD_SCRIPT.replace('\n', "\r\n").encode_utf16().flat_map(u16::to_le_bytes).collect();
-    vec!["-NoExit".to_owned(), "-EncodedCommand".to_owned(), base64(&utf16)]
+    let utf16: Vec<u8> = POWERSHELL_CWD_SCRIPT
+        .replace('\n', "\r\n")
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    vec![
+        "-NoExit".to_owned(),
+        "-EncodedCommand".to_owned(),
+        base64(&utf16),
+    ]
 }
 
 /// `std::sync::Mutex` 的薄包裝：不會因為別的執行緒 panic 而中毒。
@@ -305,7 +341,10 @@ pub struct Terminal {
 #[cfg(windows)]
 fn has_child_program(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
     // SAFETY: 快照把關在這個函式裡，用完就關；`PROCESSENTRY32W` 是純 C 結構，全 0 合法，只需要先填 `dwSize`
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -317,8 +356,16 @@ fn has_child_program(pid: u32) -> bool {
         let mut procs: Vec<(u32, u32, String)> = Vec::new(); // (程序編號, 父程序編號, 小寫檔名)
         let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
         while ok {
-            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
-            procs.push((entry.th32ProcessID, entry.th32ParentProcessID, String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase()));
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            procs.push((
+                entry.th32ProcessID,
+                entry.th32ParentProcessID,
+                String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase(),
+            ));
             ok = Process32NextW(snapshot, &mut entry) != 0;
         }
         CloseHandle(snapshot);
@@ -374,11 +421,19 @@ fn process_cwd(pid: u32) -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn process_cwd(pid: u32) -> Option<PathBuf> {
-    use std::ffi::{c_void, CStr};
+    use std::ffi::{CStr, c_void};
     // SAFETY: `proc_vnodepathinfo` 是純 C 結構，全 0 是合法的值；`proc_pidinfo` 最多寫入 `size` 個位元組到它裡面
     let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
-    let written = unsafe { libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDVNODEPATHINFO, 0, &mut info as *mut _ as *mut c_void, size) };
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            &mut info as *mut _ as *mut c_void,
+            size,
+        )
+    };
     if written != size {
         return None; // 程序已經不在了，或沒有權限
     }
@@ -396,7 +451,10 @@ fn process_cwd(_pid: u32) -> Option<PathBuf> {
 /// cmd 的提示字元：在原本的提示字元（沒設就是預設的 `$P$G`）前面加一段標題序列來回報目前的資料夾
 /// （`$E` 是 ESC，`$P` 是目前的路徑，`$E\` 結束序列）。
 fn cmd_prompt(original: Option<&str>) -> String {
-    format!("$E]2;{CWD_TITLE_PREFIX}$P$E\\{}", original.filter(|p| !p.is_empty()).unwrap_or("$P$G"))
+    format!(
+        "$E]2;{CWD_TITLE_PREFIX}$P$E\\{}",
+        original.filter(|p| !p.is_empty()).unwrap_or("$P$G")
+    )
 }
 
 /// 要執行的 shell：程式與參數。
@@ -408,18 +466,34 @@ pub struct ShellCommand {
 
 /// 系統預設的 shell。Unix 用 `$SHELL`（沒有就 `/bin/sh`）；Windows 優先用 PowerShell 7（`pwsh`），
 /// 其次 Windows PowerShell，最後才是 `%COMSPEC%`（cmd）。
-pub fn default_shell(env: &dyn Fn(&str) -> Option<String>, exists_in_path: &dyn Fn(&str) -> bool) -> ShellCommand {
+pub fn default_shell(
+    env: &dyn Fn(&str) -> Option<String>,
+    exists_in_path: &dyn Fn(&str) -> bool,
+) -> ShellCommand {
     if cfg!(windows) {
         for exe in ["pwsh.exe", "powershell.exe"] {
             if exists_in_path(exe) {
-                return ShellCommand { program: exe.to_owned(), args: vec!["-NoLogo".to_owned()] };
+                return ShellCommand {
+                    program: exe.to_owned(),
+                    args: vec!["-NoLogo".to_owned()],
+                };
             }
         }
-        let cmd = env("COMSPEC").filter(|s| !s.is_empty()).unwrap_or_else(|| "cmd.exe".to_owned());
-        ShellCommand { program: cmd, args: Vec::new() }
+        let cmd = env("COMSPEC")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "cmd.exe".to_owned());
+        ShellCommand {
+            program: cmd,
+            args: Vec::new(),
+        }
     } else {
-        let sh = env("SHELL").filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".to_owned());
-        ShellCommand { program: sh, args: Vec::new() }
+        let sh = env("SHELL")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "/bin/sh".to_owned());
+        ShellCommand {
+            program: sh,
+            args: Vec::new(),
+        }
     }
 }
 
@@ -454,10 +528,17 @@ pub fn split_command(line: &str) -> Vec<String> {
 }
 
 /// 要執行的 shell：使用者在設定裡指定了（程式加參數）就用它，沒有就用系統預設的。
-pub fn resolve_shell(custom: &str, env: &dyn Fn(&str) -> Option<String>, exists_in_path: &dyn Fn(&str) -> bool) -> ShellCommand {
+pub fn resolve_shell(
+    custom: &str,
+    env: &dyn Fn(&str) -> Option<String>,
+    exists_in_path: &dyn Fn(&str) -> bool,
+) -> ShellCommand {
     let mut words = split_command(custom).into_iter();
     match words.next() {
-        Some(program) => ShellCommand { program, args: words.collect() },
+        Some(program) => ShellCommand {
+            program,
+            args: words.collect(),
+        },
         None => default_shell(env, exists_in_path),
     }
 }
@@ -471,12 +552,20 @@ pub struct ShellOption {
 
 /// 路徑有空白就用雙引號包起來，才能放進「程式 參數…」的指令裡。
 fn quote_if_needed(path: &str) -> String {
-    if path.contains(' ') { format!("\"{path}\"") } else { path.to_owned() }
+    if path.contains(' ') {
+        format!("\"{path}\"")
+    } else {
+        path.to_owned()
+    }
 }
 
 /// `/etc/shells`：每行一個 shell 的絕對路徑，`#` 開頭的是註解。
 pub fn parse_etc_shells(text: &str) -> Vec<String> {
-    text.lines().map(str::trim).filter(|l| l.starts_with('/')).map(str::to_owned).collect()
+    text.lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('/'))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// 這台機器上可以用的 shell（依常用程度排序）。`windows` 決定找法：
@@ -492,7 +581,10 @@ pub fn shells_for(
     let mut out: Vec<ShellOption> = Vec::new();
     let mut add = |label: &str, command: String| {
         if !out.iter().any(|o| o.command == command || o.label == label) {
-            out.push(ShellOption { label: label.to_owned(), command });
+            out.push(ShellOption {
+                label: label.to_owned(),
+                command,
+            });
         }
     };
     if windows {
@@ -507,7 +599,12 @@ pub fn shells_for(
         }
         let var = |name: &str| env(name).filter(|v| !v.is_empty());
         let mut git_bash: Vec<String> = Vec::new();
-        for (name, rest) in [("ProgramFiles", "Git\\bin\\bash.exe"), ("ProgramFiles(x86)", "Git\\bin\\bash.exe"), ("LOCALAPPDATA", "Programs\\Git\\bin\\bash.exe"), ("USERPROFILE", "scoop\\apps\\git\\current\\bin\\bash.exe")] {
+        for (name, rest) in [
+            ("ProgramFiles", "Git\\bin\\bash.exe"),
+            ("ProgramFiles(x86)", "Git\\bin\\bash.exe"),
+            ("LOCALAPPDATA", "Programs\\Git\\bin\\bash.exe"),
+            ("USERPROFILE", "scoop\\apps\\git\\current\\bin\\bash.exe"),
+        ] {
             if let Some(base) = var(name) {
                 git_bash.push(format!("{}\\{rest}", base.trim_end_matches('\\')));
             }
@@ -538,8 +635,18 @@ pub fn shells_for(
 
 /// 偵測這台機器上可以用的 shell。
 pub fn detect_shells() -> Vec<ShellOption> {
-    let etc = if cfg!(windows) { String::new() } else { std::fs::read_to_string("/etc/shells").unwrap_or_default() };
-    shells_for(cfg!(windows), &|k| std::env::var(k).ok(), &exists_in_path, &|p| std::path::Path::new(p).is_file(), &etc)
+    let etc = if cfg!(windows) {
+        String::new()
+    } else {
+        std::fs::read_to_string("/etc/shells").unwrap_or_default()
+    };
+    shells_for(
+        cfg!(windows),
+        &|k| std::env::var(k).ok(),
+        &exists_in_path,
+        &|p| std::path::Path::new(p).is_file(),
+        &etc,
+    )
 }
 
 /// shell 的種類：決定要送進去的指令怎麼加引號、怎麼換資料夾。
@@ -554,7 +661,11 @@ pub enum ShellKind {
 impl ShellKind {
     /// 由 shell 的程式名稱（可以帶路徑與 `.exe`）判斷。
     pub fn of(program: &str) -> Self {
-        let name = program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_lowercase();
+        let name = program
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(program)
+            .to_ascii_lowercase();
         let name = name.strip_suffix(".exe").unwrap_or(&name);
         if name.contains("pwsh") || name.contains("powershell") {
             ShellKind::PowerShell
@@ -581,11 +692,25 @@ impl ShellKind {
 
     /// 一般的命令列：`program args… [file] [-- ]extra`。`file` 是 `None` 時不接檔案（`cargo run`）；
     /// `extra_sep` 為真且有額外參數時，額外參數前面加 `--`（交給 `cargo run` 跑的程式本身）。
-    pub fn command_line(self, program: &str, args: &[String], file: Option<&str>, extra_sep: bool, extra: &str) -> String {
+    pub fn command_line(
+        self,
+        program: &str,
+        args: &[String],
+        file: Option<&str>,
+        extra_sep: bool,
+        extra: &str,
+    ) -> String {
         // 固定參數（`-3`、`/c`）只有英數字與 `-/._` 時不加引號：`cmd "/c"` 這樣寫 cmd 會看不懂
-        let plain = |a: &str| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || "-/._".contains(c));
+        let plain = |a: &str| {
+            !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-/._".contains(c))
+        };
         let mut words = vec![self.quote(program)];
-        words.extend(args.iter().map(|a| if plain(a) { a.clone() } else { self.quote(a) }));
+        words.extend(
+            args.iter()
+                .map(|a| if plain(a) { a.clone() } else { self.quote(a) }),
+        );
         if let Some(file) = file {
             words.push(self.quote(file));
         }
@@ -598,7 +723,11 @@ impl ShellKind {
         }
         let line = words.join(" ");
         // PowerShell 的字串開頭的指令要加呼叫運算子 &
-        if self == ShellKind::PowerShell { format!("& {line}") } else { line }
+        if self == ShellKind::PowerShell {
+            format!("& {line}")
+        } else {
+            line
+        }
     }
 
     /// 切到資料夾 `dir` 的一行指令（不含換行）。
@@ -626,8 +755,14 @@ pub fn is_default_shell(option: &ShellOption, configured: &str, system: &ShellCo
     let configured = split_command(configured);
     let option_words = split_command(&option.command);
     if configured.is_empty() {
-        let stem = |s: &str| std::path::Path::new(s).file_stem().map(|x| x.to_string_lossy().to_lowercase());
-        option_words.first().is_some_and(|p| stem(p) == stem(&system.program))
+        let stem = |s: &str| {
+            std::path::Path::new(s)
+                .file_stem()
+                .map(|x| x.to_string_lossy().to_lowercase())
+        };
+        option_words
+            .first()
+            .is_some_and(|p| stem(p) == stem(&system.program))
     } else {
         option_words == configured
     }
@@ -636,25 +771,35 @@ pub fn is_default_shell(option: &ShellOption, configured: &str, system: &ShellCo
 /// 指令（程式加參數）裡那個程式的實際檔案路徑：寫了路徑就用它，只有程式名稱就在 PATH 裡找（也試加上 `.exe`）。
 /// `path_var` 是 PATH 的內容，`is_file` 判斷檔案存不存在（測試時可以換掉）。
 #[cfg(any(windows, test))]
-pub fn program_path_in(command: &str, path_var: Option<&std::ffi::OsStr>, is_file: &dyn Fn(&std::path::Path) -> bool) -> Option<PathBuf> {
+pub fn program_path_in(
+    command: &str,
+    path_var: Option<&std::ffi::OsStr>,
+    is_file: &dyn Fn(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
     let program = split_command(command).into_iter().next()?;
     let direct = std::path::Path::new(&program);
     if direct.is_absolute() || direct.components().count() > 1 {
         return is_file(direct).then(|| direct.to_path_buf());
     }
     std::env::split_paths(path_var?).find_map(|dir| {
-        [program.clone(), format!("{program}.exe")].into_iter().map(|name| dir.join(name)).find(|candidate| is_file(candidate))
+        [program.clone(), format!("{program}.exe")]
+            .into_iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| is_file(candidate))
     })
 }
 
 /// 指令裡那個程式的實際檔案路徑（用目前的 PATH 找）。
 #[cfg(windows)]
 pub fn program_path(command: &str) -> Option<PathBuf> {
-    program_path_in(command, std::env::var_os("PATH").as_deref(), &|p| p.is_file())
+    program_path_in(command, std::env::var_os("PATH").as_deref(), &|p| {
+        p.is_file()
+    })
 }
 
 pub(crate) fn exists_in_path(exe: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(exe).is_file()))
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(exe).is_file()))
 }
 
 impl Terminal {
@@ -672,9 +817,15 @@ impl Terminal {
             let extra = powershell_cwd_args(&shell.args);
             shell.args.extend(extra);
         }
-        let mut env = HashMap::from([("TERM".to_owned(), "xterm-256color".to_owned()), ("COLORTERM".to_owned(), "truecolor".to_owned())]);
+        let mut env = HashMap::from([
+            ("TERM".to_owned(), "xterm-256color".to_owned()),
+            ("COLORTERM".to_owned(), "truecolor".to_owned()),
+        ]);
         if cfg!(windows) && ShellKind::of(&shell.program) == ShellKind::Cmd {
-            env.insert("PROMPT".to_owned(), cmd_prompt(std::env::var("PROMPT").ok().as_deref()));
+            env.insert(
+                "PROMPT".to_owned(),
+                cmd_prompt(std::env::var("PROMPT").ok().as_deref()),
+            );
         }
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program, shell.args)),
@@ -693,9 +844,15 @@ impl Terminal {
         let pid = pty.child_watcher().pid().map_or(0, |p| p.get());
         let shared = Arc::new(Shared::default());
         *shared.window.lock() = Some(window);
-        let listener = Listener { ctx: ctx.clone(), shared: shared.clone() };
+        let listener = Listener {
+            ctx: ctx.clone(),
+            shared: shared.clone(),
+        };
         // kitty 鍵盤協定預設是關的（關著就不回應程式的 `CSI ? u` 查詢）。Claude Code 靠它才分得出 Shift+Enter
-        let config = Config { kitty_keyboard: true, ..Config::default() };
+        let config = Config {
+            kitty_keyboard: true,
+            ..Config::default()
+        };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
         // 輸出先給 pty_tap 看一遍，撈出 OSC 7（目前資料夾）和通知（OSC 9／777／99），這些 alacritty_terminal 不處理
         let tap_shared = shared.clone();
@@ -705,7 +862,8 @@ impl Terminal {
             log.note(&format!("start {}x{}", size.cols, size.lines));
             *shared.log.lock() = Some(log.clone());
         }
-        let pty = Tapped::new(Box::new(pty), move |osc| tap_shared.on_osc(osc, &tap_ctx)).with_dump(dump);
+        let pty =
+            Tapped::new(Box::new(pty), move |osc| tap_shared.on_osc(osc, &tap_ctx)).with_dump(dump);
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)?;
         let sender = event_loop.channel();
         *shared.sender.lock() = Some(sender.clone());
@@ -730,7 +888,8 @@ impl Terminal {
             return;
         }
         self.size = size;
-        self.shared.note(&format!("resize {}x{}", size.cols, size.lines));
+        self.shared
+            .note(&format!("resize {}x{}", size.cols, size.lines));
         let mut term = self.term.lock();
         // 縮放後文字會重排（程式也會重畫），原來選的格子已經不是那段文字，留著會停在錯的地方，所以清掉
         term.selection = None;
@@ -742,10 +901,10 @@ impl Terminal {
     /// 把資料送給 shell（當成使用者打的字）。
     pub fn write(&self, bytes: impl Into<std::borrow::Cow<'static, [u8]>>) {
         let bytes = bytes.into();
-        self.shared.note(&format!("input: {:?}", String::from_utf8_lossy(&bytes)));
+        self.shared
+            .note(&format!("input: {:?}", String::from_utf8_lossy(&bytes)));
         let _ = self.sender.send(Msg::Input(bytes));
     }
-
 
     /// 告訴終端機目前畫面用的配色，之後程式問顏色時照這個回答。
     pub fn set_theme_colors(&self, colors: ThemeColors) {
@@ -830,12 +989,19 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
         }
     };
     let tilde = |n: u8| -> Vec<u8> {
-        if m > 1 { format!("\x1b[{n};{m}~").into_bytes() } else { format!("\x1b[{n}~").into_bytes() }
+        if m > 1 {
+            format!("\x1b[{n};{m}~").into_bytes()
+        } else {
+            format!("\x1b[{n}~").into_bytes()
+        }
     };
     let bytes = match key {
         // 一般 Enter 是送出；Shift／Ctrl／Alt+Enter 是「換行但不送出」，要讓 shell 分得出來
         // 程式啟用了 kitty 鍵盤協定（Claude Code 啟動時會要求）就照協定送 `CSI 13;修飾 u`，程式自己分得出 Shift+Enter
-        Enter if (mods.shift || mods.ctrl || mods.alt) && mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) => {
+        Enter
+            if (mods.shift || mods.ctrl || mods.alt)
+                && mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) =>
+        {
             return Some(format!("\x1b[13;{m}u").into_bytes());
         }
         Enter if mods.shift || mods.ctrl || mods.alt => return Some(modified_enter(mods)),
@@ -874,9 +1040,16 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
             // 單按修飾鍵本身也是一個按鍵事件）不能拿名字的第一個字母當字母用，否則單按 Ctrl 就變成 Ctrl+C
             let name = k.name();
             let mut letters = name.chars();
-            let c = letters.next().filter(char::is_ascii_alphabetic).filter(|_| letters.next().is_none())?;
+            let c = letters
+                .next()
+                .filter(char::is_ascii_alphabetic)
+                .filter(|_| letters.next().is_none())?;
             let byte = (c.to_ascii_uppercase() as u8) & 0x1f;
-            if mods.alt { vec![0x1b, byte] } else { vec![byte] }
+            if mods.alt {
+                vec![0x1b, byte]
+            } else {
+                vec![byte]
+            }
         }
         _ => return None,
     };
@@ -888,7 +1061,8 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
 /// 這是 bash、zsh、fish 常見的換行寫法。
 fn modified_enter(mods: egui::Modifiers) -> Vec<u8> {
     if cfg!(windows) {
-        let state = 0x10 * u32::from(mods.shift) + 0x08 * u32::from(mods.ctrl) + 0x02 * u32::from(mods.alt);
+        let state =
+            0x10 * u32::from(mods.shift) + 0x08 * u32::from(mods.ctrl) + 0x02 * u32::from(mods.alt);
         // 字元欄：Windows 上 Ctrl+Enter 產生的字元是 LF（10），不是 CR（13）。
         // Node 程式（Claude Code）只看字元，靠這個才分得出 Ctrl+Enter 是換行
         let ch = if mods.ctrl && !mods.alt { 10 } else { 13 };
@@ -901,7 +1075,11 @@ fn modified_enter(mods: egui::Modifiers) -> Vec<u8> {
 }
 
 fn ss3_or_csi(m: u8, final_byte: char) -> Vec<u8> {
-    if m > 1 { format!("\x1b[1;{m}{final_byte}").into_bytes() } else { format!("\x1bO{final_byte}").into_bytes() }
+    if m > 1 {
+        format!("\x1b[1;{m}{final_byte}").into_bytes()
+    } else {
+        format!("\x1bO{final_byte}").into_bytes()
+    }
 }
 
 trait ModsExt {
@@ -919,7 +1097,15 @@ impl ModsExt for egui::Modifiers {
 /// `button` 是 0 左鍵、1 中鍵、2 右鍵、3 沒有按鍵（只有移動）、64 滾輪往上、65 滾輪往下；
 /// `col`、`row` 從 0 起算；`release` 是放開按鍵；`motion` 是移動中。
 /// 程式要求 SGR 格式（`ESC[?1006h`）就用 SGR，否則用傳統格式（座標超過 223 的格子送不出去，回傳 `None`）。
-pub fn encode_mouse(button: u8, col: usize, row: usize, release: bool, mods: egui::Modifiers, motion: bool, mode: TermMode) -> Option<Vec<u8>> {
+pub fn encode_mouse(
+    button: u8,
+    col: usize,
+    row: usize,
+    release: bool,
+    mods: egui::Modifiers,
+    motion: bool,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
     let mut code = button;
     if mods.shift {
         code += 4;
@@ -955,8 +1141,15 @@ pub fn alt_letter_fallback(key: egui::Key, mods: egui::Modifiers) -> Option<Vec<
     }
     let name = key.name();
     let mut chars = name.chars();
-    let c = chars.next().filter(char::is_ascii_alphanumeric).filter(|_| chars.next().is_none())?;
-    let c = if mods.shift { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+    let c = chars
+        .next()
+        .filter(char::is_ascii_alphanumeric)
+        .filter(|_| chars.next().is_none())?;
+    let c = if mods.shift {
+        c.to_ascii_uppercase()
+    } else {
+        c.to_ascii_lowercase()
+    };
     Some(alt_text(&c.to_string()))
 }
 
@@ -969,12 +1162,18 @@ pub fn alt_text(text: &str) -> Vec<u8> {
 
 /// 拖進終端機的檔案或資料夾：路徑之間用空格隔開；只有安全字元就原樣貼上，有空白或特殊字元才依 shell 的規則加引號。
 pub fn dropped_paths_text(kind: ShellKind, paths: &[PathBuf]) -> String {
-    let plain = |c: char| c.is_alphanumeric() || "-_./:~".contains(c) || (c == '\\' && kind != ShellKind::Posix);
+    let plain = |c: char| {
+        c.is_alphanumeric() || "-_./:~".contains(c) || (c == '\\' && kind != ShellKind::Posix)
+    };
     paths
         .iter()
         .map(|p| {
             let text = p.to_string_lossy();
-            if !text.is_empty() && text.chars().all(plain) { text.into_owned() } else { kind.quote(&text) }
+            if !text.is_empty() && text.chars().all(plain) {
+                text.into_owned()
+            } else {
+                kind.quote(&text)
+            }
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -986,13 +1185,20 @@ pub fn dropped_paths_text(kind: ShellKind, paths: &[PathBuf]) -> String {
 pub fn parse_key(spec: &str) -> Result<(egui::Key, egui::Modifiers), String> {
     let mut mods = egui::Modifiers::NONE;
     let mut parts: Vec<&str> = spec.split('+').map(str::trim).collect();
-    let name = parts.pop().filter(|n| !n.is_empty()).ok_or_else(|| format!("不認得的按鍵：{spec}"))?;
+    let name = parts
+        .pop()
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| format!("不認得的按鍵：{spec}"))?;
     for m in parts {
         match m.to_ascii_lowercase().as_str() {
             "ctrl" | "control" => mods.ctrl = true,
             "shift" => mods.shift = true,
             "alt" | "option" => mods.alt = true,
-            _ => return Err(format!("不認得的修飾鍵「{m}」（可用 Ctrl、Shift、Alt）：{spec}")),
+            _ => {
+                return Err(format!(
+                    "不認得的修飾鍵「{m}」（可用 Ctrl、Shift、Alt）：{spec}"
+                ));
+            }
         }
     }
     let lower = name.to_ascii_lowercase();
@@ -1014,8 +1220,16 @@ pub fn parse_key(spec: &str) -> Result<(egui::Key, egui::Modifiers), String> {
         "right" => "ArrowRight",
         _ => name,
     };
-    let canonical = if canonical.len() == 1 { canonical.to_ascii_uppercase() } else if canonical.starts_with(['f', 'F']) { canonical.to_ascii_uppercase() } else { canonical.to_owned() };
-    egui::Key::from_name(&canonical).map(|k| (k, mods)).ok_or_else(|| format!("不認得的按鍵：{spec}"))
+    let canonical = if canonical.len() == 1 {
+        canonical.to_ascii_uppercase()
+    } else if canonical.starts_with(['f', 'F']) {
+        canonical.to_ascii_uppercase()
+    } else {
+        canonical.to_owned()
+    };
+    egui::Key::from_name(&canonical)
+        .map(|k| (k, mods))
+        .ok_or_else(|| format!("不認得的按鍵：{spec}"))
 }
 
 /// 一個按鍵要送給 shell 的位元組。沒有修飾鍵（或只有 Shift）的字母、數字就是那個字元；Alt 加字元是 ESC 加字元；
@@ -1023,26 +1237,48 @@ pub fn parse_key(spec: &str) -> Result<(egui::Key, egui::Modifiers), String> {
 fn key_bytes(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Option<Vec<u8>> {
     let name = key.name();
     let mut chars = name.chars();
-    let single = chars.next().filter(char::is_ascii_alphanumeric).filter(|_| chars.next().is_none());
+    let single = chars
+        .next()
+        .filter(char::is_ascii_alphanumeric)
+        .filter(|_| chars.next().is_none());
     if let Some(c) = single.filter(|_| !mods.ctrl) {
-        let c = if mods.shift { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
-        return Some(if mods.alt { alt_text(&c.to_string()) } else { c.to_string().into_bytes() });
+        let c = if mods.shift {
+            c.to_ascii_uppercase()
+        } else {
+            c.to_ascii_lowercase()
+        };
+        return Some(if mods.alt {
+            alt_text(&c.to_string())
+        } else {
+            c.to_string().into_bytes()
+        });
     }
     encode_key(key, mods, mode)
 }
 
 /// `--send` 的內容換成要寫進 shell 的位元組：文字照打（換行是 `\r`），`paste` 時改用括號貼上（見 [`paste_bytes`]）；
 /// 按鍵依 [`parse_key`] 編碼。
-pub fn send_bytes(items: &[crate::cli::SendItem], paste: bool, mode: TermMode) -> Result<Vec<u8>, String> {
+pub fn send_bytes(
+    items: &[crate::cli::SendItem],
+    paste: bool,
+    mode: TermMode,
+) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     for item in items {
         match item {
             crate::cli::SendItem::Text(text) if paste => out.extend(paste_bytes(text, mode)),
-            crate::cli::SendItem::Text(text) => out.extend(text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()),
-            crate::cli::SendItem::Stdin | crate::cli::SendItem::File(_) => return Err("內部錯誤：標準輸入或檔案還沒讀進來".to_owned()),
+            crate::cli::SendItem::Text(text) => {
+                out.extend(text.replace("\r\n", "\r").replace('\n', "\r").into_bytes())
+            }
+            crate::cli::SendItem::Stdin | crate::cli::SendItem::File(_) => {
+                return Err("內部錯誤：標準輸入或檔案還沒讀進來".to_owned());
+            }
             crate::cli::SendItem::Key(spec) => {
                 let (key, mods) = parse_key(spec)?;
-                out.extend(key_bytes(key, mods, mode).ok_or_else(|| format!("這個按鍵沒辦法送進終端機：{spec}"))?);
+                out.extend(
+                    key_bytes(key, mods, mode)
+                        .ok_or_else(|| format!("這個按鍵沒辦法送進終端機：{spec}"))?,
+                );
             }
         }
     }
@@ -1070,11 +1306,26 @@ mod tests {
     #[test]
     fn alt_letters_without_a_text_event_become_esc_plus_letter() {
         let alt = egui::Modifiers::ALT;
-        assert_eq!(alt_letter_fallback(egui::Key::V, alt), Some(b"\x1bv".to_vec()));
-        assert_eq!(alt_letter_fallback(egui::Key::V, egui::Modifiers { shift: true, ..alt }), Some(b"\x1bV".to_vec()));
-        assert_eq!(alt_letter_fallback(egui::Key::Num1, alt), Some(b"\x1b1".to_vec()));
-        assert_eq!(alt_letter_fallback(egui::Key::V, egui::Modifiers::NONE), None);
-        assert_eq!(alt_letter_fallback(egui::Key::V, egui::Modifiers::ALT | egui::Modifiers::CTRL), None);
+        assert_eq!(
+            alt_letter_fallback(egui::Key::V, alt),
+            Some(b"\x1bv".to_vec())
+        );
+        assert_eq!(
+            alt_letter_fallback(egui::Key::V, egui::Modifiers { shift: true, ..alt }),
+            Some(b"\x1bV".to_vec())
+        );
+        assert_eq!(
+            alt_letter_fallback(egui::Key::Num1, alt),
+            Some(b"\x1b1".to_vec())
+        );
+        assert_eq!(
+            alt_letter_fallback(egui::Key::V, egui::Modifiers::NONE),
+            None
+        );
+        assert_eq!(
+            alt_letter_fallback(egui::Key::V, egui::Modifiers::ALT | egui::Modifiers::CTRL),
+            None
+        );
         assert_eq!(alt_letter_fallback(egui::Key::ArrowUp, alt), None);
     }
 
@@ -1082,22 +1333,39 @@ mod tests {
     fn a_shim_relaunching_the_same_shell_is_not_a_running_program() {
         let p = |id: u32, parent: u32, name: &str| (id, parent, name.to_owned());
         // shim pwsh → 真 pwsh（只有 OpenConsole 和它）：不算
-        let idle = [p(1, 0, "pwsh.exe"), p(2, 1, "openconsole.exe"), p(3, 1, "pwsh.exe")];
+        let idle = [
+            p(1, 0, "pwsh.exe"),
+            p(2, 1, "openconsole.exe"),
+            p(3, 1, "pwsh.exe"),
+        ];
         assert!(!any_foreign_child(&idle, 1));
         // 真 pwsh 底下跑了 ping：算
-        let busy = [p(1, 0, "pwsh.exe"), p(3, 1, "pwsh.exe"), p(4, 3, "ping.exe")];
+        let busy = [
+            p(1, 0, "pwsh.exe"),
+            p(3, 1, "pwsh.exe"),
+            p(4, 3, "ping.exe"),
+        ];
         assert!(any_foreign_child(&busy, 1));
         // 沒有 shim 的情況照舊
-        assert!(any_foreign_child(&[p(1, 0, "pwsh.exe"), p(4, 1, "ping.exe")], 1));
+        assert!(any_foreign_child(
+            &[p(1, 0, "pwsh.exe"), p(4, 1, "ping.exe")],
+            1
+        ));
         assert!(!any_foreign_child(&[p(1, 0, "pwsh.exe")], 1));
     }
 
     #[test]
     fn shell_kinds_are_told_apart_by_program_name() {
         assert_eq!(ShellKind::of("pwsh"), ShellKind::PowerShell);
-        assert_eq!(ShellKind::of(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"), ShellKind::PowerShell);
+        assert_eq!(
+            ShellKind::of(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            ShellKind::PowerShell
+        );
         assert_eq!(ShellKind::of("CMD.EXE"), ShellKind::Cmd);
-        assert_eq!(ShellKind::of(r"C:\Windows\System32\cmd.exe"), ShellKind::Cmd);
+        assert_eq!(
+            ShellKind::of(r"C:\Windows\System32\cmd.exe"),
+            ShellKind::Cmd
+        );
         assert_eq!(ShellKind::of("/bin/zsh"), ShellKind::Posix);
         assert_eq!(ShellKind::of("nu"), ShellKind::Posix);
     }
@@ -1105,23 +1373,66 @@ mod tests {
     #[test]
     fn run_and_cd_lines_are_quoted_for_each_shell() {
         let args = vec!["-3".to_owned()];
-        assert_eq!(ShellKind::Posix.run_line("/my dir/python", &args, "/p/it's.py", ""), r"'/my dir/python' -3 '/p/it'\''s.py'");
+        assert_eq!(
+            ShellKind::Posix.run_line("/my dir/python", &args, "/p/it's.py", ""),
+            r"'/my dir/python' -3 '/p/it'\''s.py'"
+        );
         assert_eq!(
             ShellKind::PowerShell.run_line(r"C:\Program Files\py.exe", &args, r"C:\it's\a.py", ""),
             r"& 'C:\Program Files\py.exe' -3 'C:\it''s\a.py'"
         );
-        assert_eq!(ShellKind::Cmd.run_line(r"C:\Windows\System32\cmd.exe", &["/c".to_owned()], r"C:\a b\x.bat", "/q"), r#""C:\Windows\System32\cmd.exe" /c "C:\a b\x.bat" /q"#);
-        assert_eq!(ShellKind::Cmd.run_line(r"C:\py.exe", &[], r"C:\a b\a.py", ""), r#""C:\py.exe" "C:\a b\a.py""#);
+        assert_eq!(
+            ShellKind::Cmd.run_line(
+                r"C:\Windows\System32\cmd.exe",
+                &["/c".to_owned()],
+                r"C:\a b\x.bat",
+                "/q"
+            ),
+            r#""C:\Windows\System32\cmd.exe" /c "C:\a b\x.bat" /q"#
+        );
+        assert_eq!(
+            ShellKind::Cmd.run_line(r"C:\py.exe", &[], r"C:\a b\a.py", ""),
+            r#""C:\py.exe" "C:\a b\a.py""#
+        );
         // 命令列參數原樣接在最後（前後空白去掉），交給 shell 解析
-        assert_eq!(ShellKind::Posix.run_line("python", &[], "a.py", "  --port 8080 \"x y\"  "), r#"'python' 'a.py' --port 8080 "x y""#);
-        assert_eq!(ShellKind::Posix.run_line("python", &[], "a.py", "   "), "'python' 'a.py'", "只有空白就當沒有");
+        assert_eq!(
+            ShellKind::Posix.run_line("python", &[], "a.py", "  --port 8080 \"x y\"  "),
+            r#"'python' 'a.py' --port 8080 "x y""#
+        );
+        assert_eq!(
+            ShellKind::Posix.run_line("python", &[], "a.py", "   "),
+            "'python' 'a.py'",
+            "只有空白就當沒有"
+        );
         // 專案命令：不接檔案；額外參數放在 -- 後面
-        assert_eq!(ShellKind::Posix.command_line("/u/cargo", &["run".to_owned()], None, true, "--port 1"), "'/u/cargo' run -- --port 1");
-        assert_eq!(ShellKind::Posix.command_line("/u/cargo", &["build".to_owned()], None, false, "--release"), "'/u/cargo' build --release");
-        assert_eq!(ShellKind::Posix.command_line("/u/cargo", &["run".to_owned()], None, true, "  "), "'/u/cargo' run", "沒有額外參數就不加 --");
-        assert_eq!(ShellKind::Posix.command_line("uv", &["run".to_owned()], Some("a b.py"), true, "-v"), "'uv' run 'a b.py' -- -v");
+        assert_eq!(
+            ShellKind::Posix.command_line("/u/cargo", &["run".to_owned()], None, true, "--port 1"),
+            "'/u/cargo' run -- --port 1"
+        );
+        assert_eq!(
+            ShellKind::Posix.command_line(
+                "/u/cargo",
+                &["build".to_owned()],
+                None,
+                false,
+                "--release"
+            ),
+            "'/u/cargo' build --release"
+        );
+        assert_eq!(
+            ShellKind::Posix.command_line("/u/cargo", &["run".to_owned()], None, true, "  "),
+            "'/u/cargo' run",
+            "沒有額外參數就不加 --"
+        );
+        assert_eq!(
+            ShellKind::Posix.command_line("uv", &["run".to_owned()], Some("a b.py"), true, "-v"),
+            "'uv' run 'a b.py' -- -v"
+        );
         assert_eq!(ShellKind::Posix.cd_line("/a b"), "cd '/a b'");
-        assert_eq!(ShellKind::PowerShell.cd_line(r"C:\a b"), r"Set-Location -LiteralPath 'C:\a b'");
+        assert_eq!(
+            ShellKind::PowerShell.cd_line(r"C:\a b"),
+            r"Set-Location -LiteralPath 'C:\a b'"
+        );
         assert_eq!(ShellKind::Cmd.cd_line(r"D:\a b"), r#"cd /d "D:\a b""#);
     }
 
@@ -1130,7 +1441,10 @@ mod tests {
         use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
         let ctx = egui::Context::default();
         let size = GridSize { cols: 20, lines: 3 };
-        let listener = Listener { ctx: ctx.clone(), shared: Arc::new(Shared::default()) };
+        let listener = Listener {
+            ctx: ctx.clone(),
+            shared: Arc::new(Shared::default()),
+        };
         let mut term = Term::new(Config::default(), &size, listener);
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         // "hello 你好" 的 base64；後面再問一次剪貼簿內容（`?`），不該有人回答
@@ -1141,7 +1455,13 @@ mod tests {
             .platform_output
             .commands
             .iter()
-            .filter_map(|c| if let egui::OutputCommand::CopyText(t) = c { Some(t.clone()) } else { None })
+            .filter_map(|c| {
+                if let egui::OutputCommand::CopyText(t) = c {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
         assert_eq!(copied, vec!["hello 你好".to_owned()]);
     }
@@ -1151,14 +1471,29 @@ mod tests {
         use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
         let theme = ThemeColors {
             fg: Rgb { r: 1, g: 2, b: 3 },
-            bg: Rgb { r: 10, g: 20, b: 30 },
+            bg: Rgb {
+                r: 10,
+                g: 20,
+                b: 30,
+            },
             cursor: Rgb { r: 7, g: 8, b: 9 },
-            ansi: std::array::from_fn(|i| Rgb { r: i as u8, g: 0, b: 0 }),
+            ansi: std::array::from_fn(|i| Rgb {
+                r: i as u8,
+                g: 0,
+                b: 0,
+            }),
         };
         // 色立方與灰階用標準值
         assert_eq!(theme.color(16), Rgb { r: 0, g: 0, b: 0 });
         assert_eq!(theme.color(196), Rgb { r: 255, g: 0, b: 0 });
-        assert_eq!(theme.color(255), Rgb { r: 238, g: 238, b: 238 });
+        assert_eq!(
+            theme.color(255),
+            Rgb {
+                r: 238,
+                g: 238,
+                b: 238
+            }
+        );
         assert_eq!(theme.color(5), Rgb { r: 5, g: 0, b: 0 });
 
         #[derive(Clone)]
@@ -1175,7 +1510,10 @@ mod tests {
         let mut term = Term::new(Config::default(), &size, asked.clone());
         let mut parser: Processor<StdSyncHandler> = Processor::new();
         // 問背景色（OSC 11）、前景色（OSC 10）、游標色（OSC 12）、第 1 號顏色（OSC 4）
-        parser.advance(&mut term, b"\x1b]11;?\x07\x1b]10;?\x07\x1b]12;?\x07\x1b]4;1;?\x07");
+        parser.advance(
+            &mut term,
+            b"\x1b]11;?\x07\x1b]10;?\x07\x1b]12;?\x07\x1b]4;1;?\x07",
+        );
         let answers = asked.0.lock().unwrap().clone();
         assert_eq!(
             answers,
@@ -1198,7 +1536,9 @@ mod tests {
         impl EventListener for Asked {
             fn send_event(&self, event: Event) {
                 match event {
-                    Event::TextAreaSizeRequest(format) => self.0.lock().unwrap().push(format(self.1)),
+                    Event::TextAreaSizeRequest(format) => {
+                        self.0.lock().unwrap().push(format(self.1))
+                    }
                     Event::PtyWrite(text) => self.0.lock().unwrap().push(text),
                     _ => {}
                 }
@@ -1210,13 +1550,19 @@ mod tests {
         // `CSI 14 t` 問像素大小（高;寬）、`CSI 18 t` 問字元數（行;列）
         parser.advance(&mut term, b"\x1b[14t\x1b[18t");
         let answers = asked.0.lock().unwrap().clone();
-        assert_eq!(answers, vec!["\x1b[4;54;180t".to_owned(), "\x1b[8;3;20t".to_owned()]);
+        assert_eq!(
+            answers,
+            vec!["\x1b[4;54;180t".to_owned(), "\x1b[8;3;20t".to_owned()]
+        );
     }
 
     use egui::{Key, Modifiers};
 
     const NONE: Modifiers = Modifiers::NONE;
-    const CTRL: Modifiers = Modifiers { ctrl: true, ..Modifiers::NONE };
+    const CTRL: Modifiers = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
 
     fn enc(key: Key, mods: Modifiers) -> Option<String> {
         encode_key(key, mods, TermMode::NONE).map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -1224,14 +1570,27 @@ mod tests {
 
     #[test]
     fn enter_with_modifiers_is_not_a_plain_submit() {
-        let shift = Modifiers { shift: true, ..Modifiers::NONE };
-        for mods in [shift, CTRL, Modifiers { alt: true, ..Modifiers::NONE }] {
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        };
+        for mods in [
+            shift,
+            CTRL,
+            Modifiers {
+                alt: true,
+                ..Modifiers::NONE
+            },
+        ] {
             let s = enc(Key::Enter, mods).unwrap();
             assert_ne!(s, "\r");
             assert!(s.len() > 1 || s == "\n");
         }
         if cfg!(windows) {
-            assert_eq!(enc(Key::Enter, shift).as_deref(), Some("\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_"));
+            assert_eq!(
+                enc(Key::Enter, shift).as_deref(),
+                Some("\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_")
+            );
         }
     }
 
@@ -1240,9 +1599,19 @@ mod tests {
         let kitty = TermMode::DISAMBIGUATE_ESC_CODES;
         let s = |m| String::from_utf8(encode_key(Key::Enter, m, kitty).unwrap()).unwrap();
         assert_eq!(s(Modifiers::SHIFT), "\x1b[13;2u");
-        assert_eq!(s(Modifiers { alt: true, ..Modifiers::NONE }), "\x1b[13;3u");
+        assert_eq!(
+            s(Modifiers {
+                alt: true,
+                ..Modifiers::NONE
+            }),
+            "\x1b[13;3u"
+        );
         assert_eq!(s(CTRL), "\x1b[13;5u");
-        assert_eq!(encode_key(Key::Enter, NONE, kitty), Some(b"\r".to_vec()), "沒有修飾鍵的 Enter 還是 CR");
+        assert_eq!(
+            encode_key(Key::Enter, NONE, kitty),
+            Some(b"\r".to_vec()),
+            "沒有修飾鍵的 Enter 還是 CR"
+        );
     }
 
     #[test]
@@ -1258,16 +1627,36 @@ mod tests {
         assert_eq!(enc(Key::F5, NONE).as_deref(), Some("\x1b[15~"));
         // 修飾鍵：Ctrl+→ 是 ESC [ 1 ; 5 C
         assert_eq!(enc(Key::ArrowRight, CTRL).as_deref(), Some("\x1b[1;5C"));
-        assert_eq!(enc(Key::ArrowLeft, Modifiers::ALT).as_deref(), Some("\x1b[1;3D"));
+        assert_eq!(
+            enc(Key::ArrowLeft, Modifiers::ALT).as_deref(),
+            Some("\x1b[1;3D")
+        );
     }
 
     #[test]
     fn pressing_a_modifier_key_alone_sends_nothing() {
         // 單按 Ctrl／Shift／Alt 本身也是按鍵事件（Key::ControlLeft…），名字的第一個字母不能被當成 Ctrl+字母
-        for key in [Key::ControlLeft, Key::ControlRight, Key::ShiftLeft, Key::ShiftRight, Key::AltLeft, Key::AltRight, Key::SuperLeft] {
-            let all = Modifiers { ctrl: true, shift: true, alt: true, ..Modifiers::NONE };
+        for key in [
+            Key::ControlLeft,
+            Key::ControlRight,
+            Key::ShiftLeft,
+            Key::ShiftRight,
+            Key::AltLeft,
+            Key::AltRight,
+            Key::SuperLeft,
+        ] {
+            let all = Modifiers {
+                ctrl: true,
+                shift: true,
+                alt: true,
+                ..Modifiers::NONE
+            };
             for mods in [CTRL, Modifiers::SHIFT, Modifiers::ALT, all] {
-                assert_eq!(encode_key(key, mods, TermMode::NONE), None, "{key:?} {mods:?}");
+                assert_eq!(
+                    encode_key(key, mods, TermMode::NONE),
+                    None,
+                    "{key:?} {mods:?}"
+                );
             }
         }
         // 名字比較長的一般鍵也一樣：Copy／Cut／Paste 專用鍵不是 Ctrl+C／X／V
@@ -1293,23 +1682,44 @@ mod tests {
         assert_eq!(encode_key(Key::D, CTRL, TermMode::NONE), Some(vec![4]));
         assert_eq!(encode_key(Key::L, CTRL, TermMode::NONE), Some(vec![12]));
         assert_eq!(encode_key(Key::Space, CTRL, TermMode::NONE), Some(vec![0]));
-        assert_eq!(encode_key(Key::A, NONE, TermMode::NONE), None, "一般字母走文字事件");
+        assert_eq!(
+            encode_key(Key::A, NONE, TermMode::NONE),
+            None,
+            "一般字母走文字事件"
+        );
         assert_eq!(encode_key(Key::Num1, CTRL, TermMode::NONE), None);
     }
 
     #[test]
     fn commands_split_into_program_and_arguments_and_a_custom_shell_overrides_the_default() {
         assert_eq!(split_command("pwsh -NoLogo"), vec!["pwsh", "-NoLogo"]);
-        assert_eq!(split_command("  bash   --login  -i "), vec!["bash", "--login", "-i"]);
-        assert_eq!(split_command(r#""C:\Program Files\Git\bin\bash.exe" --login"#), vec![r"C:\Program Files\Git\bin\bash.exe", "--login"]);
+        assert_eq!(
+            split_command("  bash   --login  -i "),
+            vec!["bash", "--login", "-i"]
+        );
+        assert_eq!(
+            split_command(r#""C:\Program Files\Git\bin\bash.exe" --login"#),
+            vec![r"C:\Program Files\Git\bin\bash.exe", "--login"]
+        );
         assert_eq!(split_command(""), Vec::<String>::new());
         assert_eq!(split_command("   "), Vec::<String>::new());
-        assert_eq!(split_command(r#"x "" y"#), vec!["x", "", "y"], "空的引號是一個空的參數");
+        assert_eq!(
+            split_command(r#"x "" y"#),
+            vec!["x", "", "y"],
+            "空的引號是一個空的參數"
+        );
         let env = |_: &str| None;
         let any = |_: &str| true;
         let custom = resolve_shell("nu --no-config", &env, &any);
-        assert_eq!((custom.program.as_str(), custom.args.as_slice()), ("nu", &["--no-config".to_owned()][..]));
-        assert_eq!(resolve_shell("", &env, &any), default_shell(&env, &any), "沒指定就用系統預設的");
+        assert_eq!(
+            (custom.program.as_str(), custom.args.as_slice()),
+            ("nu", &["--no-config".to_owned()][..])
+        );
+        assert_eq!(
+            resolve_shell("", &env, &any),
+            default_shell(&env, &any),
+            "沒指定就用系統預設的"
+        );
     }
 
     #[test]
@@ -1319,15 +1729,31 @@ mod tests {
             "COMSPEC" => Some("C:\\Windows\\System32\\cmd.exe".to_owned()),
             _ => None,
         };
-        let in_path = |exe: &str| matches!(exe, "pwsh.exe" | "powershell.exe" | "cmd.exe" | "wsl.exe");
+        let in_path =
+            |exe: &str| matches!(exe, "pwsh.exe" | "powershell.exe" | "cmd.exe" | "wsl.exe");
         let exists = |p: &str| p == "C:\\Program Files\\Git\\bin\\bash.exe";
         let list = shells_for(true, &env, &in_path, &exists, "");
         let labels: Vec<&str> = list.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, vec!["PowerShell 7", "Windows PowerShell", "Command Prompt (cmd)", "Git Bash", "WSL"]);
+        assert_eq!(
+            labels,
+            vec![
+                "PowerShell 7",
+                "Windows PowerShell",
+                "Command Prompt (cmd)",
+                "Git Bash",
+                "WSL"
+            ]
+        );
         assert_eq!(list[0].command, "pwsh -NoLogo");
-        assert_eq!(list[3].command, "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i", "路徑有空白要加引號");
+        assert_eq!(
+            list[3].command, "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i",
+            "路徑有空白要加引號"
+        );
         // 指令可以被拆回程式與參數
-        assert_eq!(split_command(&list[3].command), vec!["C:\\Program Files\\Git\\bin\\bash.exe", "--login", "-i"]);
+        assert_eq!(
+            split_command(&list[3].command),
+            vec!["C:\\Program Files\\Git\\bin\\bash.exe", "--login", "-i"]
+        );
         // 什麼都沒有：清單是空的（不會報錯）
         assert!(shells_for(true, &|_| None, &|_| false, &|_| false, "").is_empty());
     }
@@ -1335,12 +1761,30 @@ mod tests {
     #[test]
     fn unix_shells_come_from_the_shell_variable_and_etc_shells_without_duplicates() {
         let env = |k: &str| (k == "SHELL").then(|| "/usr/bin/zsh".to_owned());
-        let exists = |p: &str| matches!(p, "/usr/bin/zsh" | "/bin/bash" | "/usr/bin/bash" | "/bin/sh");
+        let exists = |p: &str| {
+            matches!(
+                p,
+                "/usr/bin/zsh" | "/bin/bash" | "/usr/bin/bash" | "/bin/sh"
+            )
+        };
         let etc = "# 可用的 shell\n/bin/sh\n/bin/bash\n/usr/bin/bash\n/usr/bin/zsh\n/usr/bin/fish\nnologin\n";
-        assert_eq!(parse_etc_shells(etc), vec!["/bin/sh", "/bin/bash", "/usr/bin/bash", "/usr/bin/zsh", "/usr/bin/fish"]);
+        assert_eq!(
+            parse_etc_shells(etc),
+            vec![
+                "/bin/sh",
+                "/bin/bash",
+                "/usr/bin/bash",
+                "/usr/bin/zsh",
+                "/usr/bin/fish"
+            ]
+        );
         let list = shells_for(false, &env, &|_| false, &exists, etc);
         let labels: Vec<&str> = list.iter().map(|o| o.label.as_str()).collect();
-        assert_eq!(labels, vec!["zsh", "sh", "bash"], "$SHELL 排第一；不存在的（fish）略過；同名的只留第一個");
+        assert_eq!(
+            labels,
+            vec!["zsh", "sh", "bash"],
+            "$SHELL 排第一；不存在的（fish）略過；同名的只留第一個"
+        );
         assert_eq!(list[0].command, "/usr/bin/zsh");
         // 沒有 /etc/shells 也至少有 $SHELL
         assert_eq!(shells_for(false, &env, &|_| false, &exists, "").len(), 1);
@@ -1348,34 +1792,78 @@ mod tests {
 
     #[test]
     fn the_default_option_follows_the_setting_or_the_system_default_program() {
-        let pwsh = ShellOption { label: "PowerShell 7".into(), command: "pwsh -NoLogo".into() };
-        let cmd = ShellOption { label: "Command Prompt (cmd)".into(), command: "cmd".into() };
-        let system = ShellCommand { program: "pwsh.exe".into(), args: vec!["-NoLogo".into()] };
+        let pwsh = ShellOption {
+            label: "PowerShell 7".into(),
+            command: "pwsh -NoLogo".into(),
+        };
+        let cmd = ShellOption {
+            label: "Command Prompt (cmd)".into(),
+            command: "cmd".into(),
+        };
+        let system = ShellCommand {
+            program: "pwsh.exe".into(),
+            args: vec!["-NoLogo".into()],
+        };
         // 沒指定：看程式是不是系統預設的（不分大小寫與副檔名）
         assert!(is_default_shell(&pwsh, "", &system));
         assert!(!is_default_shell(&cmd, "  ", &system));
         // 有指定：比對指令（空白的差異不算）
         assert!(is_default_shell(&cmd, "cmd", &system));
         assert!(is_default_shell(&pwsh, "pwsh   -NoLogo", &system));
-        assert!(!is_default_shell(&pwsh, "pwsh", &system), "參數不同就是不同的選項");
+        assert!(
+            !is_default_shell(&pwsh, "pwsh", &system),
+            "參數不同就是不同的選項"
+        );
     }
 
     #[test]
     fn a_commands_program_is_found_on_the_path_or_by_its_own_path() {
         let sep = if cfg!(windows) { ";" } else { ":" };
-        let path = std::ffi::OsString::from(format!("{}{sep}{}", if cfg!(windows) { "C:\\a" } else { "/a" }, if cfg!(windows) { "C:\\b" } else { "/b" }));
-        let (a, b) = if cfg!(windows) { ("C:\\a", "C:\\b") } else { ("/a", "/b") };
-        let exists = |p: &std::path::Path| p == std::path::Path::new(b).join("pwsh.exe") || p == std::path::Path::new(a).join("git");
+        let path = std::ffi::OsString::from(format!(
+            "{}{sep}{}",
+            if cfg!(windows) { "C:\\a" } else { "/a" },
+            if cfg!(windows) { "C:\\b" } else { "/b" }
+        ));
+        let (a, b) = if cfg!(windows) {
+            ("C:\\a", "C:\\b")
+        } else {
+            ("/a", "/b")
+        };
+        let exists = |p: &std::path::Path| {
+            p == std::path::Path::new(b).join("pwsh.exe")
+                || p == std::path::Path::new(a).join("git")
+        };
         // 只有程式名稱：依序在 PATH 的每個資料夾找，也試加上 .exe
-        assert_eq!(program_path_in("pwsh -NoLogo", Some(&path), &exists), Some(std::path::Path::new(b).join("pwsh.exe")));
-        assert_eq!(program_path_in("git status", Some(&path), &exists), Some(std::path::Path::new(a).join("git")));
+        assert_eq!(
+            program_path_in("pwsh -NoLogo", Some(&path), &exists),
+            Some(std::path::Path::new(b).join("pwsh.exe"))
+        );
+        assert_eq!(
+            program_path_in("git status", Some(&path), &exists),
+            Some(std::path::Path::new(a).join("git"))
+        );
         assert_eq!(program_path_in("nope", Some(&path), &exists), None);
-        assert_eq!(program_path_in("pwsh", None, &exists), None, "沒有 PATH 就找不到");
+        assert_eq!(
+            program_path_in("pwsh", None, &exists),
+            None,
+            "沒有 PATH 就找不到"
+        );
         assert_eq!(program_path_in("", Some(&path), &exists), None);
         // 寫了路徑（含引號與空白）：直接檢查那個檔案，不去 PATH 找
-        let full = if cfg!(windows) { "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i" } else { "\"/opt/my shell/bash\" --login" };
-        let target = if cfg!(windows) { "C:\\Program Files\\Git\\bin\\bash.exe" } else { "/opt/my shell/bash" };
-        assert_eq!(program_path_in(full, Some(&path), &|p| p == std::path::Path::new(target)), Some(PathBuf::from(target)));
+        let full = if cfg!(windows) {
+            "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"
+        } else {
+            "\"/opt/my shell/bash\" --login"
+        };
+        let target = if cfg!(windows) {
+            "C:\\Program Files\\Git\\bin\\bash.exe"
+        } else {
+            "/opt/my shell/bash"
+        };
+        assert_eq!(
+            program_path_in(full, Some(&path), &|p| p == std::path::Path::new(target)),
+            Some(PathBuf::from(target))
+        );
         assert_eq!(program_path_in(full, Some(&path), &|_| false), None);
     }
 
@@ -1383,16 +1871,61 @@ mod tests {
     fn mouse_reports_use_sgr_when_asked_and_the_legacy_format_otherwise() {
         let none = egui::Modifiers::NONE;
         let sgr = TermMode::SGR_MOUSE;
-        assert_eq!(encode_mouse(0, 4, 9, false, none, false, sgr), Some(b"\x1b[<0;5;10M".to_vec()));
-        assert_eq!(encode_mouse(0, 4, 9, true, none, false, sgr), Some(b"\x1b[<0;5;10m".to_vec()), "放開用小寫 m，保留原本的按鍵");
-        assert_eq!(encode_mouse(2, 0, 0, false, egui::Modifiers { ctrl: true, shift: true, ..none }, false, sgr), Some(b"\x1b[<22;1;1M".to_vec()), "Shift 4 ＋ Ctrl 16");
-        assert_eq!(encode_mouse(3, 7, 2, false, none, true, sgr), Some(b"\x1b[<35;8;3M".to_vec()), "只有移動：按鍵 3 加動作 32");
-        assert_eq!(encode_mouse(64, 1, 1, false, none, false, sgr), Some(b"\x1b[<64;2;2M".to_vec()), "滾輪往上");
+        assert_eq!(
+            encode_mouse(0, 4, 9, false, none, false, sgr),
+            Some(b"\x1b[<0;5;10M".to_vec())
+        );
+        assert_eq!(
+            encode_mouse(0, 4, 9, true, none, false, sgr),
+            Some(b"\x1b[<0;5;10m".to_vec()),
+            "放開用小寫 m，保留原本的按鍵"
+        );
+        assert_eq!(
+            encode_mouse(
+                2,
+                0,
+                0,
+                false,
+                egui::Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..none
+                },
+                false,
+                sgr
+            ),
+            Some(b"\x1b[<22;1;1M".to_vec()),
+            "Shift 4 ＋ Ctrl 16"
+        );
+        assert_eq!(
+            encode_mouse(3, 7, 2, false, none, true, sgr),
+            Some(b"\x1b[<35;8;3M".to_vec()),
+            "只有移動：按鍵 3 加動作 32"
+        );
+        assert_eq!(
+            encode_mouse(64, 1, 1, false, none, false, sgr),
+            Some(b"\x1b[<64;2;2M".to_vec()),
+            "滾輪往上"
+        );
         let legacy = TermMode::NONE;
-        assert_eq!(encode_mouse(0, 0, 0, false, none, false, legacy), Some(vec![0x1b, b'[', b'M', 32, 33, 33]));
-        assert_eq!(encode_mouse(1, 4, 9, true, none, false, legacy), Some(vec![0x1b, b'[', b'M', 35, 37, 42]), "傳統格式放開一律是 3");
-        assert_eq!(encode_mouse(0, 300, 0, false, none, false, legacy), None, "座標超過 223 送不出去");
-        assert!(encode_mouse(0, 300, 0, false, none, false, sgr).is_some(), "SGR 沒有這個限制");
+        assert_eq!(
+            encode_mouse(0, 0, 0, false, none, false, legacy),
+            Some(vec![0x1b, b'[', b'M', 32, 33, 33])
+        );
+        assert_eq!(
+            encode_mouse(1, 4, 9, true, none, false, legacy),
+            Some(vec![0x1b, b'[', b'M', 35, 37, 42]),
+            "傳統格式放開一律是 3"
+        );
+        assert_eq!(
+            encode_mouse(0, 300, 0, false, none, false, legacy),
+            None,
+            "座標超過 223 送不出去"
+        );
+        assert!(
+            encode_mouse(0, 300, 0, false, none, false, sgr).is_some(),
+            "SGR 沒有這個限制"
+        );
     }
 
     #[test]
@@ -1406,7 +1939,8 @@ mod tests {
     #[test]
     fn send_keys_are_parsed_and_encoded() {
         use crate::cli::SendItem::{Key, Text};
-        let bytes = |items: &[crate::cli::SendItem]| send_bytes(items, false, TermMode::NONE).unwrap();
+        let bytes =
+            |items: &[crate::cli::SendItem]| send_bytes(items, false, TermMode::NONE).unwrap();
         assert_eq!(bytes(&[Key("Enter".into())]), b"\r");
         assert_eq!(bytes(&[Key("esc".into())]), b"\x1b");
         assert_eq!(bytes(&[Key("Ctrl+C".into())]), vec![3]);
@@ -1414,14 +1948,26 @@ mod tests {
         assert_eq!(bytes(&[Key("Up".into())]), b"\x1b[A");
         assert_eq!(bytes(&[Key("F5".into())]), b"\x1b[15~");
         assert_eq!(bytes(&[Key("Alt+b".into())]), b"\x1bb");
-        assert_eq!(bytes(&[Key("a".into()), Key("Shift+a".into()), Key("7".into())]), b"aA7");
+        assert_eq!(
+            bytes(&[Key("a".into()), Key("Shift+a".into()), Key("7".into())]),
+            b"aA7"
+        );
         // 文字照打，換行變成 Enter；文字與按鍵依順序
-        assert_eq!(bytes(&[Text("ls\nnext".into()), Key("Enter".into())]), b"ls\rnext\r");
-        assert!(parse_key("Hyper+X").is_err() && parse_key("Ctrl+").is_err() && parse_key("").is_err());
+        assert_eq!(
+            bytes(&[Text("ls\nnext".into()), Key("Enter".into())]),
+            b"ls\rnext\r"
+        );
+        assert!(
+            parse_key("Hyper+X").is_err() && parse_key("Ctrl+").is_err() && parse_key("").is_err()
+        );
         assert!(parse_key("Nonsense").is_err());
         // --paste：整段文字用括號貼上送（換行不會觸發送出）；程式沒開括號貼上模式就和一般貼上一樣
-        let paste = |mode| send_bytes(&[Text("a\nb".into()), Key("Enter".into())], true, mode).unwrap();
-        assert_eq!(paste(TermMode::BRACKETED_PASTE), b"\x1b[200~a\rb\x1b[201~\r");
+        let paste =
+            |mode| send_bytes(&[Text("a\nb".into()), Key("Enter".into())], true, mode).unwrap();
+        assert_eq!(
+            paste(TermMode::BRACKETED_PASTE),
+            b"\x1b[200~a\rb\x1b[201~\r"
+        );
         assert_eq!(paste(TermMode::NONE), b"a\rb\r");
         assert!(send_bytes(&[crate::cli::SendItem::Stdin], false, TermMode::NONE).is_err());
     }
@@ -1430,18 +1976,41 @@ mod tests {
     fn dropped_paths_are_quoted_only_when_needed_and_per_shell() {
         let p = |s: &str| PathBuf::from(s);
         let plain = [p(r"C:\work\a.txt"), p("/tmp/b.txt")];
-        assert_eq!(dropped_paths_text(ShellKind::PowerShell, &plain), r"C:\work\a.txt /tmp/b.txt");
-        assert_eq!(dropped_paths_text(ShellKind::Posix, &plain[..1]), r"'C:\work\a.txt'", "bash 裡反斜線要加引號");
+        assert_eq!(
+            dropped_paths_text(ShellKind::PowerShell, &plain),
+            r"C:\work\a.txt /tmp/b.txt"
+        );
+        assert_eq!(
+            dropped_paths_text(ShellKind::Posix, &plain[..1]),
+            r"'C:\work\a.txt'",
+            "bash 裡反斜線要加引號"
+        );
         let spaced = [p(r"C:\my docs\it's.txt")];
-        assert_eq!(dropped_paths_text(ShellKind::Cmd, &spaced), "\"C:\\my docs\\it's.txt\"");
-        assert_eq!(dropped_paths_text(ShellKind::PowerShell, &spaced), r"'C:\my docs\it''s.txt'");
-        assert_eq!(dropped_paths_text(ShellKind::Posix, &[p("/a b/c")]), "'/a b/c'");
-        assert_eq!(dropped_paths_text(ShellKind::PowerShell, &[p("中文.txt"), p("x y")]), "中文.txt 'x y'");
+        assert_eq!(
+            dropped_paths_text(ShellKind::Cmd, &spaced),
+            "\"C:\\my docs\\it's.txt\""
+        );
+        assert_eq!(
+            dropped_paths_text(ShellKind::PowerShell, &spaced),
+            r"'C:\my docs\it''s.txt'"
+        );
+        assert_eq!(
+            dropped_paths_text(ShellKind::Posix, &[p("/a b/c")]),
+            "'/a b/c'"
+        );
+        assert_eq!(
+            dropped_paths_text(ShellKind::PowerShell, &[p("中文.txt"), p("x y")]),
+            "中文.txt 'x y'"
+        );
     }
 
     #[test]
     fn default_shell_prefers_the_users_shell_on_unix_and_powershell_on_windows() {
-        let env = |k: &str| (k == "SHELL").then(|| "/bin/zsh".to_owned()).or_else(|| (k == "COMSPEC").then(|| "C:\\cmd.exe".to_owned()));
+        let env = |k: &str| {
+            (k == "SHELL")
+                .then(|| "/bin/zsh".to_owned())
+                .or_else(|| (k == "COMSPEC").then(|| "C:\\cmd.exe".to_owned()))
+        };
         let has = |exe: &str| exe == "powershell.exe";
         let sh = default_shell(&env, &has);
         if cfg!(windows) {
@@ -1458,21 +2027,51 @@ mod tests {
 
     #[test]
     fn cwd_reports_ride_on_titles_and_ordinary_titles_are_ignored() {
-        assert_eq!(parse_cwd_title(r"feditor:cwd:C:\code\a;b"), Some(PathBuf::from(r"C:\code\a;b")));
+        assert_eq!(
+            parse_cwd_title(r"feditor:cwd:C:\code\a;b"),
+            Some(PathBuf::from(r"C:\code\a;b"))
+        );
         assert_eq!(parse_cwd_title("feditor:cwd:"), None);
         assert_eq!(parse_cwd_title("✳ Claude Code"), None);
     }
 
     #[test]
     fn program_titles_are_cleaned_for_the_tab_label() {
-        assert_eq!(clean_program_title("✳ Claude Code", false).as_deref(), Some("✳ Claude Code"));
-        assert_eq!(clean_program_title("⠂ Claude Code", false).as_deref(), Some("Claude Code"), "不顯示轉圈圈：忙碌的動畫去掉，標籤才不會一直跳");
-        assert_eq!(clean_program_title("  ⠐⠂ 修正終端機  ", false).as_deref(), Some("修正終端機"));
-        assert_eq!(clean_program_title("⠂ fshot", true).as_deref(), Some("⠂ fshot"), "顯示轉圈圈：照原樣");
-        assert_eq!(clean_program_title("  ⠐⠂ 修正終端機  ", true).as_deref(), Some("⠐⠂ 修正終端機"));
-        assert_eq!(clean_program_title("claude", false).as_deref(), Some("claude"));
+        assert_eq!(
+            clean_program_title("✳ Claude Code", false).as_deref(),
+            Some("✳ Claude Code")
+        );
+        assert_eq!(
+            clean_program_title("⠂ Claude Code", false).as_deref(),
+            Some("Claude Code"),
+            "不顯示轉圈圈：忙碌的動畫去掉，標籤才不會一直跳"
+        );
+        assert_eq!(
+            clean_program_title("  ⠐⠂ 修正終端機  ", false).as_deref(),
+            Some("修正終端機")
+        );
+        assert_eq!(
+            clean_program_title("⠂ fshot", true).as_deref(),
+            Some("⠂ fshot"),
+            "顯示轉圈圈：照原樣"
+        );
+        assert_eq!(
+            clean_program_title("  ⠐⠂ 修正終端機  ", true).as_deref(),
+            Some("⠐⠂ 修正終端機")
+        );
+        assert_eq!(
+            clean_program_title("claude", false).as_deref(),
+            Some("claude")
+        );
         // shell 自己的預設標題（執行檔路徑）和空標題不顯示；只有轉圈圈也算空的
-        for plain in [r"C:\Program Files\PowerShell\7\pwsh.exe", r"C:\WINDOWS\system32\cmd.exe", "pwsh.exe", "", "   ", "⠂"] {
+        for plain in [
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"C:\WINDOWS\system32\cmd.exe",
+            "pwsh.exe",
+            "",
+            "   ",
+            "⠂",
+        ] {
             for keep in [false, true] {
                 assert_eq!(clean_program_title(plain, keep), None, "{plain:?} {keep}");
             }
@@ -1489,8 +2088,12 @@ mod tests {
             return;
         }
         let ctx = egui::Context::default();
-        let size = GridSize { cols: 80, lines: 24 };
-        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile").expect("開不了 pwsh");
+        let size = GridSize {
+            cols: 80,
+            lines: 24,
+        };
+        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile")
+            .expect("開不了 pwsh");
         let wait = |what: &str, done: &dyn Fn() -> bool| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
             while std::time::Instant::now() < deadline && !done() {
@@ -1513,8 +2116,12 @@ mod tests {
             return;
         }
         let ctx = egui::Context::default();
-        let size = GridSize { cols: 80, lines: 24 };
-        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile").expect("開不了 pwsh");
+        let size = GridSize {
+            cols: 80,
+            lines: 24,
+        };
+        let t = Terminal::spawn(&ctx, size, (8, 16), None, "pwsh -NoLogo -NoProfile")
+            .expect("開不了 pwsh");
         // 等第一個提示字元（回報了資料夾）
         let wait = |what: &str, done: &dyn Fn() -> bool| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1524,9 +2131,15 @@ mod tests {
             assert!(done(), "{what}");
         };
         wait("第一個提示字元", &|| t.cwd().is_some());
-        t.write(b"$Host.UI.RawUI.WindowTitle = '\xE2\x9C\xB3 Fake CLI'; Start-Sleep 4\r\n".to_vec());
-        wait("程式設的標題", &|| t.program_title().as_deref() == Some("✳ Fake CLI"));
-        wait("程式結束後標題消失", &|| t.program_title().is_none());
+        t.write(
+            b"$Host.UI.RawUI.WindowTitle = '\xE2\x9C\xB3 Fake CLI'; Start-Sleep 4\r\n".to_vec(),
+        );
+        wait("程式設的標題", &|| {
+            t.program_title().as_deref() == Some("✳ Fake CLI")
+        });
+        wait("程式結束後標題消失", &|| {
+            t.program_title().is_none()
+        });
     }
 
     #[test]
@@ -1544,7 +2157,12 @@ mod tests {
         let added = powershell_cwd_args(&args(&["-NoLogo"]));
         assert_eq!(&added[..2], ["-NoExit", "-EncodedCommand"]);
         assert!(!added[2].is_empty());
-        for custom in [&["-Command", "dir"][..], &["-File", "a.ps1"], &["-c", "dir"], &["-EncodedCommand", "AAA="]] {
+        for custom in [
+            &["-Command", "dir"][..],
+            &["-File", "a.ps1"],
+            &["-c", "dir"],
+            &["-EncodedCommand", "AAA="],
+        ] {
             assert!(powershell_cwd_args(&args(custom)).is_empty(), "{custom:?}");
         }
     }
@@ -1556,18 +2174,32 @@ mod tests {
             return;
         }
         let ctx = egui::Context::default();
-        let size = GridSize { cols: 80, lines: 24 };
+        let size = GridSize {
+            cols: 80,
+            lines: 24,
+        };
         let start = std::env::temp_dir();
-        let t = Terminal::spawn(&ctx, size, (8, 16), Some(start.clone()), "pwsh -NoLogo -NoProfile").expect("開不了 pwsh");
+        let t = Terminal::spawn(
+            &ctx,
+            size,
+            (8, 16),
+            Some(start.clone()),
+            "pwsh -NoLogo -NoProfile",
+        )
+        .expect("開不了 pwsh");
         let target = std::env::current_dir().unwrap();
         t.write(format!("Set-Location -LiteralPath '{}'\r\n", target.display()).into_bytes());
-        let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let canon =
+            |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let mut reported = None;
         while std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(200));
             reported = t.cwd();
-            if reported.as_ref().is_some_and(|d| canon(d) == canon(&target)) {
+            if reported
+                .as_ref()
+                .is_some_and(|d| canon(d) == canon(&target))
+            {
                 break;
             }
         }
@@ -1578,16 +2210,24 @@ mod tests {
     fn the_cmd_prompt_keeps_the_original_after_the_report() {
         assert_eq!(cmd_prompt(None), "$E]2;feditor:cwd:$P$E\\$P$G");
         assert_eq!(cmd_prompt(Some("")), "$E]2;feditor:cwd:$P$E\\$P$G");
-        assert_eq!(cmd_prompt(Some("$T $P$G")), "$E]2;feditor:cwd:$P$E\\$T $P$G");
+        assert_eq!(
+            cmd_prompt(Some("$T $P$G")),
+            "$E]2;feditor:cwd:$P$E\\$T $P$G"
+        );
     }
 
     /// 開 `shell`、換到 `target`，等它回報的資料夾變成 `target`。
     fn assert_shell_reports_cwd_after(shell: &str, cd_line: &str, target: &std::path::Path) {
         let ctx = egui::Context::default();
-        let size = GridSize { cols: 80, lines: 24 };
-        let t = Terminal::spawn(&ctx, size, (8, 16), Some(std::env::temp_dir()), shell).expect("開不了 shell");
+        let size = GridSize {
+            cols: 80,
+            lines: 24,
+        };
+        let t = Terminal::spawn(&ctx, size, (8, 16), Some(std::env::temp_dir()), shell)
+            .expect("開不了 shell");
         t.write(format!("{cd_line}\r\n").into_bytes());
-        let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let canon =
+            |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let mut reported = None;
         while std::time::Instant::now() < deadline {
@@ -1618,9 +2258,16 @@ mod tests {
     #[test]
     fn a_real_shell_runs_a_command_and_its_output_reaches_the_grid() {
         let ctx = egui::Context::default();
-        let size = GridSize { cols: 80, lines: 24 };
+        let size = GridSize {
+            cols: 80,
+            lines: 24,
+        };
         let mut t = Terminal::spawn(&ctx, size, (8, 16), None, "").expect("開不了 shell");
-        let command: &[u8] = if cfg!(windows) { b"echo feditor-terminal-ok\r\n" } else { b"echo feditor-terminal-ok\n" };
+        let command: &[u8] = if cfg!(windows) {
+            b"echo feditor-terminal-ok\r\n"
+        } else {
+            b"echo feditor-terminal-ok\n"
+        };
         t.write(command);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let mut found = false;
@@ -1631,7 +2278,9 @@ mod tests {
             // 命令列本身也含這串字：要找「輸出」，也就是某一行只有這串字
             found = (0..grid.screen_lines() as i32).any(|l| {
                 let row = &grid[alacritty_terminal::index::Line(l)];
-                let text: String = (0..grid.columns()).map(|c| row[alacritty_terminal::index::Column(c)].c).collect();
+                let text: String = (0..grid.columns())
+                    .map(|c| row[alacritty_terminal::index::Column(c)].c)
+                    .collect();
                 text.trim_end() == "feditor-terminal-ok"
             });
         }
@@ -1644,10 +2293,23 @@ mod tests {
             sel.update(Point::new(Line(0), Column(5)), Side::Right);
             t.term.lock().selection = Some(sel);
         }
-        t.resize(GridSize { cols: 100, lines: 30 }, (8, 16));
+        t.resize(
+            GridSize {
+                cols: 100,
+                lines: 30,
+            },
+            (8, 16),
+        );
         assert_eq!(t.term.lock().columns(), 100);
-        assert!(t.term.lock().selection.is_none(), "縮放後選取區要清掉，不然會停在重排後的錯誤位置");
-        t.write(if cfg!(windows) { &b"exit\r\n"[..] } else { &b"exit\n"[..] });
+        assert!(
+            t.term.lock().selection.is_none(),
+            "縮放後選取區要清掉，不然會停在重排後的錯誤位置"
+        );
+        t.write(if cfg!(windows) {
+            &b"exit\r\n"[..]
+        } else {
+            &b"exit\n"[..]
+        });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while !t.exited() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(100));

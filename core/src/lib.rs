@@ -429,7 +429,11 @@ mod tests {
         b.replace(6..11, "你好");
         assert_eq!(b.text(), "hello 你好");
         b.undo();
-        assert_eq!(b.text(), "hello world", "先刪後插算同一步，一次復原要整個退回");
+        assert_eq!(
+            b.text(),
+            "hello world",
+            "先刪後插算同一步，一次復原要整個退回"
+        );
         b.redo();
         assert_eq!(b.text(), "hello 你好");
         assert!(!b.can_redo());
@@ -470,7 +474,10 @@ mod tests {
         assert_eq!(b.line_len_chars(1), 0);
         assert_eq!(b.line_len_chars(2), 3);
         assert_eq!(b.line_len_chars(99), 0);
-        assert_eq!((b.line_start(0), b.line_start(1), b.line_start(2)), (0, 3, 4));
+        assert_eq!(
+            (b.line_start(0), b.line_start(1), b.line_start(2)),
+            (0, 3, 4)
+        );
         assert_eq!(b.line_start(99), b.len_chars());
         assert_eq!(b.line_of_char(0), 0);
         assert_eq!(b.line_of_char(2), 0); // 第 0 行的換行字元
@@ -679,4 +686,5 @@ mod tests {
         assert_eq!(b.undo_depth(), depth);
         b.undo();
         assert_eq!(b.text(), "abc");
-    }}
+    }
+}

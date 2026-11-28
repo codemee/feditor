@@ -372,7 +372,8 @@ pub fn wrap_rows(line: &str, max_cols: usize) -> Vec<Range<usize>> {
                 char_width(c)
             };
             // 中日韓字元（寬度 2）之前、以及它之後都可以折，但不能讓避頭點落在行首
-            if i > start && !NO_LINE_START.contains(c) && (w == 2 || char_width(chars[i - 1]) == 2) {
+            if i > start && !NO_LINE_START.contains(c) && (w == 2 || char_width(chars[i - 1]) == 2)
+            {
                 brk = Some(i);
             }
             if w > 0 && col + w > max_cols && i > start {
@@ -444,8 +445,16 @@ mod tests {
         ] {
             let r = rope(&format!("x{text}y"));
             let inner = text.chars().count();
-            assert_eq!(next_grapheme(&r, 1), 1 + inner, "{name}：往右要一次跳過整個字");
-            assert_eq!(prev_grapheme(&r, 1 + inner), 1, "{name}：往左要一次跳過整個字");
+            assert_eq!(
+                next_grapheme(&r, 1),
+                1 + inner,
+                "{name}：往右要一次跳過整個字"
+            );
+            assert_eq!(
+                prev_grapheme(&r, 1 + inner),
+                1,
+                "{name}：往左要一次跳過整個字"
+            );
             // 落在字中間時，也要退回字的開頭／前進到字的結尾
             if inner > 1 {
                 assert_eq!(prev_grapheme(&r, 2), 1, "{name}：從字中間往左");
@@ -457,7 +466,18 @@ mod tests {
     /// 這樣「字素叢集跨區塊」的情況也被測到。
     #[test]
     fn matches_unicode_segmentation_across_rope_chunks() {
-        let pieces = ["a", "e\u{301}", "你", "😀", "👍🏽", "👨‍👩‍👧", "🇹🇼", "bc", "\n", "世界"];
+        let pieces = [
+            "a",
+            "e\u{301}",
+            "你",
+            "😀",
+            "👍🏽",
+            "👨‍👩‍👧",
+            "🇹🇼",
+            "bc",
+            "\n",
+            "世界",
+        ];
         let mut text = String::new();
         for i in 0..2500 {
             text.push_str(pieces[(i * 7 + i / 3) % pieces.len()]);
@@ -478,7 +498,12 @@ mod tests {
 
         for i in 0..=total {
             let expected_next = boundaries.iter().copied().find(|&b| b > i).unwrap_or(total);
-            let expected_prev = boundaries.iter().copied().rev().find(|&b| b < i).unwrap_or(0);
+            let expected_prev = boundaries
+                .iter()
+                .copied()
+                .rev()
+                .find(|&b| b < i)
+                .unwrap_or(0);
             assert_eq!(next_grapheme(&r, i), expected_next, "next 在 {i}");
             assert_eq!(prev_grapheme(&r, i), expected_prev, "prev 在 {i}");
         }
@@ -604,7 +629,11 @@ mod tests {
         // 與 display_col 互為反函數（落在字元邊界上時）
         for text in ["abc", "你好世界", "a\tb你", "x😀y"] {
             for i in 0..=text.chars().count() {
-                assert_eq!(char_at_display_col(text, display_col(text, i)), i, "{text:?} 的第 {i} 個");
+                assert_eq!(
+                    char_at_display_col(text, display_col(text, i)),
+                    i,
+                    "{text:?} 的第 {i} 個"
+                );
             }
         }
     }
@@ -614,13 +643,29 @@ mod tests {
         for text in ["abc", "a\tb", "\t\tx", "你\t好\t", "", "x\t"] {
             for i in 0..=text.chars().count() {
                 let d = display_index(text, i);
-                assert_eq!(char_index_from_display_index(text, d), i, "{text:?} 的第 {i} 個");
+                assert_eq!(
+                    char_index_from_display_index(text, d),
+                    i,
+                    "{text:?} 的第 {i} 個"
+                );
             }
         }
         // 落在 Tab 展開的空白中間：靠近哪邊就去哪邊
-        assert_eq!(char_index_from_display_index("a\tb", 2), 1, "Tab 的前半：停在 Tab 之前");
-        assert_eq!(char_index_from_display_index("a\tb", 3), 2, "Tab 的後半：停在 Tab 之後");
-        assert_eq!(char_index_from_display_index("abc", 99), 3, "超過行尾：行尾");
+        assert_eq!(
+            char_index_from_display_index("a\tb", 2),
+            1,
+            "Tab 的前半：停在 Tab 之前"
+        );
+        assert_eq!(
+            char_index_from_display_index("a\tb", 3),
+            2,
+            "Tab 的後半：停在 Tab 之後"
+        );
+        assert_eq!(
+            char_index_from_display_index("abc", 99),
+            3,
+            "超過行尾：行尾"
+        );
     }
 
     #[test]
@@ -632,8 +677,16 @@ mod tests {
         assert_eq!(display_col("\tx", 1), 8);
         assert_eq!(display_col("ab\tx", 3), 8);
         assert_eq!(expand_tabs("a\tb"), format!("a{}b", " ".repeat(7)));
-        assert_eq!(display_index("a\tb", 2), 8, "Tab 展開成 7 個空白，b 在第 8 個");
-        assert_eq!(char_index_at_col("a\tb", 5.0), 2, "Tab 的後半：停在 Tab 之後");
+        assert_eq!(
+            display_index("a\tb", 2),
+            8,
+            "Tab 展開成 7 個空白，b 在第 8 個"
+        );
+        assert_eq!(
+            char_index_at_col("a\tb", 5.0),
+            2,
+            "Tab 的後半：停在 Tab 之後"
+        );
         set_tab_width(2);
         assert_eq!(display_col("a\tb", 2), 2);
         // 拉回範圍內
@@ -659,13 +712,20 @@ mod tests {
         // 展開後的索引
         assert_eq!(display_index("a\tb", 0), 0);
         assert_eq!(display_index("a\tb", 1), 1);
-        assert_eq!(display_index("a\tb", 2), 4, "Tab 展開成 3 個空白，b 在第 4 個");
+        assert_eq!(
+            display_index("a\tb", 2),
+            4,
+            "Tab 展開成 3 個空白，b 在第 4 個"
+        );
         assert_eq!(display_index("a\tb", 3), 5);
         // 沒有 Tab 時索引不變
         assert_eq!(display_index("你好", 2), 2);
         // 展開後的長度就是最後一個字元的展開索引
         for text in ["a\tb", "\t", "你\t好\t", "abc"] {
-            assert_eq!(display_index(text, text.chars().count()), expand_tabs(text).chars().count());
+            assert_eq!(
+                display_index(text, text.chars().count()),
+                expand_tabs(text).chars().count()
+            );
         }
     }
 
@@ -706,8 +766,15 @@ mod tests {
 
     #[test]
     fn wrap_rows_breaks_after_spaces_and_not_inside_words() {
-        assert_eq!(rows_of("hello world foo", 8), vec!["hello ", "world ", "foo"]);
-        assert_eq!(rows_of("abcdefghijkl", 5), vec!["abcde", "fghij", "kl"], "單字太長才硬切");
+        assert_eq!(
+            rows_of("hello world foo", 8),
+            vec!["hello ", "world ", "foo"]
+        );
+        assert_eq!(
+            rows_of("abcdefghijkl", 5),
+            vec!["abcde", "fghij", "kl"],
+            "單字太長才硬切"
+        );
     }
 
     #[test]
