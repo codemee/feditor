@@ -20,6 +20,14 @@ pub enum Osc {
     Cwd(String),
     /// 程式要通知使用者（內容不重要，只要知道有通知）。
     Notify,
+    /// 程式問「你是什麼終端機」（XTVERSION：`CSI > q` 或 `CSI > 0 q`），要回 [`XTVERSION_REPLY`]。
+    /// 這不是 OSC，但 alacritty_terminal 不回應，一樣在這裡攔下來。
+    XtVersion,
+}
+
+/// 回答 XTVERSION 的內容：`DCS > | 名稱 版本 ST`。
+pub fn xtversion_reply() -> String {
+    format!("\x1bP>|feditor {}\x1b\\", env!("CARGO_PKG_VERSION"))
 }
 
 /// 單一序列最多留這麼多位元組；超過的（OSC 52 貼大量資料之類）整段忽略。
@@ -35,7 +43,12 @@ enum State {
     Osc,
     /// 在 OSC 內容裡收到 ESC（可能是 `ESC \` 結尾）。
     OscEsc,
+    /// 在 `ESC [` 之後，收集參數與中間字元，等結尾字元。
+    Csi,
 }
+
+/// CSI 的參數最多收這麼多位元組；我們只認很短的 `> 0 q`，超過的一定不是。
+const MAX_CSI: usize = 8;
 
 /// 跨資料區塊的 OSC 掃描器：一個序列被切在兩次讀取之間也找得到。
 #[derive(Default)]
@@ -56,8 +69,32 @@ impl Scanner {
                 }
                 State::Esc => match b {
                     b']' => self.begin(),
+                    b'[' => {
+                        self.state = State::Csi;
+                        self.buf.clear();
+                    }
                     0x1b => {}
                     _ => self.state = State::Ground,
+                },
+                State::Csi => match b {
+                    // 參數（0x30–0x3F）與中間字元（0x20–0x2F）
+                    0x20..=0x3f => {
+                        if self.buf.len() < MAX_CSI {
+                            self.buf.push(b);
+                        } else {
+                            self.state = State::Ground;
+                        }
+                    }
+                    // 結尾字元：只認 XTVERSION
+                    0x40..=0x7e => {
+                        if b == b'q' && (self.buf == b">" || self.buf == b">0") {
+                            out.push(Osc::XtVersion);
+                        }
+                        self.state = State::Ground;
+                        self.buf.clear();
+                    }
+                    0x1b => self.state = State::Esc,
+                    _ => self.state = State::Ground, // CAN、SUB 與其他控制字元：放棄這個序列
                 },
                 State::Osc => match b {
                     0x07 => self.finish(out),
@@ -354,6 +391,25 @@ mod tests {
         assert_eq!(scan(&[b"\x1b]777;notify;Title;Body\x07"]), vec![Osc::Notify]);
         assert_eq!(scan(&[b"\x1b]99;i=1:d=1;Hello\x1b\\"]), vec![Osc::Notify]);
         assert_eq!(scan(&[b"\x1b]99;;Hello\x1b\\"]), vec![Osc::Notify], "沒有參數也算");
+    }
+
+    #[test]
+    fn xtversion_questions_are_found_but_other_csi_sequences_are_not() {
+        assert_eq!(scan(&[b"\x1b[>q"]), vec![Osc::XtVersion]);
+        assert_eq!(scan(&[b"\x1b[>0q"]), vec![Osc::XtVersion]);
+        // Claude Code 啟動時的一串查詢：只有 XTVERSION 是我們的
+        assert_eq!(scan(&[b"\x1b[>0q\x1b[?u\x1b]7501;?\x1b\\\x1b[c"]), vec![Osc::XtVersion]);
+        assert_eq!(scan(&[b"\x1b[>1u\x1b[?25h\x1b[1;2q\x1b[>5q\x1b[q\x1b[0q\x1b[>0c"]), vec![]);
+        // 被切在兩次讀取之間
+        assert_eq!(scan(&[b"abc\x1b[", b">0", b"q"]), vec![Osc::XtVersion]);
+        // 被 CAN 取消、或夾在文字裡
+        assert_eq!(scan(&[b"\x1b[>0\x18q"]), vec![]);
+        assert_eq!(scan(&[b"ls\r\n\x1b[>0q$ "]), vec![Osc::XtVersion]);
+        // 太長的 CSI 不會一直收下去
+        assert_eq!(scan(&[b"\x1b[>000000000000000q"]), vec![]);
+        // CSI 之後緊接著 OSC 仍然正常
+        assert_eq!(scan(&[b"\x1b[0m\x1b]9;done\x07"]), vec![Osc::Notify]);
+        assert_eq!(xtversion_reply(), format!("\x1bP>|feditor {}\x1b\\", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]

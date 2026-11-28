@@ -1225,12 +1225,25 @@ pub(crate) fn draw_body(ui: &mut egui::Ui, pane: &mut TerminalPane, body: egui::
                         painter.rect_filled(rect, 0.0, color);
                     }
                 } else {
-                    painter.text(r.min, egui::Align2::LEFT_TOP, ch_.to_string(), font.clone(), color);
+                    // 等寬字型沒有斜體與粗體字形：斜體用 egui 的合成斜體（把字形斜切），粗體把同一個字往右偏一個實體像素
+                    // 再畫一次（合成粗體）；格寬都不變
+                    let galley = if flags.contains(Flags::ITALIC) {
+                        let mut job = egui::text::LayoutJob::simple_singleline(ch_.to_string(), font.clone(), color);
+                        job.sections[0].format.italics = true;
+                        painter.layout_job(job)
+                    } else {
+                        painter.layout_no_wrap(ch_.to_string(), font.clone(), color)
+                    };
+                    painter.galley(r.min, galley.clone(), color);
+                    if flags.contains(Flags::BOLD) {
+                        painter.galley(r.min + egui::vec2(1.0 / ppp, 0.0), galley, color);
+                    }
                 }
             }
             if flags.intersects(Flags::ALL_UNDERLINES) {
-                let y = r.max.y - 1.0;
-                painter.line_segment([egui::pos2(r.min.x, y), egui::pos2(r.max.x, y)], egui::Stroke::new(1.0, palette.foreground(fg, false)));
+                // 程式用 SGR 58 指定的底線顏色優先，沒指定就用文字的顏色
+                let color = cell.cell.underline_color().map_or_else(|| palette.foreground(fg, false), |c| palette.foreground(c, false));
+                painter.extend(underline_shapes(r, flags, color));
             }
             if flags.contains(Flags::STRIKEOUT) {
                 let y = r.center().y;
@@ -1448,6 +1461,35 @@ fn block_element(c: char) -> Option<(Vec<(f32, f32, f32, f32)>, f32)> {
     Some((rects, 1.0))
 }
 
+/// 一格的底線：單線、雙線、波浪、點線、虛線（SGR 4、4:2、4:3、4:4、4:5；`vte` 把 SGR 21 當成取消粗體，不是雙底線）。`rect` 是這一格（或寬字元的兩格）。
+/// 波浪線每格剛好一個週期，起點與終點都在中線上，相鄰的格子接起來是連續的波。
+fn underline_shapes(rect: egui::Rect, flags: Flags, color: Color32) -> Vec<egui::Shape> {
+    use egui::{pos2, Shape, Stroke};
+    let stroke = Stroke::new(1.0, color);
+    let y = rect.max.y - 1.0;
+    let flat = [pos2(rect.min.x, y), pos2(rect.max.x, y)];
+    if flags.contains(Flags::UNDERCURL) {
+        let steps = (rect.width().ceil() as usize).max(4);
+        let mid = rect.max.y - 2.0;
+        let amplitude = (rect.height() / 12.0).clamp(0.8, 1.6);
+        let wave = (0..=steps)
+            .map(|i| {
+                let t = i as f32 / steps as f32;
+                pos2(rect.min.x + rect.width() * t, mid + amplitude * (t * std::f32::consts::TAU).sin())
+            })
+            .collect();
+        vec![Shape::line(wave, stroke)]
+    } else if flags.contains(Flags::DOUBLE_UNDERLINE) {
+        vec![Shape::line_segment(flat, stroke), Shape::line_segment([pos2(rect.min.x, y - 2.0), pos2(rect.max.x, y - 2.0)], stroke)]
+    } else if flags.contains(Flags::DOTTED_UNDERLINE) {
+        Shape::dotted_line(&flat, color, 2.0, 0.5)
+    } else if flags.contains(Flags::DASHED_UNDERLINE) {
+        Shape::dashed_line(&flat, stroke, 3.0, 2.0)
+    } else {
+        vec![Shape::line_segment(flat, stroke)]
+    }
+}
+
 /// 終端機的顏色：16 色來自配色方案，256 色的其餘部分（色立方與灰階）是標準色，真彩色原樣畫。
 struct Palette {
     default_fg: Color32,
@@ -1619,6 +1661,49 @@ mod tests {
         assert_ne!(p.foreground(g.fg, g.flags.contains(Flags::BOLD)), Color32::BLACK, "粗體綠 {:?}", g.fg);
         assert_eq!(p.foreground(n.fg, false), Color32::BLACK, "沒設顏色的字用預設前景");
     }
+
+    #[test]
+    fn italic_underline_styles_and_underline_color_reach_the_grid() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::{Color, Processor, Rgb, StdSyncHandler};
+        let size = GridSize { cols: 20, lines: 3 };
+        let mut term = alacritty_terminal::Term::new(Config::default(), &size, VoidListener);
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+        // 斜體、單線、雙線（4:2）、波浪（4:3）、點線（4:4）、虛線（4:5），最後是帶底線顏色（58;2;r;g;b）的波浪
+        parser.advance(&mut term, b"\x1b[3mI\x1b[0m\x1b[4mU\x1b[0m\x1b[4:2mD\x1b[0m\x1b[4:3mC\x1b[0m\x1b[4:4mO\x1b[0m\x1b[4:5mH\x1b[0m\x1b[4:3;58;2;255;0;0mR\x1b[0m");
+        let flags = |c: usize| term.grid()[Line(0)][Column(c)].flags;
+        assert!(flags(0).contains(Flags::ITALIC));
+        assert!(flags(1).contains(Flags::UNDERLINE));
+        assert!(flags(2).contains(Flags::DOUBLE_UNDERLINE));
+        assert!(flags(3).contains(Flags::UNDERCURL));
+        assert!(flags(4).contains(Flags::DOTTED_UNDERLINE));
+        assert!(flags(5).contains(Flags::DASHED_UNDERLINE));
+        assert_eq!(term.grid()[Line(0)][Column(6)].underline_color(), Some(Color::Spec(Rgb { r: 255, g: 0, b: 0 })));
+        assert_eq!(term.grid()[Line(0)][Column(3)].underline_color(), None);
+    }
+
+    #[test]
+    fn each_underline_style_draws_its_own_shapes_inside_the_cell() {
+        let r = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(9.0, 18.0));
+        let shapes = |flags: Flags| underline_shapes(r, flags, Color32::RED);
+        assert_eq!(shapes(Flags::UNDERLINE).len(), 1);
+        assert_eq!(shapes(Flags::DOUBLE_UNDERLINE).len(), 2);
+        assert!(shapes(Flags::DOTTED_UNDERLINE).len() > 1, "點線是一串點");
+        assert!(shapes(Flags::DASHED_UNDERLINE).len() > 1, "虛線是好幾段");
+        // 波浪線：一條折線，兩端在同一高度（相鄰格子才接得起來），中間有起伏，而且都在格子裡
+        let curl = shapes(Flags::UNDERCURL);
+        assert_eq!(curl.len(), 1);
+        let egui::Shape::Path(line) = &curl[0] else { panic!("波浪線應該是一條折線") };
+        let (first, last) = (line.points[0], *line.points.last().unwrap());
+        assert!((first.y - last.y).abs() < 1e-3, "{first:?} {last:?}");
+        assert!(line.points.iter().any(|p| (p.y - first.y).abs() > 0.5), "要有起伏");
+        assert!(line.points.iter().all(|p| r.expand(0.01).contains(*p)), "不能畫出格子");
+        // 單線的位置沒變：最下面一列像素
+        let egui::Shape::LineSegment { points, .. } = &shapes(Flags::UNDERLINE)[0] else { panic!() };
+        assert_eq!(points[0].y, r.max.y - 1.0);
+    }
+
     #[test]
     fn low_contrast_text_is_pushed_toward_readable_and_good_text_is_untouched() {
         let dark_bg = Color32::from_rgb(0x1e, 0x1e, 0x1e);

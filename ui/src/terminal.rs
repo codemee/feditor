@@ -73,6 +73,14 @@ impl Shared {
             Osc::Notify => {
                 self.bells.fetch_add(1, Ordering::Relaxed);
             }
+            // 程式問「你是什麼終端機」（Claude Code 啟動時會問）：回名稱與版本
+            Osc::XtVersion => {
+                let reply = crate::pty_tap::xtversion_reply();
+                self.note(&format!("reply to program: {reply:?}"));
+                if let Some(tx) = self.sender.lock().as_ref() {
+                    let _ = tx.send(Msg::Input(reply.into_bytes().into()));
+                }
+            }
             // Unix 上直接向作業系統問 shell 的資料夾，比 shell 自己說的準（ssh 到別台時它回報的是遠端的路徑），所以只在 Windows 用。
             // Windows 上 PowerShell 與 cmd 走標題序列；這裡補上 Git Bash、Nushell 這類會送 OSC 7 或 OSC 9;9 的 shell
             Osc::Cwd(raw) => {

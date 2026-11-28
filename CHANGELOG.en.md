@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [0.13.27] - 2026-11-28
+
+### Added
+- **The terminal answers "what terminal are you?"**: when a program asks with XTVERSION (`CSI > q`), it replies `feditor version`. Claude Code asks this at startup and nothing used to answer.
+- **The terminal draws bold**: bold used to only turn colors 0-7 into their bright versions, so it made no difference to the default text color; the text is now drawn heavier (the monospace font has no bold glyphs, so the character is drawn a second time one pixel to the right), and it combines with italics.
+- **The terminal draws italics and the different underline styles**: italic text used to be ignored and is now drawn in italics; besides the single line, underlines can be double (`4:2`), curly (`4:3`), dotted (`4:4`) or dashed (`4:5`), in the color the program sets with SGR 58. Programs such as Neovim that mark errors with a curly underline now show them.
+
 ## [0.13.26] - 2026-11-28
 
 ### Fixed
