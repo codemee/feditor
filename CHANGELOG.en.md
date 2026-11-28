@@ -2,6 +2,10 @@
 
 # Changelog
 
+## [0.13.25] - 2026-11-28
+
+### Fixed
+- **Shift+Enter breaks the line in Claude Code inside the terminal**: the terminal now answers a program's kitty keyboard protocol query (`CSI ? u`), so Claude Code enables the protocol and Shift / Ctrl / Alt+Enter are sent as `CSI 13;modifier u`, which the program can tell is a newline. Before, nothing answered, Claude Code assumed it was unsupported, and only Ctrl+Enter or Alt+Enter worked. Shift+Enter at the PowerShell prompt is unaffected and is still PSReadLine's line break.
 ## [0.13.24] - 2026-11-24
 
 ### Fixed

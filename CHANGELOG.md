@@ -2,6 +2,10 @@
 
 # 更新紀錄
 
+## [0.13.25] - 2026-11-28
+
+### 修正
+- **Claude Code 在終端機裡可以用 Shift+Enter 換行**：終端機現在會回應程式的 kitty 鍵盤協定查詢（`CSI ? u`），Claude Code 因此啟用協定，Shift／Ctrl／Alt+Enter 改送 `CSI 13;修飾 u`，程式分得出是換行。原本沒有回應，Claude Code 以為不支援，只能用 Ctrl+Enter 或 Alt+Enter。PowerShell 提示字元的 Shift+Enter 不受影響，仍是 PSReadLine 的換行。
 ## [0.13.24] - 2026-11-24
 
 ### 修正

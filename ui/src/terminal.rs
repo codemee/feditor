@@ -674,7 +674,9 @@ impl Terminal {
         let pid = pty.child_watcher().pid().map_or(0, |p| p.get());
         let shared = Arc::new(Shared::default());
         let listener = Listener { ctx: ctx.clone(), shared: shared.clone() };
-        let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, listener.clone())));
+        // kitty 鍵盤協定預設是關的（關著就不回應程式的 `CSI ? u` 查詢）。Claude Code 靠它才分得出 Shift+Enter
+        let config = Config { kitty_keyboard: true, ..Config::default() };
+        let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
         // 輸出先給 pty_tap 看一遍，撈出 OSC 7（目前資料夾）和通知（OSC 9／777／99），這些 alacritty_terminal 不處理
         let tap_shared = shared.clone();
         let tap_ctx = ctx.clone();
@@ -807,6 +809,10 @@ pub fn encode_key(key: egui::Key, mods: egui::Modifiers, mode: TermMode) -> Opti
     };
     let bytes = match key {
         // 一般 Enter 是送出；Shift／Ctrl／Alt+Enter 是「換行但不送出」，要讓 shell 分得出來
+        // 程式啟用了 kitty 鍵盤協定（Claude Code 啟動時會要求）就照協定送 `CSI 13;修飾 u`，程式自己分得出 Shift+Enter
+        Enter if (mods.shift || mods.ctrl || mods.alt) && mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) => {
+            return Some(format!("\x1b[13;{m}u").into_bytes());
+        }
         Enter if mods.shift || mods.ctrl || mods.alt => return Some(modified_enter(mods)),
         Enter => b"\r".to_vec(),
         Tab if mods.shift => b"\x1b[Z".to_vec(),
@@ -1177,6 +1183,16 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(enc(Key::Enter, shift).as_deref(), Some("\x1b[13;28;13;1;16;1_\x1b[13;28;13;0;16;1_"));
         }
+    }
+
+    #[test]
+    fn enter_with_modifiers_follows_the_kitty_protocol_when_the_program_asks_for_it() {
+        let kitty = TermMode::DISAMBIGUATE_ESC_CODES;
+        let s = |m| String::from_utf8(encode_key(Key::Enter, m, kitty).unwrap()).unwrap();
+        assert_eq!(s(Modifiers::SHIFT), "\x1b[13;2u");
+        assert_eq!(s(Modifiers { alt: true, ..Modifiers::NONE }), "\x1b[13;3u");
+        assert_eq!(s(CTRL), "\x1b[13;5u");
+        assert_eq!(encode_key(Key::Enter, NONE, kitty), Some(b"\r".to_vec()), "沒有修飾鍵的 Enter 還是 CR");
     }
 
     #[test]
